@@ -83,6 +83,7 @@ class Main(star.Star):
         self.scheduler = AsyncIOScheduler()
 
         # 保存异步任务引用，用于优雅关闭时等待任务完成
+        
         self._start_task = None
 
         # ========== 启动 Telegram 客户端 ==========
