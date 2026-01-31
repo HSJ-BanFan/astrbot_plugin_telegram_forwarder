@@ -4,6 +4,24 @@
         "type": "bool",
         "default": true
     },
+    "api_id": {
+        "description": "App API ID",
+        "type": "int",
+        "default": 0,
+        "hint": "从 my.telegram.org 获取，例如 123456"
+    },
+    "api_hash": {
+        "description": "App API Hash",
+        "type": "string",
+        "default": "",
+        "hint": "从 my.telegram.org 获取"
+    },
+    "phone": {
+        "description": "手机号",
+        "type": "string",
+        "default": "",
+        "hint": "登录用的手机号（国际格式，如 +86138...），首次运行时需要。"
+    },
     "source_channels": {
         "description": "源频道用户名列表",
         "type": "list",
@@ -43,6 +61,17 @@
         "type": "int",
         "hint": "转发到 QQ 群时填写群号，0 表示不转发到 QQ",
         "default": 0
+    },
+    "forward_delay": {
+        "type": "int",
+        "default": 2,
+        "description": "防刷屏/免打扰延迟 (秒)"
+    },
+    "file_hosting_url": {
+        "description": "图床上传接口",
+        "type": "string",
+        "hint": "用于上传视频/大文件的图床接口 (如 Cloudflare Pages)",
+        "default": ""
     },
     "napcat_api_url": {
         "description": "NapCat API 地址",

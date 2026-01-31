@@ -1,2 +1,4 @@
 httpx
 apscheduler
+telethon
+pysocks

@@ -2,3 +2,5 @@ config.json
 data.json
 __pycache__/
 *.pyc
+user_session.session*
+*.session-journal
