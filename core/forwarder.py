@@ -305,11 +305,17 @@ class Forwarder:
         NapCat API:
             使用 OneBot 11 标准协议的 send_group_msg 接口
         """
-        qq_group = self.config.get("target_qq_group")
+        qq_groups = self.config.get("target_qq_group")
         napcat_url = self.config.get("napcat_api_url")
 
         # 必须同时配置 QQ 群和 API 地址
-        if not (qq_group and napcat_url):
+        if not (qq_groups and napcat_url):
+            return
+            
+        # 兼容旧配置（单个 int）
+        if isinstance(qq_groups, int):
+            qq_groups = [qq_groups]
+        elif not isinstance(qq_groups, list):
             return
 
         local_files = []
@@ -339,9 +345,13 @@ class Forwarder:
             # ========== 发送到 QQ ==========
             url = self.config.get("napcat_api_url", "http://127.0.0.1:3000/send_group_msg")
             async with httpx.AsyncClient() as http:
-                 await http.post(url, json={"group_id": qq_group, "message": message}, timeout=30)
-
-            logger.info(f"Forwarded {msg.id} to QQ")
+                 for gid in qq_groups:
+                     if not gid: continue
+                     try:
+                        await http.post(url, json={"group_id": gid, "message": message}, timeout=30)
+                        logger.info(f"Forwarded {msg.id} to QQ group {gid}")
+                     except Exception as e:
+                        logger.error(f"Failed to send to QQ group {gid}: {e}")
 
         except Exception as e:
             logger.error(f"QQ Forward Error: {e}")

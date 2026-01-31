@@ -58,9 +58,10 @@
     },
     "target_qq_group": {
         "description": "QQ 目标群号",
-        "type": "int",
-        "hint": "转发到 QQ 群时填写群号，0 表示不转发到 QQ",
-        "default": 0
+        "type": "list",
+        "item_type": "int",
+        "hint": "转发到 QQ 群列表",
+        "default": []
     },
     "forward_delay": {
         "type": "int",
