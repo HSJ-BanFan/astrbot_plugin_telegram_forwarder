@@ -278,7 +278,15 @@ class Forwarder:
 
         logger.info(f"Cleaning up orphaned files in {self.plugin_data_dir}...")
         
-        allowlist = ["data.json", "user_session.session", "user_session.session-journal"]
+        # 允许保留的文件列表
+        # .session-journal, .session-shm, .session-wal 是 SQLite 的临时文件，必须保留以防止数据库损坏
+        allowlist = [
+            "data.json", 
+            "user_session.session", 
+            "user_session.session-journal",
+            "user_session.session-shm",
+            "user_session.session-wal"
+        ]
         deleted_count = 0
         
         try:

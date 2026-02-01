@@ -128,8 +128,16 @@ class TelegramClientWrapper:
             await self.client.connect()
 
             # ========== 检查授权状态 ==========
-            if not await self.client.is_user_authorized():
-                logger.warning("Telegram Forwarder: Client NOT authorized.")
+            authorized = await self.client.is_user_authorized()
+            if not authorized:
+                logger.warning(f"Telegram Forwarder: Client NOT authorized. Session path: {os.path.join(self.plugin_data_dir, 'user_session.session')}")
+                
+                # 检查 session 文件是否存在且大小不为 0
+                s_path = os.path.join(self.plugin_data_dir, 'user_session.session')
+                if os.path.exists(s_path):
+                    logger.info(f"Session file exists, size: {os.path.getsize(s_path)} bytes")
+                else:
+                    logger.error(f"Session file NOT FOUND at {s_path}")
 
                 # 尝试使用电话号码登录
                 phone = self.config.get("phone")

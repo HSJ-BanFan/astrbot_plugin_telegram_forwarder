@@ -13,6 +13,7 @@ Telegram 消息转发插件 - 主入口
 
 import asyncio
 import os
+import shutil
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from astrbot.api import logger, star, AstrBotConfig
@@ -49,18 +50,7 @@ class Main(star.Star):
         self.config = config
 
         # ========== 设置数据目录 ==========
-        try:
-            from pathlib import Path
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            # data/plugin_data/astrbot_plugin_telegram_forwarder
-            # Ensure get_astrbot_data_path() return value is treated as Path
-            base_data_path = Path(get_astrbot_data_path())
-            self.plugin_data_dir = str(base_data_path / "plugin_data" / "astrbot_plugin_telegram_forwarder")
-        except ImportError:
-            # Fallback for older versions
-            logger.warning("Could not import get_astrbot_data_path, using default StarTools path.")
-            self.plugin_data_dir = str(StarTools.get_data_dir())
-
+        self.plugin_data_dir = StarTools.get_data_dir()
         if not os.path.exists(self.plugin_data_dir):
             os.makedirs(self.plugin_data_dir)
 
@@ -83,7 +73,6 @@ class Main(star.Star):
                 
                 if should_migrate:
                     try:
-                        import shutil
                         shutil.copy2(src, dst)
                         logger.warning(f"[Migration] Moved {filename} from plugin dir to data dir.")
                         
@@ -95,6 +84,23 @@ class Main(star.Star):
         # ========== 初始化核心组件 ==========
         # Storage: 负责持久化存储频道消息ID
         self.storage = Storage(os.path.join(self.plugin_data_dir, "data.json"))
+
+        # ========== 处理上传的 Session 文件 ==========
+        session_files = self.config.get("telegram_session", [])
+        if session_files and isinstance(session_files, list) and len(session_files) > 0:
+            uploaded_session_path = session_files[0]
+            full_uploaded_path = os.path.join(self.plugin_data_dir, uploaded_session_path)
+
+            if os.path.exists(full_uploaded_path):
+                target_session_path = os.path.join(self.plugin_data_dir, "user_session.session")
+                
+                try:
+                    shutil.copy2(full_uploaded_path, target_session_path)
+                    logger.info(f"Telegram Forwarder: 已从上传配置同步会话文件: {target_session_path} (源: {full_uploaded_path})")
+                except Exception as e:
+                    logger.error(f"Telegram Forwarder: 同步会话文件失败: {e}")
+            else:
+                logger.warning(f"Telegram Forwarder: 配置中的会话文件路径不存在: {full_uploaded_path}")
 
         # TelegramClientWrapper: 封装 Telegram 客户端连接逻辑
         self.client_wrapper = TelegramClientWrapper(self.config, self.plugin_data_dir)
