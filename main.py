@@ -49,26 +49,45 @@ class Main(star.Star):
         self.config = config
 
         # ========== 设置数据目录 ==========
-        # 1. 优先使用 StarTools 分配的标准数据目录
-        self.plugin_data_dir = str(StarTools.get_data_dir())
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            # data/plugin_data/astrbot_plugin_telegram_forwarder
+            self.plugin_data_dir = str(get_astrbot_data_path() / "plugin_data" / "astrbot_plugin_telegram_forwarder")
+        except ImportError:
+            # Fallback for older versions
+            logger.warning("Could not import get_astrbot_data_path, using default StarTools path.")
+            self.plugin_data_dir = str(StarTools.get_data_dir())
+
         if not os.path.exists(self.plugin_data_dir):
             os.makedirs(self.plugin_data_dir)
 
-        # 2. 兼容性处理：如果代码目录（旧位置）里有 session，强制覆盖到数据目录
-        # 这可以解决数据目录里有损坏 session 导致无法更新的问题
-        code_dir_session = os.path.join(os.path.dirname(__file__), "user_session.session")
-        data_dir_session = os.path.join(self.plugin_data_dir, "user_session.session")
-        
-        logger.info(f"DEBUG: Checking session migration.\nSrc: {code_dir_session}\nDst: {data_dir_session}")
+        # ========== 数据迁移 (Legacy -> New) ==========
+        # 旧位置: 插件源码目录 (e.g. data/plugins/astrbot_plugin_telegram_forwarder)
+        legacy_dir = os.path.dirname(__file__)
+        files_to_migrate = ["data.json", "user_session.session", "user_session.session-journal"]
 
-        if os.path.exists(code_dir_session):
-            try:
-                import shutil
-                # 强制覆盖，确保 relogin.py 生成的新 session 生效
-                shutil.copy2(code_dir_session, data_dir_session)
-                logger.warning(f"Force migrated session from code dir to data dir.")
-            except Exception as e:
-                logger.error(f"Failed to migrate session: {e}")
+        for filename in files_to_migrate:
+            src = os.path.join(legacy_dir, filename)
+            dst = os.path.join(self.plugin_data_dir, filename)
+            
+            if os.path.exists(src):
+                # 如果目标不存在，或者目标也是空的，才迁移
+                should_migrate = False
+                if not os.path.exists(dst):
+                    should_migrate = True
+                elif filename == "data.json" and os.path.getsize(dst) < 100: # 可能是空的默认文件
+                     should_migrate = True
+                
+                if should_migrate:
+                    try:
+                        import shutil
+                        shutil.copy2(src, dst)
+                        logger.warning(f"[Migration] Moved {filename} from plugin dir to data dir.")
+                        
+                        # 可选：迁移后重命名源文件作为备份，防止下次误判 (或者保留作为备份)
+                        # os.rename(src, src + ".bak") 
+                    except Exception as e:
+                        logger.error(f"[Migration] Failed to move {filename}: {e}")
 
         # ========== 初始化核心组件 ==========
         # Storage: 负责持久化存储频道消息ID
