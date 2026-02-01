@@ -578,12 +578,14 @@ class Forwarder:
             try:
                 link = extractor(res_json)
                 if link:
+                    from urllib.parse import quote
                     # 处理相对路径
                     if link.startswith("/"):
-                        return root_url + link
-                    # 处理绝对路径
-                    if link.startswith("http"):
-                        return link
+                        link = root_url + link
+                    
+                    # 确保 URL 中的特殊字符被编码 (QQ 兼容性)
+                    # 保留 : 和 / 不被编码
+                    return quote(link, safe=":/")
             except:
                 # 当前提取器失败，继续尝试下一个
                 continue

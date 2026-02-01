@@ -1,6 +1,10 @@
 # Telegram 频道搬运插件
 
+
 将一个公开 Telegram 频道的消息自动转发到你自己的 Telegram 频道或 QQ 群。
+
+## 效果预览
+![Preview](preview.png)
 
 ## 功能特性
 
