@@ -148,7 +148,14 @@ class Main(star.Star):
                 interval = self.config.get("check_interval", 60)
 
                 # 添加定时任务：每隔 interval 秒执行一次 check_updates
-                self.scheduler.add_job(self.forwarder.check_updates, 'interval', seconds=interval)
+                # max_instances=10: 允许最多10个并发任务，确保"快"的频道能绕过"慢"的频道
+                self.scheduler.add_job(
+                    self.forwarder.check_updates, 
+                    'interval', 
+                    seconds=interval, 
+                    max_instances=10, 
+                    coalesce=False
+                )
 
                 # 启动调度器
                 self.scheduler.start()

@@ -78,14 +78,16 @@ class Forwarder:
                 channel_name = cfg
                 start_date = None
                 interval = 0
+                msg_limit = 20 # 默认一次处理20条
 
                 # 解析频道配置
-                # 格式：channel_name | start_date | interval
-                # 示例：xiaoshuwu | 2025-01-01 | 60
+                # 格式：channel_name | start_date | interval | limit
+                # 示例：xiaoshuwu | 2025-01-01 | 60 | 5
                 if "|" in cfg:
                     parts = [p.strip() for p in cfg.split("|")]
                     channel_name = parts[0]
                     
+                    ints_found = []
                     for part in parts[1:]:
                         if not part: continue
                         # 尝试解析为日期
@@ -96,9 +98,15 @@ class Forwarder:
                             except:
                                 pass
                         
-                        # 尝试解析为间隔(整数)
+                        # 数字可能是间隔或限制
                         if part.isdigit():
-                            interval = int(part)
+                            ints_found.append(int(part))
+                    
+                    # 分配数字参数
+                    if len(ints_found) >= 1:
+                        interval = ints_found[0]
+                    if len(ints_found) >= 2:
+                        msg_limit = ints_found[1]
                 else:
                     channel_name = cfg.strip()
 
@@ -118,8 +126,10 @@ class Forwarder:
                 async with lock:
                     self._channel_last_check[channel_name] = now
                     # 处理该频道
-                    await self._process_channel(channel_name, start_date)
+                    await self._process_channel(channel_name, start_date, msg_limit)
                     
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 # 记录错误但继续处理其他频道
                 logger.error(f"Error checking {cfg}: {e}")
@@ -127,9 +137,14 @@ class Forwarder:
         # 并行执行所有频道的检查任务
         tasks = [process_one(cfg) for cfg in channels_config]
         if tasks:
-            await asyncio.gather(*tasks)
+            try:
+                await asyncio.gather(*tasks)
+            except asyncio.CancelledError:
+                pass # 正常取消，忽略
+            except Exception as e:
+                logger.error(f"Error in check_updates gather: {e}")
 
-    async def _process_channel(self, channel_name: str, start_date: Optional[datetime]):
+    async def _process_channel(self, channel_name: str, start_date: Optional[datetime], msg_limit: int = 20):
         """
         处理单个频道的消息更新
         """
@@ -154,14 +169,14 @@ class Forwarder:
 
             # ========== 获取新消息 ==========
             new_messages = []
-            params = {"entity": channel_name, "reverse": True, "limit": 20}
+            params = {"entity": channel_name, "reverse": True, "limit": msg_limit}
 
             if last_id > 0:
                  params["min_id"] = last_id
             elif start_date:
                  params["offset_date"] = start_date
             else:
-                 params["limit"] = 5
+                 params["limit"] = 5 # 默认初始化获取5条
 
             async for message in self.client.iter_messages(**params):
                 if not message.id: continue
