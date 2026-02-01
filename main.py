@@ -16,11 +16,13 @@ import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from astrbot.api import logger, star, AstrBotConfig
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import StarTools
 
 from .common.storage import Storage
 from .core.client import TelegramClientWrapper
 from .core.forwarder import Forwarder
+from .core.commands import PluginCommands
 
 class Main(star.Star):
     """
@@ -85,6 +87,9 @@ class Main(star.Star):
         # 保存异步任务引用，用于优雅关闭时等待任务完成
         
         self._start_task = None
+
+        # 初始化命令处理器
+        self.command_handler = PluginCommands(context, config, self.forwarder)
 
         # ========== 启动 Telegram 客户端 ==========
         # 如果配置了 api_id 和 api_hash，创建异步任务启动客户端
@@ -178,3 +183,40 @@ class Main(star.Star):
                 logger.error(f"[Telegram Forwarder] Error disconnecting client: {e}")
 
         logger.info("[Telegram Forwarder] Plugin Stopped")
+
+    # ================= COMMANDS =================
+
+    @filter.command_group("tg")
+    def tg(self):
+        """Telegram Forwarder 插件管理"""
+        pass
+
+    @tg.command("add")
+    async def add_channel(self, event: AstrMessageEvent, channel: str):
+        """添加监控频道: /tg add <channel>"""
+        async for result in self.command_handler.add_channel(event, channel):
+            yield result
+
+    @tg.command("rm")
+    async def remove_channel(self, event: AstrMessageEvent, channel: str):
+        """移除监控频道: /tg rm <channel>"""
+        async for result in self.command_handler.remove_channel(event, channel):
+            yield result
+
+    @tg.command("ls")
+    async def list_channels(self, event: AstrMessageEvent):
+        """列出所有监控频道: /tg ls"""
+        async for result in self.command_handler.list_channels(event):
+            yield result
+
+    @tg.command("check")
+    async def force_check(self, event: AstrMessageEvent):
+        """立即检查更新: /tg check"""
+        async for result in self.command_handler.force_check(event):
+            yield result
+        
+    @tg.command("help")
+    async def show_help(self, event: AstrMessageEvent):
+        """显示帮助信息"""
+        async for result in self.command_handler.show_help(event):
+            yield result

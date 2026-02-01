@@ -188,19 +188,20 @@ class Forwarder:
                  except Exception as e:
                      logger.error(f"Error filtering msg {msg.id}: {e}")
 
-            if batch_to_send:
-                try:
+            try:
+                if batch_to_send:
                     # 分发给 Sender
                     await self._dispatch_to_senders(channel_name, batch_to_send)
                     
-                    # 更新 last_id
-                    max_id = max(m.id for m in batch)
-                    self.storage.update_last_id(channel_name, max_id)
-                    
                     delay = self.config.get("forward_delay", 0)
                     if delay > 0: await asyncio.sleep(delay)
-                except Exception as e:
-                     logger.error(f"Failed to forward batch (first id {batch[0].id}): {e}")
+                
+                # 更新 last_id (无论是否发送/被过滤)
+                max_id = max(m.id for m in batch)
+                self.storage.update_last_id(channel_name, max_id)
+                
+            except Exception as e:
+                 logger.error(f"Failed to forward batch (first id {batch[0].id}): {e}")
 
         # 遍历消息进行批处理
         for msg in new_messages:
