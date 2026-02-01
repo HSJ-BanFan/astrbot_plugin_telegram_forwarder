@@ -31,8 +31,13 @@
   - `GoogleNews`: 从最新消息开始。
   - `GoogleNews|2025-01-12`: 从 2025-01-12 的消息开始搬运。
 
-### 目标平台配置
-- **Telegram**: 配置 `bot_token` 和 `target_channel`。
+### 目标平台配置 (支持独立开关)
+- **enable_forward_to_qq**: (默认开启) 是否转发到 QQ。
+- **enable_forward_to_tg**: (默认关闭) 是否转发到 Telegram 目标频道。
+
+- **Telegram**:
+  - `target_channel`: 目标频道 ID。
+  - `bot_token`: 转发机器人的 Token。
 - **QQ (NapCat)**:
   - `target_qq_group`: 目标 QQ 群号列表 `[123456]`。
   - `napcat_api_url`: NapCat API 地址 (例如 `http://127.0.0.1:3000/send_group_msg`)。
@@ -40,6 +45,9 @@
     - 用于上传大文件和音频。
     - 支持带 AuthCode 的 URL: `https://.../upload?authCode=xxx`。
     - 若未配置，大文件将只显示文件名。
+
+> [!NOTE]
+> 如果只开启 `enable_forward_to_qq`，则不需要配置 Telegram 的 `target_channel` 和 `bot_token`。消息将直接由机器人监听并转发到 QQ。
 
 ### 过滤配置
 - **filter_keywords**: 关键词黑名单列表，包含即跳过。
@@ -51,3 +59,5 @@
    - 插件会将链接和语音分两条消息发送，确保可见性。
 2. **大文件发送失败？**
    - 请检查 `file_hosting_url` 是否配置正确，且图床支持分片上传（当前适配 Sanyue 图床 API）。
+3. **数据存放在哪里？**
+   - 插件数据（登录会话、配置）会自动迁移并存储在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失数据。
