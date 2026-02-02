@@ -28,6 +28,13 @@
         "default": "",
         "hint": "从 my.telegram.org 获取"
     },
+    "telegram_session": {
+        "type": "file",
+        "description": "Telegram Session 文件",
+        "default": [],
+        "file_types": ["session"],
+        "hint": "上传 .session 文件以直接登录，避免验证码问题。你可以使用本地脚本生成此文件后上传。"
+    },
     "phone": {
         "description": "手机号",
         "type": "string",
