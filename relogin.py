@@ -7,10 +7,26 @@ from urllib.parse import urlparse
 
 # 定义路径
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-SESSION_FILE = os.path.join(PLUGIN_DIR, "user_session")
-CONFIG_FILE = os.path.join(
-    PLUGIN_DIR, "config.json"
-)  # 假设配置文件在这里，如果不是请指出
+
+# 尝试定位标准 AstrBot 数据目录 (../../plugin_data/astrbot_plugin_telegram_forwarder)
+# 假设结构: data/plugins/this_plugin -> data/plugin_data/this_plugin
+EXPECTED_DATA_DIR = os.path.abspath(
+    os.path.join(PLUGIN_DIR, "..", "..", "plugin_data", "astrbot_plugin_telegram_forwarder")
+)
+
+if os.path.exists(EXPECTED_DATA_DIR):
+    DATA_DIR = EXPECTED_DATA_DIR
+    print(f"已定位数据目录: {DATA_DIR}")
+else:
+    DATA_DIR = PLUGIN_DIR
+    print(f"未找到标准数据目录，使用当前目录: {DATA_DIR}")
+    print("警告: 这可能导致主程序无法读取生成的 Session 文件。请确保插件已正确安装运行过一次。")
+
+SESSION_FILE = os.path.join(DATA_DIR, "user_session")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+if not os.path.exists(CONFIG_FILE):
+    # Fallback to looking in plugin dir if config not in data dir yet
+    CONFIG_FILE = os.path.join(PLUGIN_DIR, "config.json")
 
 # 由于 AstrBot 配置可能由框架管理，这里我们尝试从 data/config/... 读取，或者直接手动填入
 # 为了方便，请您直接在此处填入您的 API ID 和 Hash，或者我们尝试交互式输入

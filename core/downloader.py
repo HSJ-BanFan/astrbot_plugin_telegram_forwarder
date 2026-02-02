@@ -69,16 +69,36 @@ class MediaDownloader:
                         logger.info(f"Downloading {msg.id}: {pct:.1f}%")
 
             # 执行下载
-            try:
-                path = await self.client.download_media(
-                    msg, file=self.plugin_data_dir, progress_callback=progress_callback
-                )
-                if path:
-                    local_files.append(path)
-            except asyncio.CancelledError:
-                logger.warning(f"Download cancelled for msg {msg.id}")
-                return local_files
-            except Exception as e:
-                logger.error(f"Download failed for msg {msg.id}: {e}")
+            retry_count = 3
+            for attempt in range(retry_count):
+                try:
+                    if not self.client.is_connected():
+                        logger.warning(
+                            f"Client disconnected during download (attempt {attempt+1}), trying to reconnect..."
+                        )
+                        try:
+                            await self.client.connect()
+                        except Exception as e:
+                            logger.error(f"Reconnection failed: {e}")
+
+                    path = await self.client.download_media(
+                        msg,
+                        file=self.plugin_data_dir,
+                        progress_callback=progress_callback,
+                    )
+                    if path:
+                        local_files.append(path)
+                        break  # Success
+                except asyncio.CancelledError:
+                    logger.warning(f"Download cancelled for msg {msg.id}")
+                    return local_files  # Don't retry on cancel
+                except Exception as e:
+                    logger.warning(
+                        f"Download failed for msg {msg.id} (Attempt {attempt+1}/{retry_count}): {e}"
+                    )
+                    if attempt < retry_count - 1:
+                        await asyncio.sleep(2)
+                    else:
+                        logger.error(f"Download permanently failed for msg {msg.id}")
 
         return local_files

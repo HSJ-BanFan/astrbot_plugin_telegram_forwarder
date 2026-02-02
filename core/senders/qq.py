@@ -15,9 +15,7 @@ class QQSender:
     负责将消息转发到 QQ 群 (支持合并相册)
     """
 
-    """
-    负责将消息转发到 QQ 群 (支持合并相册)
-    """
+
 
     def __init__(
         self, config: AstrBotConfig, downloader: MediaDownloader, uploader: FileUploader

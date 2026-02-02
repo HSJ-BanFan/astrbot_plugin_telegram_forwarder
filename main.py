@@ -52,22 +52,7 @@ class Main(star.Star):
         self.config = config
 
         # ========== 设置数据目录 ==========
-        try:
-            from pathlib import Path
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-
-            # data/plugin_data/astrbot_plugin_telegram_forwarder
-            # Ensure get_astrbot_data_path() return value is treated as Path
-            base_data_path = Path(get_astrbot_data_path())
-            self.plugin_data_dir = str(
-                base_data_path / "plugin_data" / "astrbot_plugin_telegram_forwarder"
-            )
-        except ImportError:
-            # Fallback for older versions
-            logger.warning(
-                "Could not import get_astrbot_data_path, using default StarTools path."
-            )
-            self.plugin_data_dir = str(StarTools.get_data_dir())
+        self.plugin_data_dir = str(StarTools.get_data_dir())
         if not os.path.exists(self.plugin_data_dir):
             os.makedirs(self.plugin_data_dir)
 
@@ -139,18 +124,8 @@ class Main(star.Star):
         # 使用 APScheduler 的异步调度器，定期检查 Telegram 频道更新
         self.scheduler = AsyncIOScheduler()
 
-        # 保存异步任务引用，用于优雅关闭时等待任务完成
-
-        self._start_task = None
-
         # 初始化命令处理器
         self.command_handler = PluginCommands(context, config, self.forwarder)
-
-        # ========== 启动 Telegram 客户端 ==========
-        # 如果配置了 api_id 和 api_hash，创建异步任务启动客户端
-        # 注意：在 __init__ 中创建任务需要确保事件循环已就绪
-        if self.client_wrapper.client:
-            self._start_task = asyncio.create_task(self._start())
 
         # ========== 配置检查警告 ==========
         # 如果缺少必要的配置，输出警告日志提醒用户
@@ -159,20 +134,19 @@ class Main(star.Star):
                 "Telegram Forwarder: api_id/api_hash missing. Please configure them."
             )
 
-    async def _start(self):
+    async def initialize(self):
         """
-        启动客户端和定时调度器
-
+        插件启动逻辑
+        
         执行流程：
         1. 启动 Telegram 客户端连接
         2. 如果连接成功且插件已启用，启动定时任务
         3. 定时任务按照配置的间隔检查频道更新
-
-        Note:
-            此方法作为异步任务在 __init__ 中创建，确保在插件加载时自动启动
         """
         # 启动 Telegram 客户端（处理登录、会话恢复等）
-        await self.client_wrapper.start()
+        # 如果配置了 api_id 和 api_hash，尝试启动
+        if self.client_wrapper.client:
+            await self.client_wrapper.start()
 
         # 检查客户端是否成功连接并授权
         if self.client_wrapper.is_authorized():
@@ -203,20 +177,6 @@ class Main(star.Star):
     async def terminate(self):
         """
         插件终止时的清理工作
-
-        清理流程：
-        1. 停止定时调度器（不等待正在执行的任务完成）
-        2. 等待启动任务完成（最多5秒），超时则取消
-        3. 断开 Telegram 客户端连接
-
-        Note:
-            此方法由 AstrBot 框架在插件卸载时调用
-            使用 shutdown(wait=False) 避免阻塞，快速释放资源
-        """
-
-    async def terminate(self):
-        """
-        插件终止时的清理工作
         """
         logger.info("[Telegram Forwarder] Terminating plugin...")
 
@@ -226,20 +186,7 @@ class Main(star.Star):
             self.scheduler.shutdown(wait=False)
             logger.info("[Telegram Forwarder] Scheduler shutdown complete.")
 
-        # 2. Wait for Start Task
-        if self._start_task:
-            logger.info("[Telegram Forwarder] Waiting for start task...")
-            try:
-                await asyncio.wait_for(self._start_task, timeout=3.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "[Telegram Forwarder] Start task timed out, cancelling..."
-                )
-                self._start_task.cancel()
-            except Exception as e:
-                logger.error(f"[Telegram Forwarder] Error waiting for start task: {e}")
-
-        # 3. Disconnect Client
+        # 2. Disconnect Client
         if self.client_wrapper.client:
             logger.info("[Telegram Forwarder] Disconnecting client...")
             try:
