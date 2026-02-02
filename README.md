@@ -40,7 +40,9 @@
   - `bot_token`: 转发机器人的 Token。
 - **QQ (NapCat)**:
   - `target_qq_group`: 目标 QQ 群号列表 `[123456]`。
-  - `napcat_api_url`: NapCat API 地址 (例如 `http://127.0.0.1:3000/send_group_msg`)。
+  - `napcat_api_url`: NapCat API 地址。
+    - 填入 `localhost` (默认)：使用本地绝对路径极速转发 (要求插件与 NapCat 在同一服务器)。
+    - 填入完整 URL：例如 `http://1.2.3.4:3000/send_group_msg`，用于远程转发。
   - `file_hosting_url`: **(推荐)** 文件托管/图床地址。
     - 用于上传大文件和音频。
     - 支持带 AuthCode 的 URL: `https://.../upload?authCode=xxx`。

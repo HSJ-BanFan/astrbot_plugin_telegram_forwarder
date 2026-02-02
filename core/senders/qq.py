@@ -14,9 +14,6 @@ class QQSender:
     """
     负责将消息转发到 QQ 群 (支持合并相册)
     """
-    """
-    负责将消息转发到 QQ 群 (支持合并相册)
-    """
     def __init__(self, config: AstrBotConfig, downloader: MediaDownloader, uploader: FileUploader):
         self.config = config
         self.downloader = downloader
@@ -37,8 +34,12 @@ class QQSender:
             src_channel: 源频道名称
         """
         qq_groups = self.config.get("target_qq_group")
-        napcat_url = self.config.get("napcat_api_url")
         enable_qq = self.config.get("enable_forward_to_qq", True)
+        conf_url = self.config.get("napcat_api_url", "localhost")
+
+        # 如果填的是 localhost，则默认使用 3000 端口发送，并开启本地文件路径模式
+        is_local_mode = conf_url.lower() == "localhost"
+        napcat_url = "http://127.0.0.1:3000/send_group_msg" if is_local_mode else conf_url
 
         if not enable_qq:
             return
@@ -88,15 +89,14 @@ class QQSender:
 
             # 处理所有收集到的文件
             for fpath in all_local_files:
-                file_nodes = await self._process_one_file(fpath)
+                file_nodes = await self._process_one_file(fpath, is_local_mode)
                 if file_nodes:
                     message.extend(file_nodes)
             
             if not message: return
 
-            # ========== 4. 发送 ==========
-            # 使用配置的 URL 或默认值
-            url = napcat_url if napcat_url else "http://127.0.0.1:3000/send_group_msg"
+            # 使用确定的 URL
+            url = napcat_url
             
             async with httpx.AsyncClient() as http:
                  for gid in qq_groups:
@@ -126,9 +126,7 @@ class QQSender:
                                 logger.info(f"Forwarded album ({len(msgs)} msgs) to QQ group {gid}")
 
                         except Exception as e:
-                            import traceback
                             logger.error(f"Failed to send to QQ group {gid}: {type(e).__name__}: {e}")
-                            # logger.error(traceback.format_exc()) # Open if debugging needed
 
         except Exception as e:
             logger.error(f"QQ Forward Error: {e}")
@@ -136,51 +134,58 @@ class QQSender:
             # 清理所有临时文件
             self._cleanup_files(all_local_files)
 
-    async def _process_one_file(self, fpath: str) -> List[dict]:
+    async def _process_one_file(self, fpath: str, is_local_mode: bool) -> List[dict]:
         """
         将本地文件转换为 NapCat 消息节点列表
         """
         ext = os.path.splitext(fpath)[1].lower()
         hosting_url = self.config.get("file_hosting_url")
+        abs_path = os.path.abspath(fpath)
 
-        # ========== 1. 图片 -> Base64（小文件安全） ==========
-        if ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]:
+        # ========== 1. 本地模式：直接使用文件路径 (推荐) ==========
+        if is_local_mode:
+            if ext in [".mp3", ".ogg", ".wav", ".m4a", ".flac", ".amr"]:
+                return [{"type": "record", "data": {"file": f"file:///{abs_path}"}}]
+            
+            if ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]:
+                return [{"type": "image", "data": {"file": f"file:///{abs_path}"}}]
+
+        # ========== 2. 远程/普通模式：尝试图床或 Base64 ==========
+        # 图片 -> Base64 (仅在非本地模式下且文件较小时尝试)
+        if not is_local_mode and ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]:
             if os.path.getsize(fpath) < 5 * 1024 * 1024:
                 try:
                     import base64
                     with open(fpath, "rb") as image_file:
                         encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                     return [{"type": "image", "data": {"file": f"base64://{encoded_string}"}}]
-                except Exception as e:
-                    logger.warning(f"Base64 convert failed: {e}")
-            else:
-                logger.info("Image too large for base64, trying upload...")
+                except:
+                    pass
 
-        # ========== 2. 上传到文件托管服务 ==========
+        # 上传到文件托管服务
         if hosting_url:
             try:
                 link = await self.uploader.upload(fpath, hosting_url)
-                
                 if link:
-                    # 如果是音频，尝试发送语音预览 + 链接
                     if ext in [".mp3", ".ogg", ".wav", ".m4a", ".flac", ".amr"]:
-                            logger.info(f"Audio Link Generated: {link}")
-                            return [
-                                {"type": "text", "data": {"text": f"\n[Audio: {os.path.basename(fpath)}]\n🔗 Link: {link}\n"}},
-                                {"type": "record", "data": {"file": link}}
-                            ]
-                    
-                    # 普通文件/大图片
-                    return [{"type": "text", "data": {"text": f"\n[Media Link: {link}]"}}]
-                else:
-                     return [{"type": "text", "data": {"text": f"\n[Media File: {os.path.basename(fpath)}] (Upload Failed)"}}]
+                        return [
+                            {"type": "text", "data": {"text": f"\n[Audio: {os.path.basename(fpath)}]\n🔗 Link: {link}\n"}},
+                            {"type": "record", "data": {"file": link}}
+                        ]
+                    return [{"type": "text", "data": {"text": f"\n[File Link: {link}]"}}]
             except Exception as e:
-                 logger.error(f"Upload Error: {type(e).__name__}: {e}")
-                 return [{"type": "text", "data": {"text": f"\n[Media File: {os.path.basename(fpath)}] (Upload Failed)"}}]
+                 logger.error(f"Upload Error: {e}")
 
         # ========== 3. 回退方案 ==========
         fname = os.path.basename(fpath)
+        if is_local_mode:
+            return [{"type": "text", "data": {"text": f"\n[Media File: {fname}] (Local path sending failed)"}}]
+        
+        # 远程模式下的原始提示语
+        if hosting_url:
+            return [{"type": "text", "data": {"text": f"\n[Media File: {fname}] (Upload Failed)"}}]
         return [{"type": "text", "data": {"text": f"\n[Media File: {fname}] (Too large/No hosting)"}}]
+
 
     def _cleanup_files(self, files: List[str]):
         """清理临时下载的文件"""

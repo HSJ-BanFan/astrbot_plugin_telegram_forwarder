@@ -96,8 +96,8 @@
     "napcat_api_url": {
         "description": "NapCat API 地址",
         "type": "string",
-        "hint": "NapCat 的 HTTP API 地址",
-        "default": "http://127.0.0.1:3000/send_group_msg"
+        "hint": "填入 localhost 使用本地路径发送；或填入完整的 HTTP API 地址 (如 http://1.2.3.4:3000/send_group_msg)",
+        "default": "localhost"
     },
     "filter_keywords": {
         "type": "list",
