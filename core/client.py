@@ -14,12 +14,14 @@ import asyncio
 import os
 from urllib.parse import urlparse
 
+
 class TelegramClientWrapper:
     """
     Telegram 客户端封装类
 
     负责创建和管理 Telethon 客户端实例。
     """
+
     def __init__(self, config: AstrBotConfig, plugin_data_dir: str):
         """
         初始化客户端封装
@@ -71,7 +73,9 @@ class TelegramClientWrapper:
                     parsed = urlparse(proxy_url)
 
                     # 根据协议确定代理类型
-                    proxy_type = socks.HTTP if parsed.scheme.startswith('http') else socks.SOCKS5
+                    proxy_type = (
+                        socks.HTTP if parsed.scheme.startswith("http") else socks.SOCKS5
+                    )
 
                     # 构建 Telethon 代理元组：(类型, 主机, 端口)
                     proxy_setting = (proxy_type, parsed.hostname, parsed.port)
@@ -84,9 +88,9 @@ class TelegramClientWrapper:
             # ========== 创建 Telegram 客户端 ==========
             # connection_retries=None 表示无限重连
             self.client = TelegramClient(
-                session_path, 
-                api_id, 
-                api_hash, 
+                session_path,
+                api_id,
+                api_hash,
                 proxy=proxy_setting,
                 connection_retries=None,
                 retry_delay=5,
@@ -99,7 +103,9 @@ class TelegramClientWrapper:
 
         else:
             # 配置不完整时输出警告
-            logger.warning("Telegram Forwarder: api_id/api_hash missing. Please configure them.")
+            logger.warning(
+                "Telegram Forwarder: api_id/api_hash missing. Please configure them."
+            )
 
     async def start(self):
         """
@@ -121,7 +127,8 @@ class TelegramClientWrapper:
             用户需要在交互式终端手动登录一次，生成会话文件
         """
         # 客户端未初始化时直接返回
-        if not self.client: return
+        if not self.client:
+            return
 
         try:
             # ========== 连接服务器 ==========
@@ -147,8 +154,7 @@ class TelegramClientWrapper:
                     try:
                         # 发送验证码请求，设置30秒超时
                         await asyncio.wait_for(
-                            self.client.send_code_request(phone),
-                            timeout=30.0
+                            self.client.send_code_request(phone), timeout=30.0
                         )
                     except asyncio.TimeoutError:
                         logger.error("Send code request timed out")
@@ -157,12 +163,16 @@ class TelegramClientWrapper:
                     try:
                         # 非阻塞式错误提示
                         # 在插件加载环境中无法交互式输入验证码
-                        logger.error(f"Telegram Client needs authentication! Please authenticate via CLI or providing session file.")
-                        logger.error(f"Cannot prompt for code in this environment. Please run the script in interactive mode to login once.")
+                        logger.error(
+                            f"Telegram Client needs authentication! Please authenticate via CLI or providing session file."
+                        )
+                        logger.error(
+                            f"Cannot prompt for code in this environment. Please run the script in interactive mode to login once."
+                        )
                         return
                     except Exception as e:
-                         logger.error(f"Login failed: {e}")
-                         return
+                        logger.error(f"Login failed: {e}")
+                        return
                 else:
                     # 没有提供电话号码
                     logger.error("No phone number provided in config. Cannot login.")
@@ -195,4 +205,4 @@ class TelegramClientWrapper:
         """
         检查客户端是否已授权
         """
-        return getattr(self, '_authorized', False) and self.is_connected()
+        return getattr(self, "_authorized", False) and self.is_connected()

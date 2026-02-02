@@ -18,12 +18,14 @@ import json
 import os
 from astrbot.api import logger
 
+
 class Storage:
     """
     数据持久化管理类
 
     负责加载、保存和查询频道的消息ID状态信息。
     """
+
     def __init__(self, data_file: str):
         """
         初始化存储管理器

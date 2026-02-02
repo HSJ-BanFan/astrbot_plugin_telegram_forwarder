@@ -25,12 +25,14 @@ from .core.client import TelegramClientWrapper
 from .core.forwarder import Forwarder
 from .core.commands import PluginCommands
 
+
 class Main(star.Star):
     """
     Telegram 转发插件主类
 
     继承自 AstrBot 的 star.Star 基类，实现插件的生命周期管理。
     """
+
     def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         """
         插件初始化
@@ -57,27 +59,35 @@ class Main(star.Star):
         # ========== 数据迁移 (Legacy -> New) ==========
         # 旧位置: 插件源码目录 (e.g. data/plugins/astrbot_plugin_telegram_forwarder)
         legacy_dir = os.path.dirname(__file__)
-        files_to_migrate = ["data.json", "user_session.session", "user_session.session-journal"]
+        files_to_migrate = [
+            "data.json",
+            "user_session.session",
+            "user_session.session-journal",
+        ]
 
         for filename in files_to_migrate:
             src = os.path.join(legacy_dir, filename)
             dst = os.path.join(self.plugin_data_dir, filename)
-            
+
             if os.path.exists(src):
                 # 如果目标不存在，或者目标也是空的，才迁移
                 should_migrate = False
                 if not os.path.exists(dst):
                     should_migrate = True
-                elif filename == "data.json" and os.path.getsize(dst) < 100: # 可能是空的默认文件
-                     should_migrate = True
-                
+                elif (
+                    filename == "data.json" and os.path.getsize(dst) < 100
+                ):  # 可能是空的默认文件
+                    should_migrate = True
+
                 if should_migrate:
                     try:
                         shutil.copy2(src, dst)
-                        logger.warning(f"[Migration] Moved {filename} from plugin dir to data dir.")
-                        
+                        logger.warning(
+                            f"[Migration] Moved {filename} from plugin dir to data dir."
+                        )
+
                         # 可选：迁移后重命名源文件作为备份，防止下次误判 (或者保留作为备份)
-                        # os.rename(src, src + ".bak") 
+                        # os.rename(src, src + ".bak")
                     except Exception as e:
                         logger.error(f"[Migration] Failed to move {filename}: {e}")
 
@@ -106,14 +116,16 @@ class Main(star.Star):
         self.client_wrapper = TelegramClientWrapper(self.config, self.plugin_data_dir)
 
         # Forwarder: 消息转发核心逻辑，处理消息过滤、媒体下载、多平台发送
-        self.forwarder = Forwarder(self.config, self.storage, self.client_wrapper, self.plugin_data_dir)
+        self.forwarder = Forwarder(
+            self.config, self.storage, self.client_wrapper, self.plugin_data_dir
+        )
 
         # ========== 初始化定时任务调度器 ==========
         # 使用 APScheduler 的异步调度器，定期检查 Telegram 频道更新
         self.scheduler = AsyncIOScheduler()
 
         # 保存异步任务引用，用于优雅关闭时等待任务完成
-        
+
         self._start_task = None
 
         # 初始化命令处理器
@@ -123,12 +135,14 @@ class Main(star.Star):
         # 如果配置了 api_id 和 api_hash，创建异步任务启动客户端
         # 注意：在 __init__ 中创建任务需要确保事件循环已就绪
         if self.client_wrapper.client:
-           self._start_task = asyncio.create_task(self._start())
+            self._start_task = asyncio.create_task(self._start())
 
         # ========== 配置检查警告 ==========
         # 如果缺少必要的配置，输出警告日志提醒用户
         if not self.config.get("api_id") or not self.config.get("api_hash"):
-             logger.warning("Telegram Forwarder: api_id/api_hash missing. Please configure them.")
+            logger.warning(
+                "Telegram Forwarder: api_id/api_hash missing. Please configure them."
+            )
 
     async def _start(self):
         """
@@ -154,33 +168,29 @@ class Main(star.Star):
                 interval = self.config.get("check_interval", 60)
 
                 # 添加定时任务：每隔 interval 秒执行一次 check_updates
-                self.scheduler.add_job(self.forwarder.check_updates, 'interval', seconds=interval)
+                # max_instances=10: 允许最多10个并发任务，确保"快"的频道能绕过"慢"的频道
+                self.scheduler.add_job(
+                    self.forwarder.check_updates,
+                    "interval",
+                    seconds=interval,
+                    max_instances=10,
+                    coalesce=False,
+                )
 
                 # 启动调度器
                 self.scheduler.start()
 
                 # 记录正在监控的频道列表
-                logger.info(f"Monitoring channels: {self.config.get('source_channels')}")
+                logger.info(
+                    f"Monitoring channels: {self.config.get('source_channels')}"
+                )
 
-    async def terminate(self):
-        """
-        插件终止时的清理工作
-
-        清理流程：
-        1. 停止定时调度器（不等待正在执行的任务完成）
-        2. 等待启动任务完成（最多5秒），超时则取消
-        3. 断开 Telegram 客户端连接
-
-        Note:
-            此方法由 AstrBot 框架在插件卸载时调用
-            使用 shutdown(wait=False) 避免阻塞，快速释放资源
-        """
     async def terminate(self):
         """
         插件终止时的清理工作
         """
         logger.info("[Telegram Forwarder] Terminating plugin...")
-        
+
         # 1. Stop Scheduler
         if self.scheduler.running:
             logger.info("[Telegram Forwarder] Shutting down scheduler...")
@@ -193,7 +203,9 @@ class Main(star.Star):
             try:
                 await asyncio.wait_for(self._start_task, timeout=3.0)
             except asyncio.TimeoutError:
-                logger.warning("[Telegram Forwarder] Start task timed out, cancelling...")
+                logger.warning(
+                    "[Telegram Forwarder] Start task timed out, cancelling..."
+                )
                 self._start_task.cancel()
             except Exception as e:
                 logger.error(f"[Telegram Forwarder] Error waiting for start task: {e}")
@@ -203,7 +215,9 @@ class Main(star.Star):
             logger.info("[Telegram Forwarder] Disconnecting client...")
             try:
                 # Force disconnect with short timeout
-                await asyncio.wait_for(self.client_wrapper.client.disconnect(), timeout=3.0)
+                await asyncio.wait_for(
+                    self.client_wrapper.client.disconnect(), timeout=3.0
+                )
                 logger.info("[Telegram Forwarder] Client disconnected.")
             except asyncio.TimeoutError:
                 logger.warning("[Telegram Forwarder] Client disconnect timed out!")
@@ -242,7 +256,7 @@ class Main(star.Star):
         """立即检查更新: /tg check"""
         async for result in self.command_handler.force_check(event):
             yield result
-        
+
     @tg.command("help")
     async def show_help(self, event: AstrMessageEvent):
         """显示帮助信息"""

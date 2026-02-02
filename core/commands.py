@@ -3,6 +3,7 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context
 from astrbot.api import AstrBotConfig
 
+
 class PluginCommands:
     def __init__(self, context: Context, config: AstrBotConfig, forwarder):
         self.context = context
@@ -22,7 +23,7 @@ class PluginCommands:
 
         channels.append(channel)
         self.config["source_channels"] = channels
-        self.config.save_config() # 保存配置
+        self.config.save_config()  # 保存配置
         yield event.plain_result(f"✅ 已添加频道 {channel} 到监控列表。")
 
     async def remove_channel(self, event: AstrMessageEvent, channel: str):
@@ -47,7 +48,7 @@ class PluginCommands:
         if not channels:
             yield event.plain_result("📭 当前没有监控任何频道。")
             return
-        
+
         msg = "📺当前监控的频道列表:\n" + "\n".join([f"- {c}" for c in channels])
         yield event.plain_result(msg)
 
