@@ -35,8 +35,39 @@ class FileUploader:
         """
         async with httpx.AsyncClient(proxy=self.proxy_url, timeout=120.0) as client:
             filename = os.path.basename(fpath)
-            # Add directory parameter
-            params = {"uploadFolder": "Telegram/Media"}
+
+            # Add directory parameter (根据文件类型动态设置 uploadFolder)
+            ext = os.path.splitext(fpath)[1].lower()
+            folder_map = {
+                # 图片格式
+                ".jpg": "Telegram/Media/images",
+                ".jpeg": "Telegram/Media/images",
+                ".png": "Telegram/Media/images",
+                ".gif": "Telegram/Media/images",
+                ".webp": "Telegram/Media/images",
+                # 音频格式
+                ".mp3": "Telegram/Media/audio",
+                ".flac": "Telegram/Media/audio",
+                ".m4a": "Telegram/Media/audio",
+                ".ogg": "Telegram/Media/audio",
+                ".wav": "Telegram/Media/audio",
+                ".aac": "Telegram/Media/audio",
+                # 视频格式
+                ".mp4": "Telegram/Media/video",
+                ".webm": "Telegram/Media/video",
+                ".mkv": "Telegram/Media/video",
+                ".avi": "Telegram/Media/video",
+                ".mov": "Telegram/Media/video",
+                # 文档格式
+                ".pdf": "Telegram/Media/documents",
+                ".doc": "Telegram/Media/documents",
+                ".docx": "Telegram/Media/documents",
+                ".zip": "Telegram/Media/documents",
+                ".rar": "Telegram/Media/documents",
+            }
+            folder = folder_map.get(ext, "Telegram/Media")  # 默认根目录
+
+            params = {"uploadFolder": folder}
 
             # Retry logic
             for attempt in range(3):
@@ -47,15 +78,15 @@ class FileUploader:
                             hosting_url, files=files, params=params
                         )
 
-                        if resp.status_code == 200:
-                            return self._extract_upload_url(resp.json(), hosting_url)
-                        else:
-                            logger.error(
-                                f"Upload failed (Attempt {attempt + 1}): {resp.status_code} {resp.text}"
-                            )
-                            if attempt == 2:
-                                break
-                            await asyncio.sleep(2)
+                    if resp.status_code == 200:
+                        return self._extract_upload_url(resp.json(), hosting_url)
+                    else:
+                        logger.error(
+                            f"Upload failed (Attempt {attempt + 1}): {resp.status_code} {resp.text}"
+                        )
+                        if attempt == 2:
+                            break
+                        await asyncio.sleep(2)
                 except (
                     httpx.ConnectError,
                     httpx.RemoteProtocolError,

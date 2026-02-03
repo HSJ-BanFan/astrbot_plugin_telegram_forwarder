@@ -161,5 +161,59 @@
         "description": "正则过滤",
         "default": "",
         "hint": "Python 正则表达式过滤。留空则不启用。"
+    },
+    "merge_rules": {
+        "type": "template_list",
+        "description": "消息合并规则",
+        "hint": "针对不规范频道的多消息组合进行智能合并（如预览图+原图）",
+        "templates": {
+            "default": {
+                "name": "合并规则配置",
+                "hint": "配置特定频道的消息合并规则",
+                "items": {
+                    "channel": {
+                        "type": "string",
+                        "description": "频道用户名 (不带@)",
+                        "hint": "例如: SomeACG"
+                    },
+                    "rule_class": {
+                        "type": "string",
+                        "description": "规则类名",
+                        "options": [
+                            "",
+                            "SomeACGPreviewPlusOriginal"
+                        ],
+                        "default": "",
+                        "hint": "选择合并规则类。SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "规则参数",
+                        "items": {
+                            "time_window_seconds": {
+                                "type": "int",
+                                "description": "时间窗口 (秒)",
+                                "default": 10,
+                                "hint": "关联消息的最大时间差（默认10秒）"
+                            }
+                        },
+                        "default": {
+                            "time_window_seconds": 10
+                        }
+                    }
+                }
+            }
+        },
+        "default": [
+            {
+                "__template_key": "default",
+                "channel": "SomeACG",
+                "rule_class": "SomeACGPreviewPlusOriginal",
+                "params": {
+                    "time_window_seconds": 10
+                }
+            }
+        ],
+        "obvious_hint": true
     }
 }

@@ -10,7 +10,6 @@
 """
 
 import asyncio
-import re
 import os
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -23,6 +22,9 @@ from .downloader import MediaDownloader
 from .uploader import FileUploader
 from .senders.telegram import TelegramSender
 from .senders.qq import QQSender
+from .filters.message_filter import MessageFilter
+from .mergers import MessageMerger
+from .config import ChannelConfigParser
 
 
 class Forwarder:
@@ -58,6 +60,10 @@ class Forwarder:
         # 初始化发送器
         self.tg_sender = TelegramSender(self.client, config)
         self.qq_sender = QQSender(self.context, config, self.downloader, self.uploader)
+
+        # 初始化过滤器和合并引擎
+        self.message_filter = MessageFilter(config)
+        self.message_merger = MessageMerger(config)
 
         # 启动时清理孤儿文件
         self._cleanup_orphaned_files()
@@ -107,134 +113,31 @@ class Forwarder:
                 List[Tuple[str, Message]]: (channel_name, message) 元组列表
             """
             try:
-                channel_name = ""
-                start_date = None
-                default_interval = 0  # Default interval if not specified
-                interval = default_interval
-                msg_limit = 20  # 默认一次处理20条
-
                 # 解析频道配置
-                if isinstance(cfg, dict):
-                    # New config format
-                    channel_name = cfg.get("channel_username", "")
-                    if not channel_name:
-                        logger.warning(
-                            f"Skipping channel config with missing 'channel_username': {cfg}"
-                        )
-                        return []
-
-                    s_time = cfg.get("start_time", "")
-                    if s_time:
-                        try:
-                            start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(
-                                tzinfo=timezone.utc
-                            )
-                        except ValueError:
-                            logger.error(
-                                f"Invalid date format for {channel_name}: {s_time}"
-                            )
-
-                    interval = cfg.get("check_interval", default_interval)
-                    msg_limit = cfg.get("msg_limit", 20)
-
-                    # Handle config_preset (overrides the above if set)
-                    preset = cfg.get("config_preset", "")
-                    if preset:
-                        try:
-                            # preset format: date|interval|limit
-                            p_parts = [p.strip() for p in preset.split("|")]
-                            if len(p_parts) >= 1 and p_parts[0]:
-                                try:
-                                    start_date = datetime.strptime(
-                                        p_parts[0], "%Y-%m-%d"
-                                    ).replace(tzinfo=timezone.utc)
-                                except ValueError:
-                                    logger.warning(
-                                        f"Invalid date in preset {preset} for {channel_name}"
-                                    )
-
-                            if len(p_parts) >= 2 and p_parts[1].isdigit():
-                                interval = int(p_parts[1])
-
-                            if len(p_parts) >= 3 and p_parts[2].isdigit():
-                                msg_limit = int(p_parts[2])
-
-                            logger.info(
-                                f"Applied preset {preset} for {channel_name}: date={start_date}, int={interval}, limit={msg_limit}"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Error applying preset {preset} for {channel_name}: {e}"
-                            )
-
-                elif isinstance(cfg, str):
-                    # Legacy string format: name|date|interval|limit
-                    # 格式：channel_name | start_date | interval | limit
-                    # 示例：xiaoshuwu | 2025-01-01 | 60 | 5
-                    parts = [p.strip() for p in cfg.split("|")]
-                    if not parts:
-                        logger.warning(f"Skipping invalid channel string config: {cfg}")
-                        return []
-
-                    channel_name = parts[0]
-                    ints_found = []
-
-                    for part in parts[1:]:
-                        if not part:
-                            continue
-                        # 尝试解析为日期
-                        if "-" in part and not start_date:
-                            try:
-                                start_date = datetime.strptime(
-                                    part, "%Y-%m-%d"
-                                ).replace(tzinfo=timezone.utc)
-                                continue
-                            except:
-                                pass
-
-                        # 数字可能是间隔或限制
-                        if part.isdigit():
-                            ints_found.append(int(part))
-
-                    # 分配数字参数
-                    if len(ints_found) >= 1:
-                        interval = ints_found[0]
-                    if len(ints_found) >= 2:
-                        msg_limit = ints_found[1]
-                else:
-                    logger.warning(
-                        f"Skipping unknown channel config type: {type(cfg)} - {cfg}"
-                    )
-                    return []  # Unknown type
-
-                # Ensure channel_name is set
-                if not channel_name:
-                    logger.warning(
-                        f"Channel name could not be determined for config: {cfg}"
-                    )
+                config = ChannelConfigParser.parse(cfg)
+                if not config:
                     return []
 
                 # 检查间隔
                 now = datetime.now().timestamp()
-                last_check = self._channel_last_check.get(channel_name, 0)
-                # 使用该频道配置的间隔判断
-                if now - last_check < interval:
+                last_check = self._channel_last_check.get(config.channel_name, 0)
+                if now - last_check < config.interval:
                     return []  # 还没到时间
 
                 # 获取该频道的锁
-                lock = self._get_channel_lock(channel_name)
+                lock = self._get_channel_lock(config.channel_name)
 
                 # 如果锁被占用，跳过本次检查（非阻塞）
                 if lock.locked():
                     return []
 
                 async with lock:
-                    self._channel_last_check[channel_name] = now
+                    self._channel_last_check[config.channel_name] = now
                     # Fetch阶段：只获取消息，不发送
                     messages = await self._fetch_channel_messages(
-                        channel_name, start_date, msg_limit
+                        config.channel_name, config.start_date, config.msg_limit
                     )
-                    return [(channel_name, msg) for msg in messages]
+                    return [(config.channel_name, msg) for msg in messages]
 
             except asyncio.CancelledError:
                 raise
@@ -364,53 +267,14 @@ class Forwarder:
 
         处理流程：
         1. 过滤不想要的消息（关键词、正则、hashtag）
-        2. 识别相册（grouped_id）并分组
-        3. 按顺序发送每个批次
+        2. 智能合并关联消息（针对不规范频道）
+        3. 识别相册（grouped_id）并分组
+        4. 按顺序发送每个批次
         """
-        filter_keywords = self.config.get("filter_keywords", [])
-        filter_regex = self.config.get("filter_regex", "")
-        filter_hashtags = self.config.get("filter_hashtags", [])
-
         # ========== Phase 1: 过滤消息 ==========
-        filtered_messages = []
-        for channel_name, msg in sorted_messages:
-            try:
-                # ----- 反垃圾 / 频道过滤 -----
-                is_user_msg = (
-                    isinstance(msg.from_id, PeerUser) if msg.from_id else False
-                )
-                if not msg.post and is_user_msg:
-                    continue
-
-                text_content = msg.text or ""
-                should_skip = False
-
-                # Hashtag 过滤
-                if filter_hashtags:
-                    for tag in filter_hashtags:
-                        if tag in text_content:
-                            logger.info(f"[Filter] {msg.id}: Hashtag '{tag}'")
-                            should_skip = True
-                            break
-
-                # Keyword 过滤
-                if not should_skip and filter_keywords:
-                    for kw in filter_keywords:
-                        if kw in text_content:
-                            logger.info(f"[Filter] {msg.id}: Keyword '{kw}'")
-                            should_skip = True
-                            break
-
-                # Regex 过滤
-                if not should_skip and filter_regex:
-                    if re.search(filter_regex, text_content, re.IGNORECASE | re.DOTALL):
-                        logger.info(f"[Filter] {msg.id}: Regex match")
-                        should_skip = True
-
-                if not should_skip:
-                    filtered_messages.append((channel_name, msg))
-            except Exception as e:
-                logger.error(f"[Filter] Error filtering msg {msg.id}: {e}")
+        filtered_messages = self.message_filter.filter_messages(
+            sorted_messages, logger.info
+        )
 
         if not filtered_messages:
             logger.info("[Send] All messages were filtered, nothing to send")
@@ -420,14 +284,25 @@ class Forwarder:
             f"[Send] {len(filtered_messages)} messages after filtering (from {len(sorted_messages)} fetched)"
         )
 
-        # ========== Phase 2: 相册分组 (修正版) ==========
+        # ========== Phase 1.5: 智能合并关联消息 (针对不规范频道) ==========
+        filtered_messages = self.message_merger.merge_messages(filtered_messages)
+
+        # ========== Phase 2: 相册分组 (修正版 + 合并标记支持) ==========
         # 使用字典按 (channel_name, grouped_id) 聚合，确保跨消息的相册也能正确合并
+        # 同时支持 _merge_group_id 属性（用于智能合并的关联消息）
         album_groups = {}
         batches = []
 
         for channel_name, msg in filtered_messages:
-            if msg.grouped_id:
-                key = (channel_name, msg.grouped_id)
+            # 优先检查 _merge_group_id（智能合并的标记）
+            group_id = getattr(msg, "_merge_group_id", None)
+
+            if not group_id:
+                # 使用 Telegram 原生 grouped_id
+                group_id = msg.grouped_id
+
+            if group_id:
+                key = (channel_name, group_id)
                 if key not in album_groups:
                     album_groups[key] = []
                 album_groups[key].append((channel_name, msg))
@@ -438,9 +313,8 @@ class Forwarder:
         for group in album_groups.values():
             batches.append(group)
 
-        # 重新按第一条消息的时间排序，确保发送顺序大致正确
-        if batches:
-            batches.sort(key=lambda batch: batch[0][1].date)
+        # 注意：不重新排序批次，保持原始消息顺序
+        # 这样可以确保同一频道的关联消息（如 SomeACG 的预览图+原图）保持连续发送
 
         logger.info(
             f"[Send] Organized into {len(batches)} batches (albums={len(album_groups)}, singles={len(batches) - len(album_groups)})"
