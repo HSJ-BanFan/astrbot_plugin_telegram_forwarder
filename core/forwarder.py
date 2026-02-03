@@ -250,9 +250,10 @@ class Forwarder:
         for item in to_send_meta:
             mid = item["id"]
             if mid in msg_map and mid not in processed_ids_in_send:
+                channel = item["channel"]
                 if item.get("grouped_id"):
                     gid = item["grouped_id"]
-                    album_items = [i for i in to_send_meta if i.get("grouped_id") == gid]
+                    album_items = [i for i in to_send_meta if i.get("grouped_id") == gid and i["channel"] == channel]
                     album_msgs = []
                     for ai in album_items:
                         if ai["id"] in msg_map:
@@ -260,14 +261,14 @@ class Forwarder:
                             processed_ids_in_send.add(ai["id"])
                     
                     album_msgs.sort(key=lambda m: m.date)
-                    final_batches.append(album_msgs)
+                    final_batches.append((album_msgs, channel))
                 else:
-                    final_batches.append([msg_map[mid][1]])
+                    final_batches.append(([msg_map[mid][1]], channel))
                     processed_ids_in_send.add(mid)
 
         try:
             if final_batches:
-                await self._send_sorted_messages_in_batches(final_batches, to_send_meta[0]['channel'])
+                await self._send_sorted_messages_in_batches(final_batches)
         except Exception as e:
             logger.error(f"[Send] 转发过程出现错误: {e}")
         finally:
@@ -278,14 +279,15 @@ class Forwarder:
             if sent_ids:
                 logger.debug(f"[Send] 批次处理完成。队列剩余: {len(remaining_pending)} 条消息。")
 
-    async def _send_sorted_messages_in_batches(self, batches: List[List[Message]], src_channel: str):
+    async def _send_sorted_messages_in_batches(self, batches_with_channel: List[tuple]):
         """发送排好序的消息批次"""
         async with self._global_send_lock:
-            # 1. 转发到 QQ
-            await self.qq_sender.send(batches, src_channel)
-            
-            # 2. 转发到 Telegram
-            await self.tg_sender.send(batches, src_channel)
+            for msgs, src_channel in batches_with_channel:
+                # 1. 转发到 QQ
+                await self.qq_sender.send([msgs], src_channel)
+                
+                # 2. 转发到 Telegram
+                await self.tg_sender.send([msgs], src_channel)
 
     def _update_storage_queues(self, flat_pending_list: list):
         """
