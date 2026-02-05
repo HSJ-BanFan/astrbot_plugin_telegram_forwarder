@@ -71,24 +71,47 @@
                     "check_interval": {
                         "type": "int",
                         "description": "检测间隔 (秒)",
-                        "default": 60,
-                        "hint": "该频道专用的检测频率"
+                        "default": 0,
+                        "hint": "该频道专用的检测频率，为 0 时使用全局配置"
                     },
                     "msg_limit": {
                         "type": "int",
-                        "description": "单次上限",
+                        "description": "单次抓取上限",
                         "default": 10,
                         "hint": "每次检测最多处理几条消息，建议设为 5~20"
                     },
-                    "config_preset": {
+                    "exclude_text_on_media": {
+                        "description": "媒体消息仅发送媒体",
                         "type": "string",
-                        "description": "预设配置 (覆盖上方设置)",
-                        "options": [
-                            "",
-                            "2025-12-01|60|3"
-                        ],
+                        "options": ["继承全局", "开启", "关闭"],
+                        "default": "继承全局",
+                        "hint": "开启时，若消息包含媒体则不发送文本；选择‘继承全局’则使用全局配置"
+                    },
+                    "forward_types": {
+                        "description": "转发消息类型",
+                        "type": "list",
+                        "hint": "选择需要搬运的消息类型，全不选表示不搬运任何消息",
+                        "options": ["文字", "图片", "视频", "音频", "文件"],
+                        "default": ["文字", "图片", "视频", "音频", "文件"]
+                    },
+                    "max_file_size": {
+                        "description": "文件大小限制 (MB)",
+                        "type": "float",
+                        "default": 0,
+                        "hint": "除图片外的媒体大小限制，0 表示不限制"
+                    },
+                    "filter_keywords": {
+                        "type": "list",
+                        "item_type": "string",
+                        "description": "过滤关键词",
+                        "default": [],
+                        "hint": "包含这些关键词的消息将被丢弃"
+                    },
+                    "filter_regex": {
+                        "type": "string",
+                        "description": "正则过滤",
                         "default": "",
-                        "hint": "选择预设配置快捷填入 (格式: 日期|间隔|数量)，选中后将忽略上方的日期、间隔和数量设置"
+                        "hint": "Python 正则表达式过滤"
                     }
                 }
             }
@@ -98,60 +121,89 @@
                 "__template_key": "default",
                 "channel_username": "heyTchuang",
                 "start_time": "",
-                "check_interval": 60,
-                "msg_limit": 10
+                "check_interval": 0,
+                "msg_limit": 10,
+                "exclude_text_on_media": "继承全局",
+                "forward_types": ["文字", "图片", "视频", "音频", "文件"],
+                "max_file_size": 0
             }
         ],
         "hint": "添加并配置需要转发的 Telegram 频道",
         "obvious_hint": true
     },
-    "exclude_text_on_media": {
-        "description": "媒体消息仅发送媒体",
-        "type": "bool",
-        "default": false,
-        "hint": "如果消息包含媒体（图片、音频、视频、文件等），则不发送文本说明内容（包含标题和 From 头部）"
-    },
-    "check_interval": {
-        "description": "检测间隔(秒)",
-        "type": "int",
-        "hint": "每隔多少秒检查一次新消息",
-        "default": 60
-    },
-    "send_interval": {
-        "type": "int",
-        "default": 60,
-        "description": "发送执行间隔 (秒)",
-        "hint": "从待发送队列中提取消息并执行转发的周期"
-    },
-    "batch_size_limit": {
-        "description": "单次发送消息批次上限",
-        "hint": "每批次发送时单次消息数量上限",
-        "type": "int",
-        "slider": {
-            "min": 1,
-            "max": 20,
-            "step": 1
-        },
-        "default": 3
-    },
-    "retention_period": {
-        "description": "消息保留时间 (秒)",
-        "hint": "如果超过这个时间的之前捕获到的消息将在发送前先被删除",
-        "type": "int",
-        "default": 86400
-    },
-    "filter_keywords": {
-        "type": "list",
-        "item_type": "string",
-        "description": "过滤关键词",
-        "default": [],
-        "hint": "包含这些关键词的消息将被自动丢弃（例如 VPN, NSFW）"
-    },
-    "filter_regex": {
-        "type": "string",
-        "description": "正则过滤",
-        "default": "",
-        "hint": "Python 正则表达式过滤。留空则不启用。"
+    "forward_config": {
+        "type": "object",
+        "description": "全局转发配置",
+        "hint": "配置全局转发配置与过滤规则",
+        "items": {
+            "use_channel_title": {
+                "type": "bool",
+                "default": true,
+                "description": "显示频道标题",
+                "hint": "开启时，From 头部将显示频道名称而非 ID。程序会自动获取频道标题。"
+            },
+            "exclude_text_on_media": {
+                "description": "媒体消息仅发送媒体",
+                "type": "bool",
+                "default": false,
+                "hint": "如果消息包含媒体（图片、音频、视频、文件等），则不发送文本说明内容（包含标题和 From 头部）"
+            },
+            "forward_types": {
+                "description": "转发消息类型",
+                "type": "list",
+                "hint": "选择需要搬运的消息类型，全不选表示不搬运任何消息",
+                "options": ["文字", "图片", "视频", "音频", "文件"],
+                "default": ["文字", "图片", "视频", "音频", "文件"]
+            },
+            "max_file_size": {
+                "description": "文件大小限制 (MB)",
+                "type": "float",
+                "default": 0,
+                "hint": "除图片外的媒体（音频、视频、文件）大小限制。0 表示不限制。"
+            },
+            "check_interval": {
+                "description": "检测间隔(秒)",
+                "type": "int",
+                "hint": "每隔多少秒检查一次新消息",
+                "default": 60
+            },
+            "send_interval": {
+                "type": "int",
+                "default": 60,
+                "description": "发送执行间隔 (秒)",
+                "hint": "从待发送队列中提取消息并执行转发的周期"
+            },
+            "batch_size_limit": {
+                "description": "单次发送消息批次上限",
+                "hint": "每批次发送时单次消息数量上限",
+                "type": "int",
+                "slider": {
+                    "min": 1,
+                    "max": 20,
+                    "step": 1
+                },
+                "default": 3
+            },
+            "retention_period": {
+                "description": "消息保留时间 (秒)",
+                "hint": "超过此时间的消息在发送前将被丢弃",
+                "type": "int",
+                "default": 86400
+            },
+            "filter_keywords": {
+                "type": "list",
+                "item_type": "string",
+                "description": "过滤关键词",
+                "default": [],
+                "hint": "包含这些关键词的消息将被丢弃"
+            },
+            "filter_regex": {
+                "type": "string",
+                "description": "正则过滤",
+                "default": "",
+                "hint": "Python 正则表达式过滤。留空则不启用。"
+            }
+        }
     },
     "proxy": {
         "description": "代理地址",

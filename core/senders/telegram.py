@@ -12,13 +12,14 @@ class TelegramSender:
         self.client = client
         self.config = config
 
-    async def send(self, batches: List[List[Message]], src_channel: str):
+    async def send(self, batches: List[List[Message]], src_channel: str, effective_cfg: dict = None):
         """
         转发消息到 Telegram 目标频道
 
         Args:
             batches: 消息批次列表 (List[List[Message]])
             src_channel: 源频道名称（用于日志）
+            effective_cfg: 合并后的配置项
         """
         tg_target = self.config.get("target_channel")
         bot_token = self.config.get("bot_token")

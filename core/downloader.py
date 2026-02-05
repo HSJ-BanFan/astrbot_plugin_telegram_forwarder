@@ -17,7 +17,7 @@ class MediaDownloader:
         self.plugin_data_dir = plugin_data_dir
         self.max_file_size = max_file_size
 
-    async def download_media(self, msg: Message) -> List[str]:
+    async def download_media(self, msg: Message, max_size_mb: float = 0) -> List[str]:
         """
         下载媒体文件（带大小检查）
         """
@@ -26,14 +26,21 @@ class MediaDownloader:
         if not msg.media:
             return local_files
 
-        if hasattr(msg.media, "document") and hasattr(msg.media.document, "size"):
-            if msg.media.document.size > self.max_file_size:
-                logger.warning(
-                    f"[Downloader] 文件过大 ({msg.media.document.size} 字节)，跳过下载。"
+        # 检查大小限制 (图片除外)
+        is_photo = bool(msg.photo)
+        if not is_photo and max_size_mb > 0:
+            file_size = 0
+            if hasattr(msg.media, "document") and hasattr(msg.media.document, "size"):
+                file_size = msg.media.document.size
+            elif hasattr(msg.file, "size"):
+                file_size = msg.file.size
+            
+            if file_size > max_size_mb * 1024 * 1024:
+                logger.info(
+                    f"[Downloader] 消息 {msg.id} 中的文件过大 ({file_size / 1024 / 1024:.2f} MB > {max_size_mb} MB)，跳过下载。"
                 )
                 return local_files
 
-        is_photo = bool(msg.photo)
         is_video = bool(msg.video)
         is_audio = bool(msg.audio or msg.voice)
         is_file = bool(msg.file)

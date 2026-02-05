@@ -109,8 +109,10 @@ class Main(star.Star):
 
         if is_authorized:
             # ========== 启动定时调度器 ==========
-            check_interval = self.config.get("check_interval", 60)
-            send_interval = self.config.get("send_interval", 60)
+            # 从全局 forward_config 对象中获取间隔
+            forward_config = self.config.get("forward_config", {})
+            check_interval = forward_config.get("check_interval", 60)
+            send_interval = forward_config.get("send_interval", 60)
 
             # 任务 1: 检查更新 (Capture)
             check_start_time = datetime.now() + timedelta(seconds=5)

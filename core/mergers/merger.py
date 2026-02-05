@@ -30,20 +30,6 @@ class MessageMerger:
     def _load_merge_rules(self) -> Dict[str, MergeRule]:
         """
         从配置加载合并规则
-
-        配置格式：
-        {
-            "SomeACG": {
-                "rule_class": "SomeACGPreviewPlusOriginal",
-                "params": {
-                    "time_window_seconds": 10,
-                    ...
-                }
-            }
-        }
-
-        Returns:
-            频道名称 -> MergeRule 实例的映射
         """
         rules_config = self.config.get("merge_rules", [])
         if not rules_config:

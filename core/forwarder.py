@@ -64,10 +64,82 @@ class Forwarder:
         # 全局发送锁，确保所有频道的消息按顺序发送，避免交错
         self._global_send_lock = asyncio.Lock()
 
-    def _get_channel_lock(self, channel_name):
+        # 缓存频道标题 (Key: ChannelUsername, Value: Title)
+        self._channel_titles_cache = {}
+
+    def _get_channel_lock(self, channel_name: str) -> asyncio.Lock:
         if channel_name not in self._channel_locks:
             self._channel_locks[channel_name] = asyncio.Lock()
         return self._channel_locks[channel_name]
+
+    async def _get_display_name(self, channel_name: str) -> str:
+        """获取频道显示名称"""
+        forward_cfg = self.config.get("forward_config", {})
+        use_title = forward_cfg.get("use_channel_title", True)
+
+        if not use_title:
+            return f"@{channel_name}"
+
+        # 尝试从缓存获取
+        if channel_name in self._channel_titles_cache:
+            return self._channel_titles_cache[channel_name]
+
+        # 尝试从 Telegram 获取
+        try:
+            entity = await self.client.get_entity(channel_name)
+            title = getattr(entity, 'title', channel_name)
+            self._channel_titles_cache[channel_name] = title
+            return title
+        except Exception as e:
+            logger.warning(f"[Capture] 无法获取频道 {channel_name} 的标题: {e}")
+            return f"@{channel_name}"
+
+    def _get_effective_config(self, channel_name: str):
+        """
+        获取有效配置 (双重过滤原则: 全局与频道配置均需符合)
+        """
+        # 1. 获取全局配置
+        global_cfg = self.config.get("forward_config", {})
+        
+        # 2. 获取该频道的特定配置
+        channels_config = self.config.get("source_channels", [])
+        channel_cfg = {}
+        for cfg in channels_config:
+            if cfg.get("channel_username") == channel_name:
+                channel_cfg = cfg
+                break
+        
+        # 3. 核心过滤项交集逻辑 ( Strictest Policy )
+        
+        # 3.1 转发类型 (交集)
+        g_types = set(global_cfg.get("forward_types", ["文字", "图片", "视频", "音频", "文件"]))
+        c_types = set(channel_cfg.get("forward_types", ["文字", "图片", "视频", "音频", "文件"]))
+        forward_types = list(g_types.intersection(c_types))
+        
+        # 3.2 文件大小限制 (取非零最小值)
+        g_max = global_cfg.get("max_file_size", 0)
+        c_max = channel_cfg.get("max_file_size", 0)
+        if g_max > 0 and c_max > 0:
+            max_file_size = min(g_max, c_max)
+        else:
+            max_file_size = g_max or c_max # 只要有一个不为0就取那个，都为0则不限制
+            
+        # 3.3 关键词与正则 (并集过滤：命中任何一个都过滤)
+        filter_keywords = list(set(global_cfg.get("filter_keywords", []) + channel_cfg.get("filter_keywords", [])))
+        
+        # 3.4 发送间隔与检测间隔
+        check_interval = channel_cfg.get("check_interval") or global_cfg.get("check_interval", 60)
+        send_interval = global_cfg.get("send_interval", 60)
+
+        return {
+            "forward_types": forward_types,
+            "max_file_size": max_file_size,
+            "filter_keywords": filter_keywords,
+            "check_interval": check_interval,
+            "send_interval": send_interval,
+            "exclude_text_on_media": channel_cfg.get("exclude_text_on_media", "继承全局") == "开启" or 
+                                    (channel_cfg.get("exclude_text_on_media", "继承全局") == "继承全局" and global_cfg.get("exclude_text_on_media", False))
+        }
 
     async def check_updates(self):
         """
@@ -81,29 +153,20 @@ class Forwarder:
 
         async def fetch_one(cfg):
             try:
-                channel_name = ""
-                start_date = None
-                default_interval = 0
-                interval = default_interval
-                msg_limit = 20
-
-                if isinstance(cfg, dict):
-                    channel_name = cfg.get("channel_username", "")
-                    if not channel_name: return []
-                    s_time = cfg.get("start_time", "")
-                    if s_time:
-                        try:
-                            start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                        except: pass
-                    interval = cfg.get("check_interval", default_interval)
-                    msg_limit = cfg.get("msg_limit", 20)
-                elif isinstance(cfg, str):
-                    parts = [p.strip() for p in cfg.split("|")]
-                    if not parts: return []
-                    channel_name = parts[0]
-                else: return []
-
+                channel_name = cfg.get("channel_username", "")
                 if not channel_name: return []
+                
+                effective_cfg = self._get_effective_config(channel_name)
+                
+                start_date = None
+                s_time = cfg.get("start_time", "")
+                if s_time:
+                    try:
+                        start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    except: pass
+                
+                interval = effective_cfg["check_interval"]
+                msg_limit = cfg.get("msg_limit", 20)
 
                 now = datetime.now().timestamp()
                 last_check = self._channel_last_check.get(channel_name, 0)
@@ -117,7 +180,7 @@ class Forwarder:
 
                 async with lock:
                     self._channel_last_check[channel_name] = now
-                    logger.debug(f"[Capture] 正在拉取频道 {channel_name} 的消息...")
+                    logger.debug(f"[Capture] 正在拉取: {channel_name}")
                     messages = await self._fetch_channel_messages(channel_name, start_date, msg_limit)
                     
                     if messages:
@@ -128,9 +191,9 @@ class Forwarder:
                         max_id = max(m.id for m in messages)
                         self.storage.update_last_id(channel_name, max_id)
                         
-                        logger.debug(f"[Capture] 频道 {channel_name} 的 {len(messages)} 条新消息已成功存入本地待发送队列，并更新 last_id 为 {max_id}。")
+                        logger.info(f"[Capture] 频道 {channel_name} 成功拉取 {len(messages)} 条消息 (ID: {max_id})")
                     else:
-                        logger.debug(f"[Capture] 频道 {channel_name} 检查完成，无新消息。")
+                        logger.debug(f"[Capture] 频道 {channel_name} 无新消息。")
                     return messages
             except Exception as e:
                 logger.error(f"[Capture] 检查频道 {cfg} 时出现未捕获异常: {e}")
@@ -156,18 +219,21 @@ class Forwarder:
             logger.debug("[Send] 正在检测待发送队列... 队列为空，无需处理。")
             return
 
+        # 获取全局配置用于提取公共参数
+        global_cfg = self.config.get("forward_config", {})
+        
+        batch_limit = global_cfg.get("batch_size_limit", 3)
+        retention = global_cfg.get("retention_period", 86400)
+        now_ts = datetime.now().timestamp()
+
         # 统计各频道积压情况
         stats = {}
         for item in all_pending:
             c = item["channel"]
             stats[c] = stats.get(c, 0) + 1
         
-        stats_str = ", ".join([f"{c}: {n}条" for c, n in stats.items()])
-        logger.debug(f"[Send] 正在检测待发送队列... 总计: {queue_size} 条消息 | 积压详情: {stats_str}")
-
-        batch_limit = self.config.get("batch_size_limit", 3)
-        retention = self.config.get("retention_period", 86400)
-        now_ts = datetime.now().timestamp()
+        stats_str = ", ".join([f"{c}({n}条)" for c, n in stats.items()])
+        logger.debug(f"[Send] 队列状态: 总计 {queue_size} 条 | 详情: {stats_str}")
 
         valid_pending = []
         expired_count = 0
@@ -179,219 +245,236 @@ class Forwarder:
         
         if expired_count > 0:
             self.storage.cleanup_expired_pending(retention)
-            # 重新获取一下，因为清理了过期消息
             all_pending = self.storage.get_all_pending()
-            valid_pending = all_pending # 此时 all_pending 已经是清理过的了
+            valid_pending = all_pending
 
         if not valid_pending:
-            logger.debug("[Send] 待发送队列为空。")
             return
 
         valid_pending.sort(key=lambda x: x["time"], reverse=True)
         
-        logger.debug(f"[Send] 准备处理 {min(len(valid_pending), batch_limit)} 个逻辑批次 (batch_limit={batch_limit})")
-
-        to_send_meta = []
-        processed_ids = set()
-        logical_count = 0 
-        
-        for item in valid_pending:
-            if logical_count >= batch_limit:
-                break
-            
-            if item["id"] in processed_ids:
-                continue
-            
-            if item.get("grouped_id"):
-                gid = item["grouped_id"]
-                channel = item["channel"]
-                album_items = [i for i in valid_pending if i.get("grouped_id") == gid and i["channel"] == channel]
-                for a_item in album_items:
-                    if a_item["id"] not in processed_ids:
-                        to_send_meta.append(a_item)
-                        processed_ids.add(a_item["id"])
-                logical_count += 1 
-            else:
-                to_send_meta.append(item)
-                processed_ids.add(item["id"])
-                logical_count += 1 
-
-        if not to_send_meta:
-            return
-
-        channel_to_ids = {}
-        id_to_meta = {} # 建立 ID 到元数据的映射，方便后续根据 grouped_id 过滤
-        for item in to_send_meta:
-            c = item["channel"]
-            mid = item["id"]
-            if c not in channel_to_ids: channel_to_ids[c] = []
-            channel_to_ids[c].append(mid)
-            id_to_meta[mid] = item
-
-        messages_to_process = []
-        filter_keywords = self.config.get("filter_keywords", [])
-        filter_regex = self.config.get("filter_regex", "")
-        filter_hashtags = self.config.get("filter_hashtags", [])
-
-        # 第一阶段：初步抓取并识别需要过滤的消息/相册
-        raw_fetched_messages = []
-        skipped_grouped_ids = set() # (channel, grouped_id)
-        individually_skipped_ids = set()
-
-        for channel, ids in channel_to_ids.items():
-            try:
-                msgs = await self.client.get_messages(channel, ids=ids)
-                for m in msgs:
-                    if not m: continue
-                    raw_fetched_messages.append((channel, m))
-                    
-                    text_content = m.text or ""
-                    # 检查是否有按钮文字 (广告常用)
-                    button_text = ""
-                    if m.reply_markup and hasattr(m.reply_markup, 'rows'):
-                        btn_parts = []
-                        for row in m.reply_markup.rows:
-                            for btn in row.buttons:
-                                if hasattr(btn, 'text'): btn_parts.append(btn.text)
-                        button_text = " ".join(btn_parts)
-                    
-                    full_check_text = f"{text_content} {button_text}"
-
-                    should_skip = False
-                    
-                    # 关键词/正则/Hashtag 过滤 (检查正文 + 按钮)
-                    check_text_lower = full_check_text.lower()
-                    
-                    def is_keyword_matched(pattern_str, text):
-                        pattern_str = pattern_str.lower()
-                        if not pattern_str: return False
-                        if pattern_str.isascii():
-                            # 使用自定义边界：前后不能是英文字母或数字
-                            regex_pattern = rf"(?<![a-zA-Z0-9]){re.escape(pattern_str)}(?![a-zA-Z0-9])"
-                            return bool(re.search(regex_pattern, text, re.IGNORECASE))
-                        # 对于包含非 ASCII（如中文）的关键词，维持原有的子串匹配
-                        return pattern_str in text
-
-                    if filter_hashtags:
-                        for tag in filter_hashtags:
-                            if is_keyword_matched(tag, check_text_lower):
-                                logger.info(f"[Filter] 消息 {m.id} 命中 Hashtag '{tag}'")
-                                should_skip = True; break
-                    
-                    if not should_skip and filter_keywords:
-                        for kw in filter_keywords:
-                            if is_keyword_matched(kw, check_text_lower):
-                                logger.info(f"[Filter] 消息 {m.id} 命中关键词 '{kw}'")
-                                should_skip = True; break
-                    
-                    if not should_skip and filter_regex:
-                        if re.search(filter_regex, full_check_text, re.IGNORECASE | re.DOTALL):
-                            logger.info(f"[Filter] 消息 {m.id} 命中正则匹配")
-                            should_skip = True
-                    
-                    if should_skip:
-                        meta = id_to_meta.get(m.id)
-                        if meta and meta.get("grouped_id"):
-                            skipped_grouped_ids.add((channel, meta["grouped_id"]))
-                        individually_skipped_ids.add(m.id)
-            except Exception as e:
-                logger.error(f"[Send] 拉取消息失败 {channel}: {e}")
-
-        # 第二阶段：应用过滤（包括相册联动过滤）
-        for channel, m in raw_fetched_messages:
-            meta = id_to_meta.get(m.id)
-            is_in_skipped_album = False
-            if meta and meta.get("grouped_id"):
-                if (channel, meta["grouped_id"]) in skipped_grouped_ids:
-                    is_in_skipped_album = True
-            
-            if m.id in individually_skipped_ids or is_in_skipped_album:
-                if is_in_skipped_album and m.id not in individually_skipped_ids:
-                    logger.info(f"[Filter] 消息 {m.id} 因所属相册中其他消息命中过滤规则而被同步跳过。")
-                continue
-            
-            messages_to_process.append((channel, m))
-
-        if not messages_to_process:
-            processed_ids = [item["id"] for item in to_send_meta]
-            # 建立频道到 ID 的反向索引，用于精确移除
-            chan_to_ids_processed = {}
-            for item in to_send_meta:
-                c = item["channel"]
-                if c not in chan_to_ids_processed: chan_to_ids_processed[c] = []
-                chan_to_ids_processed[c].append(item["id"])
-            
-            for channel, ids in chan_to_ids_processed.items():
-                self.storage.remove_ids_from_pending(channel, ids)
-
-            logger.info(f"[Send] 本批次所有消息 ({len(processed_ids)} 条) 均被过滤或获取失败，已从队列移除。")
-            return
+        logger.debug(f"[Send] 开始处理待发送队列 (批次上限: {batch_limit})")
 
         final_batches = []
-        msg_map = {m.id: (c, m) for c, m in messages_to_process}
-        processed_ids_in_send = set()
-        
-        for item in to_send_meta:
-            mid = item["id"]
-            if mid in msg_map and mid not in processed_ids_in_send:
-                channel = item["channel"]
+        all_processed_meta = []
+        logical_sent_count = 0
+        processed_ids = set()
+        pending_idx = 0
+
+        while logical_sent_count < batch_limit and pending_idx < len(valid_pending):
+            # 1. 提取下一组元数据进行尝试
+            current_try_meta = []
+            current_try_logical_units = 0
+            needed_units = batch_limit - logical_sent_count
+            
+            # 记录本轮尝试提取的逻辑单元对应的 ID，用于后续分组
+            current_try_logical_map = {} # {logical_id: [meta_items]}
+
+            while current_try_logical_units < needed_units and pending_idx < len(valid_pending):
+                item = valid_pending[pending_idx]
+                pending_idx += 1
+                
+                if item["id"] in processed_ids:
+                    continue
+                
+                logical_id = item.get("grouped_id") or f"single_{item['id']}"
                 if item.get("grouped_id"):
                     gid = item["grouped_id"]
-                    album_items = [i for i in to_send_meta if i.get("grouped_id") == gid and i["channel"] == channel]
-                    album_msgs = []
-                    for ai in album_items:
-                        if ai["id"] in msg_map:
-                            album_msgs.append(msg_map[ai["id"]][1])
-                            processed_ids_in_send.add(ai["id"])
+                    channel = item["channel"]
+                    album_items = [i for i in valid_pending if i.get("grouped_id") == gid and i["channel"] == channel]
                     
-                    album_msgs.sort(key=lambda m: m.date)
-                    final_batches.append((album_msgs, channel))
+                    unit_items = []
+                    for a_item in album_items:
+                        if a_item["id"] not in processed_ids:
+                            unit_items.append(a_item)
+                            processed_ids.add(a_item["id"])
+                    
+                    if unit_items:
+                        current_try_meta.extend(unit_items)
+                        current_try_logical_map[logical_id] = unit_items
+                        current_try_logical_units += 1
                 else:
-                    final_batches.append(([msg_map[mid][1]], channel))
-                    processed_ids_in_send.add(mid)
+                    current_try_meta.append(item)
+                    current_try_logical_map[logical_id] = [item]
+                    processed_ids.add(item["id"])
+                    current_try_logical_units += 1
+
+            if not current_try_meta:
+                break
+                
+            all_processed_meta.extend(current_try_meta)
+
+            # 2. 抓取与初步过滤
+            channel_to_ids = {}
+            id_to_meta = {item["id"]: item for item in current_try_meta}
+            for item in current_try_meta:
+                c = item["channel"]; mid = item["id"]
+                if c not in channel_to_ids: channel_to_ids[c] = []
+                channel_to_ids[c].append(mid)
+
+            raw_fetched_messages = []
+            skipped_grouped_ids = set() # (channel, grouped_id)
+            individually_skipped_ids = set()
+
+            def is_keyword_matched(pattern_str, text):
+                pattern_str = pattern_str.lower()
+                if not pattern_str: return False
+                if pattern_str.isascii():
+                    regex_pattern = rf"(?<![a-zA-Z0-9]){re.escape(pattern_str)}(?![a-zA-Z0-9])"
+                    return bool(re.search(regex_pattern, text, re.IGNORECASE))
+                return pattern_str in text
+
+            for channel, ids in channel_to_ids.items():
+                try:
+                    effective_cfg = self._get_effective_config(channel)
+                    msgs = await self.client.get_messages(channel, ids=ids)
+                    for m in msgs:
+                        if not m: continue
+                        raw_fetched_messages.append((channel, m))
+                        
+                        # 类型过滤
+                        forward_types = effective_cfg["forward_types"]
+                        max_file_size = effective_cfg["max_file_size"]
+                        msg_type = "文字"
+                        if m.photo: msg_type = "图片"
+                        elif m.video: msg_type = "视频"
+                        elif m.voice or m.audio: msg_type = "音频"
+                        elif m.document: msg_type = "文件"
+                        
+                        if msg_type not in forward_types:
+                            logger.info(f"[Filter] 消息 {m.id} 类型 '{msg_type}' 不在允许列表中，跳过。")
+                            individually_skipped_ids.add(m.id)
+                            continue
+
+                        # 检查文件大小
+                        m._max_file_size = max_file_size
+                        if not m.photo and max_file_size > 0:
+                            file_size = 0
+                            if hasattr(m, "media") and m.media:
+                                if hasattr(m.media, "document") and hasattr(m.media.document, "size"):
+                                    file_size = m.media.document.size
+                                elif hasattr(m.file, "size"):
+                                    file_size = m.file.size
+                            if file_size > max_file_size * 1024 * 1024:
+                                logger.info(f"[Filter] 消息 {m.id} 文件大小 ({file_size / 1024 / 1024:.2f} MB) 超过限制 ({max_file_size} MB)，跳过。")
+                                individually_skipped_ids.add(m.id)
+                                continue
+
+                        # 关键词/正则过滤
+                        text_content = m.text or ""
+                        button_text = ""
+                        if m.reply_markup and hasattr(m.reply_markup, 'rows'):
+                            btn_parts = [btn.text for row in m.reply_markup.rows for btn in row.buttons if hasattr(btn, 'text')]
+                            button_text = " ".join(btn_parts)
+                        
+                        full_check_text = f"{text_content} {button_text}"
+                        should_skip = False
+                        check_text_lower = full_check_text.lower()
+                        
+                        filter_keywords = effective_cfg["filter_keywords"]
+                        if filter_keywords:
+                            for kw in filter_keywords:
+                                if is_keyword_matched(kw, check_text_lower):
+                                    logger.info(f"[Filter] 消息 {m.id} 命中关键词 '{kw}'")
+                                    should_skip = True; break
+                        
+                        patterns = []
+                        if global_cfg.get("filter_regex"): patterns.append(global_cfg["filter_regex"])
+                        current_channel_raw_cfg = next((c for c in self.config.get("source_channels", []) if c.get("channel_username") == channel), {})
+                        if current_channel_raw_cfg.get("filter_regex"): patterns.append(current_channel_raw_cfg["filter_regex"])
+
+                        for pattern in patterns:
+                            if not should_skip and pattern:
+                                if re.search(pattern, full_check_text, re.IGNORECASE | re.DOTALL):
+                                    logger.info(f"[Filter] 消息 {m.id} 命中正则匹配: {pattern[:30]}...")
+                                    should_skip = True; break
+                        
+                        if should_skip:
+                            individually_skipped_ids.add(m.id)
+                            meta = id_to_meta.get(m.id)
+                            if meta and meta.get("grouped_id"):
+                                skipped_grouped_ids.add((channel, meta["grouped_id"]))
+                except Exception as e:
+                    logger.error(f"[Send] 拉取消息失败 {channel}: {e}")
+
+            # 3. 应用过滤并构建本轮有效的 batches
+            msg_map = {m.id: (c, m) for c, m in raw_fetched_messages}
+            
+            for logical_id, unit_items in current_try_logical_map.items():
+                channel = unit_items[0]["channel"]
+                is_album = unit_items[0].get("grouped_id") is not None
+                
+                if is_album:
+                    gid = unit_items[0]["grouped_id"]
+                    if (channel, gid) in skipped_grouped_ids:
+                        continue # 整个相册被跳过
+                    
+                    album_msgs = []
+                    for ui in unit_items:
+                        mid = ui["id"]
+                        if mid in msg_map and mid not in individually_skipped_ids:
+                            album_msgs.append(msg_map[mid][1])
+                    
+                    if album_msgs:
+                        album_msgs.sort(key=lambda m: m.date)
+                        final_batches.append((album_msgs, channel))
+                        logical_sent_count += 1
+                else:
+                    mid = unit_items[0]["id"]
+                    if mid in msg_map and mid not in individually_skipped_ids:
+                        final_batches.append(([msg_map[mid][1]], channel))
+                        logical_sent_count += 1
+
+        if not final_batches:
+            if all_processed_meta:
+                chan_to_ids_processed = {}
+                for item in all_processed_meta:
+                    c = item["channel"]
+                    if c not in chan_to_ids_processed: chan_to_ids_processed[c] = []
+                    chan_to_ids_processed[c].append(item["id"])
+                for channel, ids in chan_to_ids_processed.items():
+                    self.storage.remove_ids_from_pending(channel, ids)
+                logger.info(f"[Send] 本批次尝试的所有消息 ({len(all_processed_meta)} 条) 均被过滤或获取失败，已从队列移除。")
+            return
 
         actual_sent_count = 0
         try:
-            if final_batches:
-                await self._send_sorted_messages_in_batches(final_batches)
-                for msgs, _ in final_batches:
-                    actual_sent_count += len(msgs)
+            await self._send_sorted_messages_in_batches(final_batches)
+            for msgs, _ in final_batches:
+                actual_sent_count += len(msgs)
         except Exception as e:
             logger.error(f"[Send] 转发过程出现错误: {e}")
         finally:
-            # 建立频道到 ID 的反向索引，用于精确移除
             chan_to_ids_processed = {}
-            for item in to_send_meta:
+            for item in all_processed_meta:
                 c = item["channel"]
                 if c not in chan_to_ids_processed: chan_to_ids_processed[c] = []
                 chan_to_ids_processed[c].append(item["id"])
-            
             for channel, ids in chan_to_ids_processed.items():
                 self.storage.remove_ids_from_pending(channel, ids)
             
-            if to_send_meta:
-                processed_count = len(to_send_meta)
+            if all_processed_meta:
+                processed_count = len(all_processed_meta)
                 skipped_count = processed_count - actual_sent_count
-                msg = f"[Send] 批次处理完成。本批次共处理 {processed_count} 条："
-                if actual_sent_count > 0:
-                    msg += f" 成功发送 {actual_sent_count} 条；"
+                msg = f"[Send] 处理完成: 成功 {actual_sent_count}"
                 if skipped_count > 0:
-                    msg += f" 过滤/跳过 {skipped_count} 条；"
-                
-                # 获取最新队列大小
+                    msg += f" | 跳过 {skipped_count}"
                 new_all_pending = self.storage.get_all_pending()
-                msg += f"队列剩余: {len(new_all_pending)} 条。"
+                msg += f" | 剩余队列: {len(new_all_pending)}"
                 logger.info(msg)
+
 
     async def _send_sorted_messages_in_batches(self, batches_with_channel: List[tuple]):
         """发送排好序的消息批次"""
         async with self._global_send_lock:
             for msgs, src_channel in batches_with_channel:
+                effective_cfg = self._get_effective_config(src_channel)
+                display_name = await self._get_display_name(src_channel)
                 # 1. 转发到 QQ
-                await self.qq_sender.send([msgs], src_channel)
+                await self.qq_sender.send([msgs], src_channel, display_name, effective_cfg["exclude_text_on_media"])
                 
                 # 2. 转发到 Telegram
-                await self.tg_sender.send([msgs], src_channel)
+                await self.tg_sender.send([msgs], display_name, effective_cfg)
 
     async def _fetch_channel_messages(
         self, channel_name: str, start_date: Optional[datetime], msg_limit: int = 20
@@ -408,13 +491,13 @@ class Forwarder:
         try:
             if last_id == 0:
                 if start_date:
-                    logger.info(f"[Fetch] {channel_name} 正在从 {start_date} 开始冷启动...")
+                    logger.info(f"[Fetch] {channel_name}: 冷启动 -> {start_date}")
                     pass
                 else:
                     msgs = await self.client.get_messages(channel_name, limit=1)
                     if msgs:
                         self.storage.update_last_id(channel_name, msgs[0].id)
-                        logger.info(f"[Fetch] {channel_name} 首次运行/冷启动，已同步当前最新 ID: {msgs[0].id}，下次抓取将从此开始。")
+                        logger.info(f"[Fetch] {channel_name}: 初始化 ID -> {msgs[0].id}")
                     return []
 
             new_messages = []
@@ -422,7 +505,7 @@ class Forwarder:
 
             if last_id > 0:
                 params["min_id"] = last_id
-                logger.debug(f"[Fetch] {channel_name} 发起请求: min_id={last_id}, limit={msg_limit}")
+                logger.debug(f"[Fetch] {channel_name}: 拉取 ID > {last_id}")
             elif start_date:
                 params["offset_date"] = start_date
             else:
@@ -433,20 +516,10 @@ class Forwarder:
                     continue
                 new_messages.append(message)
 
-            if new_messages:
-                logger.debug(
-                    f"[Fetch] {channel_name}: 抓取成功！获取到 {len(new_messages)} 条新消息 (范围: {min(m.id for m in new_messages)} -> {max(m.id for m in new_messages)})"
-                )
-            else:
-                # 即使没有新消息，我们也尝试获取一下频道当前的最新 ID 用于日志显示
-                latest_msgs = await self.client.get_messages(channel_name, limit=1)
-                latest_id_on_tg = latest_msgs[0].id if latest_msgs else "未知"
-                logger.debug(f"[Fetch] {channel_name}: 没有新消息。 (当前 TG 最新 ID: {latest_id_on_tg})")
-
             return new_messages
 
         except Exception as e:
-            logger.error(f"[Fetch] 访问 {channel_name} 失败: {e}")
+            logger.error(f"[Fetch] {channel_name}: 访问失败 - {e}")
             return []
 
     def _cleanup_orphaned_files(self):
