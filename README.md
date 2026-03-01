@@ -38,6 +38,25 @@
 
 ---
 
+## 指令帮助
+
+```text
+🤖 Telegram Forwarder 命令列表
+─────────────
+/tg add <频道>       添加监控频道
+/tg rm <频道>        移除监控频道
+/tg ls               列出监控频道
+/tg check            立即检查并尝试发送
+/tg status           查看运行状态
+/tg pause            暂停抓取与发送
+/tg resume           恢复抓取与发送
+/tg queue            查看待发送队列
+/tg clearqueue [频道|all]  清空队列
+/tg get [global|频道] 查看配置
+/tg set <目标> <字段> <值>  修改配置
+/tg help             显示此帮助
+```
+
 ## ⚙️ 配置说明
 
 ### 1. 账号连接
@@ -78,12 +97,10 @@
 
 ### 5. 全局转发配置
 * **qq_merge_threshold**: QQ 大合并：本次要发的消息数 >= 此值时，全部打包成一条合并转发消息。设为 ≤1 则永不触发大合并。推荐 5~10
-* **qq_big_merge_mode**: QQ 大合并的聚合范围：『独立频道』：每个频道独立判断是否合并（推荐）；『混合所有频道』：所有频道消息总数达标才合并成一条超大转发；『关闭』强制不使用大合并
 * **use_channel_title**: 是否在消息头部显示频道名称。
 * **enable_deduplication**: 是否启用转发查重。开启后，如果频道 A 转发了频道 B 的消息，且频道 B 也在监控列表中，则频道 A 的这条转发消息将被自动跳过。
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。
 * **filter_spoiler_messages**: 过滤 Telegram 遮罩/剧透消息（文本剧透实体与媒体剧透标记）。
-* **strip_markdown_links**: 开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃
 * **batch_size_limit**: 每次转发执行时，单次处理的消息批次上限。
 * **send_interval**: 轮询待发送队列并执行转发任务的周期。
 * **retention_period**: 消息在队列中的最大保留时间，过期将自动丢弃。

@@ -57,7 +57,6 @@ class QQSender:
         batches: List[List[Message]],
         src_channel: str,
         display_name: str = None,
-        target_qq_groups: List[int] = None,
         effective_cfg: dict = None,
         involved_channels: List[str] = None,           # 新增：混合模式时传入实际涉及的频道列表
     ):
@@ -75,7 +74,13 @@ class QQSender:
             exclude_text_on_media = effective_cfg.get("exclude_text_on_media", False)
             strip_links = effective_cfg.get("strip_markdown_links", False)
 
-        qq_groups = target_qq_groups if target_qq_groups is not None else self.config.get("target_qq_group", [])
+        channel_specific_groups = effective_cfg.get("effective_target_qq_groups", [])
+        if channel_specific_groups:  # 非空列表 → 使用频道专属配置
+            effective_qq_groups = channel_specific_groups
+        else:
+            effective_qq_groups = self.config.get("target_qq_group", [])  # 回退到全局
+
+        qq_groups = effective_qq_groups
     
         napcat_url = self.config.get("napcat_api_url")
     
@@ -302,9 +307,9 @@ class QQSender:
                             except Exception as e:
                                 logger.error(f"[QQSender] 转发到群 {gid} 异常: {e}")
     
-                    # 清理文件
-                    for batch_data in processed_batches:
-                        self._cleanup_files(batch_data["local_files"])
+            # 清理文件
+            for batch_data in processed_batches:
+                self._cleanup_files(batch_data["local_files"])
     
         else:
             # HTTP (NapCat) 模式 ── 暂未实现混合 From 和大合并，保持原有逻辑
