@@ -1,7 +1,7 @@
 import re
 
 
-def clean_telegram_text(text: str) -> str:
+def clean_telegram_text(text: str, strip_links: bool = False) -> str:
     """清洗 Telegram 消息文本"""
     if not text:
         return ""
@@ -25,10 +25,15 @@ def clean_telegram_text(text: str) -> str:
     for pattern in patterns:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
 
-    # 3. 去除 Markdown 格式标记
+    # 3. 去除粗体/斜体标记（可选保留，根据需求）
     text = text.replace("**", "").replace("__", "")
 
-    # 4. 优化 Markdown 链接显示
-    text = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1: \2", text)
+    # 4. 处理 Markdown 链接  ← 这里是重点修改
+    if strip_links:
+        # 只保留 [文本] 部分，丢弃 (链接)
+        text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)
+    else:
+        # 原有行为：显示 文本: 链接
+        text = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1: \2", text)
 
     return text.strip()

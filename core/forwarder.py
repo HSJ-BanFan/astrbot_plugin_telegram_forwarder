@@ -35,7 +35,13 @@ class Forwarder:
         self.client = client_wrapper.client
         self.plugin_data_dir = plugin_data_dir
         self._stopping = False # 新增停止标志
-
+        self.stats = {
+            "forward_success": 0,     # 成功转发的**消息条数**（不是批次）
+            "forward_failed": 0,      # 失败的消息条数
+            "forward_attempts": 0,    # 尝试转发的总消息条数（成功+失败）
+            "last_reset": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        
         # 初始化组件
         self.downloader = MediaDownloader(self.client, plugin_data_dir)
 
@@ -169,7 +175,7 @@ class Forwarder:
 
     def _get_effective_config(self, channel_name: str):
         """
-        获取有效配置 (双重过滤原则: 全局与频道配置均需符合)
+        获取有效配置 (分过滤原则: 全局与频道配置均需符合)
         """
         # 1. 获取全局配置
         global_cfg = self.config.get("forward_config", {})
@@ -190,18 +196,33 @@ class Forwarder:
         if g_max > 0 and c_max > 0:
             max_file_size = min(g_max, c_max)
         else:
-            max_file_size = g_max or c_max # 只要有一个不为0就取那个，都为0则不限制
+            max_file_size = g_max or c_max
             
-        # 3.3 关键词与正则 (并集过滤：命中任何一个都过滤)
-        filter_keywords = list(set(global_cfg.get("filter_keywords", []) + channel_cfg.get("filter_keywords", [])))
+        # 3.3 关键词与正则
+        ignore_global_text_filters = channel_cfg.get("ignore_global_filters", False)
+        
+        g_filter_keywords = global_cfg.get("filter_keywords", [])
+        c_filter_keywords = channel_cfg.get("filter_keywords", [])
+        
+        if ignore_global_text_filters:
+            filter_keywords = c_filter_keywords
+        else:
+            filter_keywords = list(set(g_filter_keywords + c_filter_keywords))
+        
         filter_patterns = []
-        if global_cfg.get("filter_regex"):
-            filter_patterns.append(global_cfg["filter_regex"])
-        if channel_cfg.get("filter_regex"):
-            filter_patterns.append(channel_cfg["filter_regex"])
-
+        g_regex = global_cfg.get("filter_regex", "").strip()
+        c_regex = channel_cfg.get("filter_regex", "").strip()
+        
+        if not ignore_global_text_filters and g_regex:
+            filter_patterns.append(g_regex)
+        if c_regex:
+            filter_patterns.append(c_regex)
+        
         # 3.4 监听关键词与监听正则 (并集监听：命中任何一个都触发立即转发)
-        monitor_keywords = list(set(global_cfg.get("monitor_keywords", []) + channel_cfg.get("monitor_keywords", [])))
+        monitor_keywords = list(set(
+            global_cfg.get("monitor_keywords", []) + 
+            channel_cfg.get("monitor_keywords", [])
+        ))
         monitor_patterns = []
         if global_cfg.get("monitor_regex"):
             monitor_patterns.append(global_cfg["monitor_regex"])
@@ -211,15 +232,16 @@ class Forwarder:
         # 3.5 发送间隔与检测间隔
         check_interval = channel_cfg.get("check_interval") or global_cfg.get("check_interval", 60)
         send_interval = global_cfg.get("send_interval", 60)
-
-        # 3.6 查重开关
+        
+        # 3.6 查重开关（目前只支持全局控制）
         enable_deduplication = global_cfg.get("enable_deduplication", True)
-
+        
         # 3.7 优先级校验 (小于 1 视作 0)
         priority = channel_cfg.get("priority", 0)
         if priority < 1:
             priority = 0
-
+        
+        # 3.8 媒体文本排除 & 剧透过滤
         exclude_text_on_media = (
             channel_cfg.get("exclude_text_on_media", "继承全局") == "开启"
             or (
@@ -227,6 +249,7 @@ class Forwarder:
                 and global_cfg.get("exclude_text_on_media", False)
             )
         )
+        
         filter_spoiler_messages = (
             channel_cfg.get("filter_spoiler_messages", "继承全局") == "开启"
             or (
@@ -234,7 +257,27 @@ class Forwarder:
                 and global_cfg.get("filter_spoiler_messages", False)
             )
         )
-
+    
+        # 3.9 Markdown 链接剥离规则
+        strip_global = global_cfg.get("strip_markdown_links", False)
+        strip_channel_raw = channel_cfg.get("strip_markdown_links", "继承全局")
+    
+        if strip_channel_raw == "开启":
+            strip_markdown_links = True
+        elif strip_channel_raw == "关闭":
+            strip_markdown_links = False
+        else:
+            strip_markdown_links = strip_global
+    
+        channel_specific_groups = channel_cfg.get("target_qq_groups", [])
+        if channel_specific_groups:  # 非空列表 → 使用频道专属配置
+            effective_qq_groups = channel_specific_groups
+            has_exclusive_qq_groups = True
+            # 是否为专属群配置（用于决定是否参与混合频道大合并）
+        else:
+            effective_qq_groups = self.config.get("target_qq_group", [])  # 回退到全局
+            has_exclusive_qq_groups = False
+    
         return {
             "forward_types": forward_types,
             "max_file_size": max_file_size,
@@ -248,8 +291,11 @@ class Forwarder:
             "priority": priority,
             "exclude_text_on_media": exclude_text_on_media,
             "filter_spoiler_messages": filter_spoiler_messages,
+            "strip_markdown_links": strip_markdown_links,
             "start_time": channel_cfg.get("start_time", ""),
-            "msg_limit": channel_cfg.get("msg_limit", 20)
+            "msg_limit": channel_cfg.get("msg_limit", 20),
+            "effective_target_qq_groups": effective_qq_groups,
+            "has_exclusive_qq_groups": has_exclusive_qq_groups,
         }
 
     def _is_curfew(self) -> bool:
@@ -726,18 +772,182 @@ class Forwarder:
                     msg += f" | 剩余队列: {len(new_all_pending)}"
                     logger.info(msg)
 
-
     async def _send_sorted_messages_in_batches(self, batches_with_channel: List[tuple]):
-        """发送排好序的消息批次"""
+        """
+        按频道分组后，依次执行 QQ 和 Telegram 转发，并进行成功/失败统计
+        
+        Args:
+            batches_with_channel: List[(List[Message], str)]  每个元素是 (一批消息, 源频道名)
+        """
         async with self._global_send_lock:
+            forward_cfg = self.config.get("forward_config", {})
+            merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
+            merge_mode = forward_cfg.get("qq_big_merge_mode", "独立频道")
+    
+            if merge_threshold <= 1:
+                merge_mode = "关闭"
+    
+            # ─── 本次调用尝试转发的总消息条数 ───
+            attempted_count = sum(len(msgs) for msgs, _ in batches_with_channel)
+            self.stats["forward_attempts"] += attempted_count
+            logger.debug(f"[Stats] 本次发送调度尝试转发 {attempted_count} 条消息")
+    
+            from collections import defaultdict
+            qq_send_groups = defaultdict(list)
+    
             for msgs, src_channel in batches_with_channel:
-                effective_cfg = self._get_effective_config(src_channel)
-                display_name = await self._get_display_name(src_channel)
-                # 1. 转发到 QQ
-                await self.qq_sender.send([msgs], src_channel, display_name, effective_cfg["exclude_text_on_media"])
-                
-                # 2. 转发到 Telegram
-                await self.tg_sender.send([msgs], display_name, effective_cfg)
+                qq_send_groups[src_channel].append(msgs)
+    
+            # ─── QQ 转发部分 ───
+            if merge_mode == "混合所有频道":
+                # 分离：有专属群的频道强制独立，无专属群的才参与混合
+                mixable_batches = []
+                mixable_channels = set()
+                exclusive_tasks = []
+    
+                for src_channel, msg_groups in qq_send_groups.items():
+                    effective_cfg = self._get_effective_config(src_channel)
+                    target_groups = effective_cfg["effective_target_qq_groups"]
+                    if not target_groups:
+                        continue
+    
+                    if effective_cfg["has_exclusive_qq_groups"]:
+                        # 专属群 → 独立发送，不参与混合
+                        display_name = await self._get_display_name(src_channel)
+                        exclusive_tasks.append(
+                            self._send_to_qq_and_count(
+                                src_channel=src_channel,
+                                batches=msg_groups,
+                                display_name=display_name,
+                                effective_cfg=effective_cfg,
+                                is_mixed=False
+                            )
+                        )
+                        logger.debug(f"[QQ] {src_channel} 使用专属群，走独立发送")
+                    else:
+                        # 无专属群 → 可参与混合
+                        mixable_batches.extend(msg_groups)
+                        mixable_channels.add(src_channel)
+    
+                # 先并发执行所有专属群发送
+                if exclusive_tasks:
+                    await asyncio.gather(*exclusive_tasks, return_exceptions=True)
+    
+                # 处理混合大合并
+                if mixable_batches and len(mixable_channels) > 1 and len(mixable_batches) >= merge_threshold:
+                    involved_list = sorted(list(mixable_channels))
+                    logger.info(
+                        f"[QQ 大合并] 混合模式触发 | "
+                        f"频道数 {len(involved_list)} | 逻辑批次 {len(mixable_batches)} ≥ {merge_threshold}"
+                    )
+    
+                    first_channel = involved_list[0]
+                    display_name = await self._get_display_name(first_channel)
+                    effective_cfg = self._get_effective_config(first_channel)
+    
+                    await self._send_to_qq_and_count(
+                        src_channel=first_channel,
+                        batches=[mixable_batches],  # 注意包一层，表示整组合并
+                        display_name=display_name,
+                        effective_cfg=effective_cfg,
+                        is_mixed=True,
+                        involved_channels=involved_list
+                    )
+                else:
+                    # 未达混合阈值 → 按频道普通发送
+                    for src_channel in mixable_channels:
+                        groups = [g for ch, g in qq_send_groups.items() if ch == src_channel]
+                        if not groups:
+                            continue
+                        groups = groups[0]
+    
+                        display_name = await self._get_display_name(src_channel)
+                        effective_cfg = self._get_effective_config(src_channel)
+                        await self._send_to_qq_and_count(
+                            src_channel=src_channel,
+                            batches=groups,
+                            display_name=display_name,
+                            effective_cfg=effective_cfg,
+                            is_mixed=False
+                        )
+    
+            else:
+                # 非混合模式 → 逐频道发送
+                for src_channel, msg_groups in qq_send_groups.items():
+                    effective_cfg = self._get_effective_config(src_channel)
+                    target_groups = effective_cfg["effective_target_qq_groups"]
+                    if not target_groups:
+                        continue
+    
+                    display_name = await self._get_display_name(src_channel)
+    
+                    if merge_mode == "关闭":
+                        await self._send_to_qq_and_count(
+                            src_channel=src_channel,
+                            batches=msg_groups,
+                            display_name=display_name,
+                            effective_cfg=effective_cfg,
+                            is_mixed=False
+                        )
+                    elif merge_mode == "独立频道":
+                        if len(msg_groups) >= merge_threshold:
+                            await self._send_to_qq_and_count(
+                                src_channel=src_channel,
+                                batches=[msg_groups],  # 包一层表示合并
+                                display_name=display_name,
+                                effective_cfg=effective_cfg,
+                                is_mixed=False
+                            )
+                        else:
+                            await self._send_to_qq_and_count(
+                                src_channel=src_channel,
+                                batches=msg_groups,
+                                display_name=display_name,
+                                effective_cfg=effective_cfg,
+                                is_mixed=False
+                            )
+    
+            # ─── Telegram 转发部分 ───
+            tg_target = self.config.get("target_channel", "").strip()
+            if tg_target:
+                for msgs, src_channel in batches_with_channel:
+                    try:
+                        effective_cfg = self._get_effective_config(src_channel)
+                        await self.tg_sender.send(
+                            batches=[msgs],
+                            src_channel=src_channel,
+                            effective_cfg=effective_cfg
+                        )
+                        self.stats["forward_success"] += len(msgs)
+                        logger.debug(f"[Stats] TG 转发成功 {len(msgs)} 条  {src_channel} → {tg_target}")
+                    except Exception as e:
+                        self.stats["forward_failed"] += len(msgs)
+                        logger.error(f"[Stats] TG 转发失败 {len(msgs)} 条  {src_channel} → {tg_target} : {e}")
+    
+    async def _send_to_qq_and_count(
+        self,
+        src_channel: str,
+        batches: list,
+        display_name: str,
+        effective_cfg: dict,
+        is_mixed: bool = False,
+        involved_channels: list = None,
+    ):
+        try:
+            await self.qq_sender.send(
+                batches=batches,
+                src_channel=src_channel,
+                display_name=display_name,
+                effective_cfg=effective_cfg,
+                involved_channels=involved_channels if is_mixed else None
+            )
+            success_count = sum(len(b) for b in batches)
+            self.stats["forward_success"] += success_count
+            logger.debug(f"[Stats] QQ 转发成功（估计） {success_count} 条  @{src_channel}")
+        except Exception as e:
+            failed_count = sum(len(b) for b in batches)
+            self.stats["forward_failed"] += failed_count
+            logger.error(f"[Stats] QQ 转发失败 {failed_count} 条  @{src_channel} : {e}")
 
     def stop(self):
         """停止转发器工作"""
