@@ -63,6 +63,13 @@
                         "type": "string",
                         "description": "频道用户名 (不带@)"
                     },
+                    "target_qq_groups": {
+                        "description": "该频道专属的 QQ 目标群号",
+                        "type": "list",
+                        "item_type": "int",
+                        "default": [],
+                        "hint": "填写则覆盖全局 QQ 目标群号 留空使用全局配置"
+                    },
                     "start_time": {
                         "type": "string",
                         "description": "起始日期 (YYYY-MM-DD)",
@@ -106,6 +113,12 @@
                         "default": 0,
                         "hint": "除图片外的媒体大小限制，0 表示不限制"
                     },
+                    "ignore_global_filters": {
+                        "description": "忽略全局文本过滤",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后，该频道将**忽略全局**的 filter_keywords 和 filter_regex（但仍执行本频道自己的过滤规则）。常用于白名单式频道或重要通知频道。"
+                    },
                     "filter_keywords": {
                         "type": "list",
                         "item_type": "string",
@@ -125,6 +138,13 @@
                         "options": ["继承全局", "开启", "关闭"],
                         "default": "继承全局",
                         "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
+                    },
+                    "strip_markdown_links": {
+                        "description": "剥离 Markdown 链接，只保留文本",
+                        "type": "string",
+                        "options": ["继承全局", "开启", "关闭"],
+                        "default": "继承全局",
+                        "hint": "开启后该频道 [文本](链接) 只保留文本"
                     },
                     "monitor_keywords": {
                         "type": "list",
@@ -166,6 +186,19 @@
         "description": "全局转发配置",
         "hint": "配置全局转发配置与过滤规则",
         "items": {
+            "qq_merge_threshold": {
+            "description": "QQ 大合并",
+            "type": "int",
+            "default": 0,
+            "hint": "本次要发的消息数 >= 此值时，全部打包成一条合并转发消息。设为 ≤1 则永不触发大合并。推荐 5~10"
+            },
+            "qq_big_merge_mode": {
+                "description": "QQ 大合并的聚合范围",
+                "type": "string",
+                "options": ["独立频道", "混合所有频道", "关闭"],
+                "default": "独立频道",
+                "hint": "『独立频道』：每个频道独立判断是否合并（推荐）；『混合所有频道』：所有频道消息总数达标才合并成一条超大转发；『关闭』强制不使用大合并"
+            },
             "use_channel_title": {
                 "type": "bool",
                 "default": true,
@@ -189,6 +222,12 @@
                 "type": "bool",
                 "default": false,
                 "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
+            },
+            "strip_markdown_links": {
+                "description": "剥离 Markdown 链接，只保留文本",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃"
             },
             "forward_types": {
                 "description": "转发消息类型",

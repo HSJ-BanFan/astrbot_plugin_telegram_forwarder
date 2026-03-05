@@ -80,7 +80,7 @@ class Main(star.Star):
         self.scheduler = AsyncIOScheduler()
 
         # 初始化命令处理器
-        self.command_handler = PluginCommands(context, config, self.forwarder)
+        self.command_handler = PluginCommands(context, config, self.forwarder, self.scheduler)
 
         # ========== 配置检查警告 ==========
         if not self.config.get("api_id") or not self.config.get("api_hash"):
@@ -194,39 +194,81 @@ class Main(star.Star):
 
         logger.info("Telegram Forwarder 已停止")
 
-    # ================= COMMANDS =================
+# ================= COMMANDS =================
 
-    @filter.command_group("tg")
-    def tg(self):
-        """Telegram Forwarder 插件管理"""
-        pass
+@filter.command_group("tg")
+@filter.permission_type(filter.PermissionType.ADMIN)
+def tg(self):
+    """Telegram Forwarder 插件管理"""
+    pass
 
-    @tg.command("add")
-    async def add_channel(self, event: AstrMessageEvent, channel: str):
-        """添加监控频道: /tg add <channel>"""
-        async for result in self.command_handler.add_channel(event, channel):
-            yield result
+@tg.command("add")
+async def add_channel(self, event: AstrMessageEvent, channel: str):
+    async for result in self.command_handler.add_channel(event, channel):
+        yield result
 
-    @tg.command("rm")
-    async def remove_channel(self, event: AstrMessageEvent, channel: str):
-        """移除监控频道: /tg rm <channel>"""
-        async for result in self.command_handler.remove_channel(event, channel):
-            yield result
+@tg.command("rm")
+async def remove_channel(self, event: AstrMessageEvent, channel: str):
+    async for result in self.command_handler.remove_channel(event, channel):
+        yield result
 
-    @tg.command("ls")
-    async def list_channels(self, event: AstrMessageEvent):
-        """列出所有监控频道: /tg ls"""
-        async for result in self.command_handler.list_channels(event):
-            yield result
+@tg.command("ls")
+async def list_channels(self, event: AstrMessageEvent):
+    async for result in self.command_handler.list_channels(event):
+        yield result
 
-    @tg.command("check")
-    async def force_check(self, event: AstrMessageEvent):
-        """立即检查更新: /tg check"""
-        async for result in self.command_handler.force_check(event):
-            yield result
+@tg.command("check")
+async def force_check(self, event: AstrMessageEvent):
+    async for result in self.command_handler.force_check(event):
+        yield result
 
-    @tg.command("help")
-    async def show_help(self, event: AstrMessageEvent):
-        """显示帮助信息"""
-        async for result in self.command_handler.show_help(event):
-            yield result
+@tg.command("status")
+async def status(self, event: AstrMessageEvent):
+    async for result in self.command_handler.show_status(event):
+        yield result
+
+@tg.command("pause")
+async def pause(self, event: AstrMessageEvent):
+    async for result in self.command_handler.pause(event):
+        yield result
+
+@tg.command("resume")
+async def resume(self, event: AstrMessageEvent):
+    async for result in self.command_handler.resume(event):
+        yield result
+
+@tg.command("queue")
+async def queue(self, event: AstrMessageEvent):
+    async for result in self.command_handler.show_queue(event):
+        yield result
+
+@tg.command("clearqueue")
+async def clearqueue(self, event: AstrMessageEvent, target: str = None):
+    async for result in self.command_handler.clear_queue(event, target):
+        yield result
+
+@tg.command("get")
+async def get(self, event: AstrMessageEvent, target: str = ""):
+    """查看频道配置"""
+    async for result in self.command_handler.get_config(event, target):
+        yield result
+
+@tg.command("set")
+async def set_config(self, event: AstrMessageEvent, args: str = ""):
+    """修改频道配置"""
+    full_text = event.message_str.strip()
+    prefix_variants = ["/tg set", "tg set"]
+    cmd_text = full_text
+    for p in prefix_variants:
+        if full_text.lower().startswith(p):
+            cmd_text = full_text[len(p):].strip()
+            break
+
+    parts = cmd_text
+    async for result in self.command_handler.set_config(event, parts):
+        yield result
+
+@tg.command("help")
+async def show_help(self, event: AstrMessageEvent):
+    async for result in self.command_handler.show_help(event):
+        yield result
