@@ -1,0 +1,6 @@
+interface:
+  display_name: "Astrbot Plugin Telegram Forwarder"
+  short_description: "Repo-specific patterns and workflows for astrbot_plugin_telegram_forwarder"
+  default_prompt: "Use the astrbot_plugin_telegram_forwarder repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
