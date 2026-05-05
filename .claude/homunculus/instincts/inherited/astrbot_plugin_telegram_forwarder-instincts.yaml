@@ -1,0 +1,565 @@
+# Instincts generated from https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+# Generated: 2026-05-05T14:59:12.763Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: astrbot_plugin_telegram_forwarder-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, refactor, feat, chore
+
+## Evidence
+
+- 20 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: QQ 合并转发多项修复 (#20), chore: ignore local worktrees
+
+---
+id: astrbot_plugin_telegram_forwarder-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Commit Length
+
+## Action
+
+Keep commit messages concise (~30 characters)
+
+## Evidence
+
+- Average commit message length: 30 chars
+- Based on 20 commits
+
+---
+id: astrbot_plugin_telegram_forwarder-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: astrbot_plugin_telegram_forwarder-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: astrbot_plugin_telegram_forwarder-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: astrbot_plugin_telegram_forwarder-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: astrbot_plugin_telegram_forwarder-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: astrbot_plugin_telegram_forwarder-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~8x per month
+- Files: **/*.test.*
+
+---
+id: astrbot_plugin_telegram_forwarder-workflow-qq-sender-feature-or-bugfix-workflow
+trigger: "when doing qq sender feature or bugfix workflow"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Workflow Qq Sender Feature Or Bugfix Workflow
+
+## Action
+
+Follow the qq-sender-feature-or-bugfix-workflow workflow:
+1. Edit or create files in core/senders/qq*.py (e.g., qq.py, qq_dispatcher.py, qq_media.py, qq_file_fallback.py, qq_types.py)
+2. Update or add tests in tests/test_qq_sender.py
+3. Optionally update configuration or command files (e.g., core/commands.py, _conf_schema.json, README.md) if new options or help text are needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: core/senders/qq.py, core/senders/qq_dispatcher.py, core/senders/qq_media.py
+
+---
+id: astrbot_plugin_telegram_forwarder-workflow-qq-sender-module-split-or-refactor-workflow
+trigger: "when doing qq sender module split or refactor workflow"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Workflow Qq Sender Module Split Or Refactor Workflow
+
+## Action
+
+Follow the qq-sender-module-split-or-refactor-workflow workflow:
+1. Create new core/senders/qq_*.py files for separated logic (e.g., qq_batch_builder.py, qq_circuit.py, qq_send_prep.py, etc.)
+2. Refactor core/senders/qq.py to delegate to new modules
+3. Update or add tests in tests/test_qq_sender.py and possibly tests/conftest.py
+4. Merge or rebase branches as needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: core/senders/qq.py, core/senders/qq_batch_builder.py, core/senders/qq_circuit.py
+
+---
+id: astrbot_plugin_telegram_forwarder-workflow-session-or-forwarder-reliability-fix-workflow
+trigger: "when doing session or forwarder reliability fix workflow"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Workflow Session Or Forwarder Reliability Fix Workflow
+
+## Action
+
+Follow the session-or-forwarder-reliability-fix-workflow workflow:
+1. Edit core/client.py and/or core/forwarder.py to fix session or forwarding logic
+2. Update or add tests in tests/test_client_session_schema.py, tests/test_forwarder_send_pending.py, or related files
+3. Optionally update .gitignore or configuration files if development artifacts or settings are affected
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: core/client.py, core/forwarder.py, tests/test_client_session_schema.py
+
+---
+id: astrbot_plugin_telegram_forwarder-workflow-qq-sender-logging-or-debug-feature-workflow
+trigger: "when doing qq sender logging or debug feature workflow"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Workflow Qq Sender Logging Or Debug Feature Workflow
+
+## Action
+
+Follow the qq-sender-logging-or-debug-feature-workflow workflow:
+1. Edit or create logging-related files in core/senders/ (e.g., qq_log_policy.py, qq.py, qq_dispatcher.py, qq_media.py)
+2. Update or add configuration in _conf_schema.json and command handling in core/commands.py if toggles are needed
+3. Add or update tests in tests/test_qq_log_policy.py, tests/test_commands_debug.py, and tests/test_qq_sender.py
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: core/senders/qq.py, core/senders/qq_dispatcher.py, core/senders/qq_media.py
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-file-naming
+trigger: "When creating or renaming a file in the repository"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct File Naming
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in architecture.namingConventions.files
+- All core/*.py and tests/*.py files use snake_case
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-function-naming
+trigger: "When defining a function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Function Naming
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in architecture.namingConventions.functions
+- Functions in core/ and tests/ follow camelCase
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-class-naming
+trigger: "When defining a class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Class Naming
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in architecture.namingConventions.classes
+- Classes in core/ use PascalCase
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constants
+
+## Evidence
+
+- Pattern in architecture.namingConventions.constants
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-import-style
+trigger: "When importing modules within the package"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+- core/ and tests/ use relative imports
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-export-style
+trigger: "When exporting functions or classes from a module"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-test-file-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Test File Location
+
+## Action
+
+Place test files in the tests/ directory, separate from source code
+
+## Evidence
+
+- architecture.folderStructure.testLocation == 'separate'
+- tests/ directory contains all test files
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-test-file-naming
+trigger: "When naming a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Test File Naming
+
+## Action
+
+Use the pattern test_<target>.py (e.g., test_qq_sender.py)
+
+## Evidence
+
+- tests/test_qq_sender.py
+- tests/test_client_session_schema.py
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-test-type
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Test Type
+
+## Action
+
+Write unit tests for new or modified code
+
+## Evidence
+
+- testing.testTypes includes 'unit'
+- tests/test_qq_sender.py and similar files contain unit tests
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-git-commit-format
+trigger: "When making a commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Git Commit Format
+
+## Action
+
+Use conventional commit prefixes (fix, feat, refactor, chore) followed by a short description
+
+## Evidence
+
+- commits.prefixes: fix, feat, refactor, chore
+- Examples: 'fix: QQ 合并转发多项修复 (#20)', 'chore: ignore local worktrees'
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Git Commit Length
+
+## Action
+
+Keep the commit message concise (average ~30 characters)
+
+## Evidence
+
+- commits.averageLength: 30
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-qq-sender-feature-or-bugfix-workflow
+trigger: "When someone wants to add, refactor, or fix QQ sender logic (media handling, fallback, batching, logging, etc)"
+confidence: 0.98
+domain: workflow
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Qq Sender Feature Or Bugfix Workflow
+
+## Action
+
+Edit or create files in core/senders/qq*.py, update or add tests in tests/test_qq_sender.py, and optionally update configuration or command files
+
+## Evidence
+
+- Workflow: qq-sender-feature-or-bugfix-workflow
+- Example commits and files: core/senders/qq.py, tests/test_qq_sender.py
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-qq-sender-module-split-or-refactor-workflow
+trigger: "When someone wants to modularize or refactor QQ sender logic for maintainability"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Qq Sender Module Split Or Refactor Workflow
+
+## Action
+
+Create new core/senders/qq_*.py files, refactor core/senders/qq.py to delegate to new modules, update or add tests in tests/test_qq_sender.py and tests/conftest.py, and merge or rebase branches as needed
+
+## Evidence
+
+- Workflow: qq-sender-module-split-or-refactor-workflow
+- Example files: core/senders/qq_batch_builder.py, tests/test_qq_sender.py
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-session-or-forwarder-reliability-fix-workflow
+trigger: "When someone wants to fix or enhance session management, retry, or forwarding logic"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Session Or Forwarder Reliability Fix Workflow
+
+## Action
+
+Edit core/client.py and/or core/forwarder.py, update or add tests in tests/test_client_session_schema.py or tests/test_forwarder_send_pending.py, and optionally update .gitignore or configuration files
+
+## Evidence
+
+- Workflow: session-or-forwarder-reliability-fix-workflow
+- Example files: core/client.py, tests/test_client_session_schema.py
+
+---
+id: astrbot_plugin_telegram_forwarder-instinct-qq-sender-logging-or-debug-feature-workflow
+trigger: "When someone wants to add or improve logging/diagnostics for QQ sender behavior"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: HSJ-BanFan/astrbot_plugin_telegram_forwarder
+---
+
+# Astrbot_plugin_telegram_forwarder Instinct Qq Sender Logging Or Debug Feature Workflow
+
+## Action
+
+Edit or create logging-related files in core/senders/, update or add configuration in _conf_schema.json and command handling in core/commands.py if toggles are needed, and add or update tests in tests/test_qq_log_policy.py, tests/test_commands_debug.py, and tests/test_qq_sender.py
+
+## Evidence
+
+- Workflow: qq-sender-logging-or-debug-feature-workflow
+- Example files: core/senders/qq_log_policy.py, tests/test_qq_log_policy.py
+
