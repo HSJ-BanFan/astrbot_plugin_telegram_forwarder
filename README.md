@@ -78,6 +78,87 @@ you can now configure:
   - **(推荐)** 如使用`/tg login`命令登录则无需填写。
   - 如使用 `relogin.py` 生成会话文件，则此项必填。
 * **api_id** / **api_hash**: **(必填)** Telegram API 凭证 (需从 [my.telegram.org](https://my.telegram.org) 获取)。
+
+#### 申请 `api_id / api_hash` 时一直提示 `ERROR`
+
+如果 `my.telegram.org` 创建 Telegram 应用时一直提示 `ERROR`，可以临时使用住宅 / ISP IP 访问官方页面。推荐只在浏览器里单独配置代理，不影响系统其他网络。
+
+##### 1）获取住宅 / ISP 静态 IP
+
+可以使用提供住宅代理的服务商，例如 [LycheeIP](https://www.lycheeip.com/home/ip?utm_source=chatgpt.com)。如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。
+
+操作流程：
+
+```text
+1. 打开代理服务商网站并注册账号
+2. 进入个人中心，找到自己的用户 ID
+3. 联系客服，发送用户 ID，申请试用住宅 IP / 动态住宅流量
+4. 客服开通后，进入代理后台生成代理线路
+5. 获取代理信息
+```
+
+代理后台一般会生成类似下面的格式：
+
+```text
+hostname:port:username:password
+```
+
+例如：
+
+```text
+global.example.com:10000:username-session-xxxx:password
+```
+
+这里需要拆成四部分使用：
+
+```text
+hostname  → 代理地址
+port      → 端口
+username  → 用户名
+password  → 密码
+```
+
+![代理试用开通示例](resources/img/proxy-trial.png)
+
+##### 2）在 Firefox 中配置代理
+
+打开：
+
+```text
+Firefox → 设置 → 常规 → 网络设置 → 设置
+```
+
+选择：
+
+```text
+手动配置代理
+```
+
+填写 `hostname` 和 `port`，并勾选“也将此代理用于 HTTPS”。
+
+不要把整行 `global.example.com:10000:username:password` 直接填进去，应拆开填写：
+
+```text
+HTTP 代理：global.example.com
+端口：10000
+```
+
+保存后，先在 Firefox 打开：
+
+```text
+https://api.ipify.org
+```
+
+首次访问时会弹出代理认证框，输入代理后台提供的用户名和密码。如果页面显示的 IP 已经变成代理出口 IP，说明代理配置成功。
+
+![Firefox 代理配置](resources/img/firefox-proxy-settings.png)
+
+##### 3）检查代理出口
+
+确认 `api.ipify.org` 显示的是代理出口 IP 后，如需继续检查 IP 质量，可使用 [IPPure](https://ippure.com/?utm_source=chatgpt.com)。优先选择原生 / 住宅 IP，尽量避免机房、Cloud、VPS 以及 AWS / Azure / Google Cloud / Leaseweb 等机房 ASN。
+
+![IPPure 检测结果](resources/img/ippure-check-result.png)
+
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
 * **telegram_session**: 
   - **(推荐)** 您可使用`/tg login`命令登录 Telegram 账号，登录成功后会自动生成会话文件并保存到数据目录，无需手动配置此项。
