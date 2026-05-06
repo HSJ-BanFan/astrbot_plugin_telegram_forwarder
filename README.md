@@ -143,6 +143,8 @@ HTTP 代理：global.example.com
 端口：10000
 ```
 
+![Firefox 代理配置](resources/img/firefox-proxy-settings.png)
+
 保存后，先在 Firefox 打开：
 
 ```text
@@ -150,8 +152,6 @@ https://api.ipify.org
 ```
 
 首次访问时会弹出代理认证框，输入代理后台提供的用户名和密码。如果页面显示的 IP 已经变成代理出口 IP，说明代理配置成功。
-
-![Firefox 代理配置](resources/img/firefox-proxy-settings.png)
 
 ##### 3）检查代理出口
 
