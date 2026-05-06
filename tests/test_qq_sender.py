@@ -12,6 +12,68 @@ import conftest as plugin_conftest
 import pytest
 
 
+def test_get_platform_bot_returns_none_and_logs_when_get_client_raises(qq_module):
+    plugin_conftest.mock_logger.debug.reset_mock()
+
+    class BrokenPlatform:
+        def get_client(self):
+            raise RuntimeError("broken client")
+
+    assert qq_module.get_platform_bot(BrokenPlatform()) is None
+    plugin_conftest.mock_logger.debug.assert_called_once_with(
+        "[QQSender] get_client() failed while selecting platform bot: broken client"
+    )
+
+
+@pytest.mark.asyncio
+async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module):
+    send_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        send_calls.append(kwargs["batch_data"]["batch_index"])
+
+    async def send_message_fn(*args, **kwargs):
+        raise RuntimeError("big merge failed")
+
+    processed_batches = [
+        {"batch_index": 0, "nodes_data": [[qq_module.Plain("a")]], "contains_audio": False},
+        {"batch_index": 1, "nodes_data": [[qq_module.Plain("b")]], "contains_audio": False},
+        {"batch_index": 2, "nodes_data": [[qq_module.Plain("c")]], "contains_audio": False},
+    ]
+    target_successes = {0: set(), 1: {"aiocqhttp:GroupMessage:1"}, 2: set()}
+    target_failures: dict[int, str] = {}
+    deferred_batch_indexes: set[int] = set()
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batches=[[object()], [object()], [object()]],
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures=target_failures,
+        deferred_batch_indexes=deferred_batch_indexes,
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={"qq_merge_chunk_size": 10, "qq_merge_chunk_delay": 0},
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=lambda exc: str(exc),
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=send_message_fn,
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_calls == [0, 2]
+    assert result.target_successes[1] == {"aiocqhttp:GroupMessage:1"}
+
+
 class TestDispatchMediaFile:
     def test_dispatch_by_extension(self, sender):
         cases = [
@@ -725,6 +787,64 @@ class TestAudioBatchSending:
         assert "https://files.example.com/downloads/base.apk" in fallback_chain[0].text
 
     @pytest.mark.asyncio
+    async def test_handle_apk_file_send_failure_link_or_zip_falls_back_to_zip_after_link_error(
+        self, sender, qq_module
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"apk-fallback-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        apk_path = plugin_data_dir / "base.apk"
+        apk_path.write_bytes(b"apk-binary")
+
+        sender.config = {
+            "forward_config": {
+                "apk_fallback_mode": "link_or_zip",
+                "apk_direct_link_base_url": "https://files.example.com/downloads",
+            }
+        }
+        sender.downloader.plugin_data_dir = str(plugin_data_dir)
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("rich media transfer failed"),
+                RuntimeError("direct link send failed"),
+                None,
+            ]
+        )
+        sender._map_path = lambda path: path
+        file_component = qq_module.File(file=str(apk_path), name="base.apk")
+        file_component.file_ = str(apk_path)
+        file_component._tgf_source_path = str(apk_path)
+        batch_data = {
+            "nodes_data": [[file_component]],
+            "local_files": [str(apk_path)],
+            "contains_audio": False,
+        }
+
+        try:
+            await sender._send_processed_batch(
+                batch_data=batch_data,
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+            assert sender.context.send_message.await_count == 3
+            sent_component = sender.context.send_message.await_args_list[2].args[1].chain[0]
+            assert type(sent_component).__name__ == "File"
+            assert sent_component.name == "base.apk.zip"
+            assert len(batch_data["local_files"]) == 2
+
+            zip_path = Path(batch_data["local_files"][1])
+            assert zip_path.is_file()
+            with zipfile.ZipFile(zip_path) as archive:
+                assert archive.namelist() == ["base.apk"]
+                assert archive.read("base.apk") == b"apk-binary"
+        finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    @pytest.mark.asyncio
     async def test_apk_file_send_failure_falls_back_to_zip_archive(
         self, sender, qq_module
     ):
@@ -1358,6 +1478,51 @@ class TestSendHelperExtraction:
 
 class TestDispatchLoopExtraction:
     @pytest.mark.asyncio
+    async def test_send_cleans_up_processed_batches_when_dispatch_raises(self, sender, qq_module, monkeypatch):
+        cleanup_calls: list[list[dict]] = []
+        processed_batch = {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("hello")]],
+            "local_files": ["/tmp/a.txt"],
+            "contains_audio": False,
+        }
+
+        async def fake_dispatch(**_kwargs):
+            raise RuntimeError("dispatch failed")
+
+        monkeypatch.setattr(
+            qq_module,
+            "build_processed_batches",
+            AsyncMock(
+                return_value=type(
+                    "BuildResult",
+                    (),
+                    {"processed_batches": [processed_batch], "target_failures": {}},
+                )()
+            ),
+        )
+        monkeypatch.setattr(
+            qq_module,
+            "dispatch_processed_batches_to_targets",
+            fake_dispatch,
+        )
+        monkeypatch.setattr(
+            sender,
+            "_cleanup_processed_batches",
+            lambda processed_batches: cleanup_calls.append(processed_batches),
+        )
+
+        with pytest.raises(RuntimeError, match="dispatch failed"):
+            await sender.send(
+                batches=[[type("Msg", (), {"id": 1, "text": "hello", "reply_to": None})()]],
+                src_channel="demo",
+                effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
+            )
+
+        assert len(cleanup_calls) == 1
+        assert cleanup_calls[0] == [processed_batch]
+
+    @pytest.mark.asyncio
     async def test_send_delegates_target_dispatch_to_dispatcher_function(
         self, sender, qq_module
     ):
@@ -1531,6 +1696,25 @@ class TestTargetCircuitBreaker:
 
 
 class TestCleanupFiles:
+    def test_cleanup_processed_batches_does_not_remove_untracked_original_file(self, sender, qq_module, tmp_path):
+        temp_file = tmp_path / "fallback.zip"
+        original_file = tmp_path / "original.mp4"
+        temp_file.write_bytes(b"zip")
+        original_file.write_bytes(b"video")
+        sender.plugin_data_dir = str(tmp_path)
+
+        processed_batches = [
+            {
+                "local_files": [str(temp_file)],
+                "nodes_data": [[qq_module.File(file=str(original_file), name="original.mp4")]],
+            }
+        ]
+
+        sender._cleanup_processed_batches(processed_batches)
+
+        assert not temp_file.exists()
+        assert original_file.exists()
+
     def test_cleanup_files_removes_only_files_under_plugin_data_dir(self, sender):
         root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
         root.mkdir(exist_ok=True)

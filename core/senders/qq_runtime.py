@@ -6,6 +6,8 @@
 
 from typing import Any
 
+from astrbot.api import logger
+
 
 def get_platform_instances(context: Any) -> list:
     """从上下文的平台管理器中提取平台实例列表。"""
@@ -86,7 +88,11 @@ def select_qq_platform(
 def get_platform_bot(platform: object) -> object | None:
     """从平台对象中提取 bot / client 实例。"""
     if hasattr(platform, "get_client"):
-        return platform.get_client()
+        try:
+            return platform.get_client()
+        except Exception as exc:
+            logger.debug(f"[QQSender] get_client() failed while selecting platform bot: {exc}")
+            return None
     if hasattr(platform, "bot"):
         return platform.bot
     return None

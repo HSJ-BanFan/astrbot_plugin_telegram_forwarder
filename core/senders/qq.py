@@ -572,35 +572,36 @@ class QQSender:
                 f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发"
             )
 
-        dispatch_result = await dispatch_processed_batches_to_targets(
-            context_target_sessions=context_target_sessions,
-            real_batches=real_batches,
-            processed_batches=processed_batches,
-            target_successes=target_successes,
-            target_failures=target_failures,
-            deferred_batch_indexes=deferred_batch_indexes,
-            use_big_merge=use_big_merge,
-            is_mixed_big_merge=is_mixed_big_merge,
-            forward_cfg=forward_cfg,
-            self_id=self_id,
-            node_name=node_name,
-            get_lock=self._get_lock,
-            target_is_open=self._target_is_open,
-            record_target_success=self._record_target_success,
-            record_target_failure=self._record_target_failure,
-            classify_send_error=self._classify_send_error,
-            send_processed_batch_fn=self._send_processed_batch,
-            send_message_fn=self._send_with_timeout,
-            fail_fast_limit=fail_fast_limit,
-            target_circuit_fail_threshold=target_circuit_fail_threshold,
-            target_circuit_cooldown_sec=target_circuit_cooldown_sec,
-            log_policy=self._log_policy,
-        )
-        target_successes = dispatch_result.target_successes
-        target_failures = dispatch_result.target_failures
-        deferred_batch_indexes = dispatch_result.deferred_batch_indexes
-
-        self._cleanup_processed_batches(processed_batches)
+        try:
+            dispatch_result = await dispatch_processed_batches_to_targets(
+                context_target_sessions=context_target_sessions,
+                real_batches=real_batches,
+                processed_batches=processed_batches,
+                target_successes=target_successes,
+                target_failures=target_failures,
+                deferred_batch_indexes=deferred_batch_indexes,
+                use_big_merge=use_big_merge,
+                is_mixed_big_merge=is_mixed_big_merge,
+                forward_cfg=forward_cfg,
+                self_id=self_id,
+                node_name=node_name,
+                get_lock=self._get_lock,
+                target_is_open=self._target_is_open,
+                record_target_success=self._record_target_success,
+                record_target_failure=self._record_target_failure,
+                classify_send_error=self._classify_send_error,
+                send_processed_batch_fn=self._send_processed_batch,
+                send_message_fn=self._send_with_timeout,
+                fail_fast_limit=fail_fast_limit,
+                target_circuit_fail_threshold=target_circuit_fail_threshold,
+                target_circuit_cooldown_sec=target_circuit_cooldown_sec,
+                log_policy=self._log_policy,
+            )
+            target_successes = dispatch_result.target_successes
+            target_failures = dispatch_result.target_failures
+            deferred_batch_indexes = dispatch_result.deferred_batch_indexes
+        finally:
+            self._cleanup_processed_batches(processed_batches)
 
         return self._build_send_summary(
             context_target_sessions=context_target_sessions,

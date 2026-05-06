@@ -84,6 +84,18 @@ class QQSendSummary(SimpleNamespace):
     pass
 
 
+def _snapshot_modules(*names: str) -> dict[str, object | None]:
+    return {name: sys.modules.get(name) for name in names}
+
+
+def _restore_modules(snapshot: dict[str, object | None]) -> None:
+    for name, value in snapshot.items():
+        if value is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = value
+
+
 def _register_module(name: str, **attrs) -> ModuleType:
     module = ModuleType(name)
     for key, value in attrs.items():
@@ -95,61 +107,96 @@ def _register_module(name: str, **attrs) -> ModuleType:
 def load_forwarder_module():
     root = Path(__file__).resolve().parents[1]
     module_path = root / "core" / "forwarder.py"
-
-    _register_module("telethon")
-    _register_module("telethon.tl")
-    _register_module("telethon.tl.types", Message=object, PeerUser=object)
-
-    logger = MagicMock()
-    star = SimpleNamespace(Context=object)
-    _register_module("astrbot")
-    _register_module("astrbot.api", logger=logger, AstrBotConfig=dict, star=star)
-
-    _register_module("astrbot_plugin_telegram_forwarder", __path__=[])
-    _register_module("astrbot_plugin_telegram_forwarder.common", __path__=[])
-    _register_module("astrbot_plugin_telegram_forwarder.core", __path__=[])
-    _register_module("astrbot_plugin_telegram_forwarder.core.senders", __path__=[])
-    _register_module("astrbot_plugin_telegram_forwarder.core.filters", __path__=[])
-
-    _register_module("astrbot_plugin_telegram_forwarder.common.storage", Storage=object)
-    _register_module(
+    snapshot = _snapshot_modules(
+        "telethon",
+        "telethon.tl",
+        "telethon.tl.types",
+        "astrbot",
+        "astrbot.api",
+        "astrbot_plugin_telegram_forwarder",
+        "astrbot_plugin_telegram_forwarder.common",
+        "astrbot_plugin_telegram_forwarder.core",
+        "astrbot_plugin_telegram_forwarder.core.senders",
+        "astrbot_plugin_telegram_forwarder.core.filters",
+        "astrbot_plugin_telegram_forwarder.common.storage",
         "astrbot_plugin_telegram_forwarder.common.text_tools",
-        normalize_telegram_channel_name=lambda value: str(value).lstrip("@"),
-        to_telethon_entity=lambda value: value,
-        is_numeric_channel_id=lambda value: str(value).lstrip("-").isdigit(),
-    )
-    _register_module(
-        "astrbot_plugin_telegram_forwarder.core.client", TelegramClientWrapper=object
-    )
-    _register_module(
-        "astrbot_plugin_telegram_forwarder.core.downloader", MediaDownloader=object
-    )
-    _register_module(
-        "astrbot_plugin_telegram_forwarder.core.senders.telegram", TelegramSender=object
-    )
-    _register_module(
+        "astrbot_plugin_telegram_forwarder.core.client",
+        "astrbot_plugin_telegram_forwarder.core.downloader",
+        "astrbot_plugin_telegram_forwarder.core.senders.telegram",
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
-        QQSender=object,
-        QQSendSummary=QQSendSummary,
-    )
-    _register_module(
         "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
-        MessageFilter=object,
-    )
-    _register_module(
-        "astrbot_plugin_telegram_forwarder.core.mergers", MessageMerger=object
+        "astrbot_plugin_telegram_forwarder.core.mergers",
+        "astrbot_plugin_telegram_forwarder.core.forwarder",
     )
 
-    spec = importlib.util.spec_from_file_location(
-        "astrbot_plugin_telegram_forwarder.core.forwarder",
-        module_path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    module.__package__ = "astrbot_plugin_telegram_forwarder.core"
-    sys.modules[spec.name] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    try:
+        _register_module("telethon")
+        _register_module("telethon.tl")
+        _register_module("telethon.tl.types", Message=object, PeerUser=object)
+
+        logger = MagicMock()
+        star = SimpleNamespace(Context=object)
+        _register_module("astrbot")
+        _register_module("astrbot.api", logger=logger, AstrBotConfig=dict, star=star)
+
+        _register_module("astrbot_plugin_telegram_forwarder", __path__=[])
+        _register_module("astrbot_plugin_telegram_forwarder.common", __path__=[])
+        _register_module("astrbot_plugin_telegram_forwarder.core", __path__=[])
+        _register_module("astrbot_plugin_telegram_forwarder.core.senders", __path__=[])
+        _register_module("astrbot_plugin_telegram_forwarder.core.filters", __path__=[])
+
+        _register_module("astrbot_plugin_telegram_forwarder.common.storage", Storage=object)
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.common.text_tools",
+            normalize_telegram_channel_name=lambda value: str(value).lstrip("@"),
+            to_telethon_entity=lambda value: value,
+            is_numeric_channel_id=lambda value: str(value).lstrip("-").isdigit(),
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.client", TelegramClientWrapper=object
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.downloader", MediaDownloader=object
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.senders.telegram", TelegramSender=object
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.senders.qq",
+            QQSender=object,
+            QQSendSummary=QQSendSummary,
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
+            MessageFilter=object,
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.mergers", MessageMerger=object
+        )
+
+        spec = importlib.util.spec_from_file_location(
+            "astrbot_plugin_telegram_forwarder.core.forwarder",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        module.__package__ = "astrbot_plugin_telegram_forwarder.core"
+        sys.modules[spec.name] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        _restore_modules(snapshot)
+
+
+def test_load_forwarder_module_restores_stubbed_modules(monkeypatch):
+    sentinel = object()
+    monkeypatch.setitem(sys.modules, "astrbot", sentinel)
+    monkeypatch.setitem(sys.modules, "astrbot.api", sentinel)
+
+    load_forwarder_module()
+
+    assert sys.modules["astrbot"] is sentinel
+    assert sys.modules["astrbot.api"] is sentinel
 
 
 def make_forwarder(forwarder_module, storage: FakeStorage, *, strict_ack: bool):
@@ -764,9 +811,11 @@ async def test_send_sorted_messages_in_batches_sends_mixable_channels_in_sorted_
     forwarder.tg_sender = MagicMock()
     forwarder._get_display_name = AsyncMock(side_effect=lambda channel: channel)
 
-    with patch(
-        "astrbot_plugin_telegram_forwarder.core.forwarder.sorted",
+    with patch.object(
+        forwarder_module,
+        "sorted",
         return_value=["a-demo", "z-demo"],
+        create=True,
     ) as sorted_mock:
         await forwarder._send_sorted_messages_in_batches(
             [

@@ -208,6 +208,8 @@ async def dispatch_processed_batches_to_targets(
                         chunk_failed = False
                         for batch_data in chunk_batches:
                             batch_index = batch_data["batch_index"]
+                            if target_session in target_successes.get(batch_index, set()):
+                                continue
                             try:
                                 await send_processed_batch_fn(
                                     batch_data=batch_data,

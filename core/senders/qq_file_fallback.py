@@ -180,21 +180,29 @@ async def handle_apk_file_send_failure(
 
     if policy.mode in {"link", "link_or_zip"} and policy.direct_link_base_url:
         direct_link = _build_direct_link(policy.direct_link_base_url, original_name)
-        await send_message_fn(
-            unified_msg_origin,
-            MessageChain(
-                [
-                    Plain(
-                        f"原文件 {original_name} 因 QQ 文件限制无法直传，改发直链：{direct_link}"
-                    )
-                ]
-            ),
-            send_kind="fallback_link",
-        )
-        logger.warning(
-            f"[QQSender] APK 文件发送失败，已降级为直链: target={target_session}, file={original_name}"
-        )
-        return True
+        try:
+            await send_message_fn(
+                unified_msg_origin,
+                MessageChain(
+                    [
+                        Plain(
+                            f"原文件 {original_name} 因 QQ 文件限制无法直传，改发直链：{direct_link}"
+                        )
+                    ]
+                ),
+                send_kind="fallback_link",
+            )
+        except Exception as link_error:
+            if policy.mode == "link":
+                raise
+            logger.warning(
+                f"[QQSender] APK 文件直链降级发送失败，继续尝试压缩包兜底: target={target_session}, file={original_name}, error={link_error}"
+            )
+        else:
+            logger.warning(
+                f"[QQSender] APK 文件发送失败，已降级为直链: target={target_session}, file={original_name}"
+            )
+            return True
 
     if policy.mode not in {"zip", "link_or_zip"}:
         return False

@@ -8,21 +8,48 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 
+def _snapshot_modules(*names: str) -> dict[str, object | None]:
+    return {name: sys.modules.get(name) for name in names}
+
+
+def _restore_modules(snapshot: dict[str, object | None]) -> None:
+    for name, value in snapshot.items():
+        if value is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = value
+
+
 def load_storage_module():
     root = Path(__file__).resolve().parents[1]
     module_path = root / "common" / "storage.py"
+    snapshot = _snapshot_modules("astrbot", "astrbot.api")
 
-    sys.modules["astrbot"] = MagicMock()
-    sys.modules["astrbot.api"] = SimpleNamespace(logger=MagicMock())
+    try:
+        sys.modules["astrbot"] = MagicMock()
+        sys.modules["astrbot.api"] = SimpleNamespace(logger=MagicMock())
 
-    spec = importlib.util.spec_from_file_location(
-        "astrbot_plugin_telegram_forwarder.common.storage",
-        module_path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+        spec = importlib.util.spec_from_file_location(
+            "astrbot_plugin_telegram_forwarder.common.storage",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        _restore_modules(snapshot)
+
+
+def test_load_storage_module_restores_astrbot_modules(monkeypatch):
+    sentinel = object()
+    monkeypatch.setitem(sys.modules, "astrbot", sentinel)
+    monkeypatch.setitem(sys.modules, "astrbot.api", sentinel)
+
+    load_storage_module()
+
+    assert sys.modules["astrbot"] is sentinel
+    assert sys.modules["astrbot.api"] is sentinel
 
 
 def make_test_dir() -> Path:
