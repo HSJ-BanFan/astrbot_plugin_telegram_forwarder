@@ -353,7 +353,10 @@ class TelegramClientWrapper:
                         return
 
             # ========== 慢速路径：完整初始化 ==========
-            await self.client.connect()
+            if not await self.ensure_connected():
+                logger.error("[Client] Telegram 客户端连接失败")
+                self._authorized = False
+                return
 
             # ========== 检查授权状态 ==========
             authorized = await self.client.is_user_authorized()

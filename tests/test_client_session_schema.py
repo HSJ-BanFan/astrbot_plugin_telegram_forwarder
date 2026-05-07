@@ -496,3 +496,28 @@ def test_ensure_connected_returns_false_when_second_connect_fails_after_rebuild(
     )
     wrapper._init_client.assert_called_once_with()
     new_client.connect.assert_awaited_once_with()
+
+
+def test_start_routes_connection_through_ensure_connected():
+    client_module = load_client_module()
+    wrapper = object.__new__(client_module.TelegramClientWrapper)
+    wrapper.config = {}
+    wrapper.plugin_data_dir = "synthetic/session"
+    wrapper._authorized = False
+    wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
+    wrapper.ensure_connected = AsyncMock(return_value=True)
+
+    client = MagicMock()
+    client.is_connected.return_value = False
+    client.connect = AsyncMock()
+    client.is_user_authorized = AsyncMock(return_value=True)
+    client.get_dialogs = AsyncMock()
+    wrapper.client = client
+
+    client_module.get_auth_cache().clear()
+
+    asyncio.run(wrapper.start())
+
+    wrapper.ensure_connected.assert_awaited_once_with()
+    client.connect.assert_not_awaited()
+    client.get_dialogs.assert_awaited_once_with(limit=None)
