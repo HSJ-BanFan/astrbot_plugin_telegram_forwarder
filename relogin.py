@@ -37,7 +37,11 @@ if not os.path.exists(CONFIG_FILE):
 # 为了方便，请您直接在此处填入您的 API ID 和 Hash，或者我们尝试交互式输入
 print("=== Telegram Forwarder 重新登录助手 ===")
 
-api_id = input("请输入 API ID: ").strip()
+api_id_raw = input("请输入 API ID: ").strip()
+try:
+    api_id = int(api_id_raw)
+except ValueError:
+    raise SystemExit("API ID 必须是整数")
 api_hash = input("请输入 API Hash: ").strip()
 proxy_url = input(
     "请输入代理地址 (可选, 如 http://127.0.0.1:10801, 直接回车跳过): "

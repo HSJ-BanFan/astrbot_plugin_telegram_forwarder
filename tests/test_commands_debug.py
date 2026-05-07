@@ -227,6 +227,19 @@ class TestPluginCommandsDebug:
         assert "/tg debug <on|off|status>" in results[0]
 
     @pytest.mark.asyncio
+    async def test_get_root_reports_debug_enabled_default(self) -> None:
+        commands = make_commands(config_default=True, qq_sender=FakeQQSender())
+        event = make_event()
+
+        results = []
+        async for result in commands.get_config(event, "root"):
+            results.append(result)
+
+        assert len(results) == 1
+        assert "debug_enabled_default" in results[0]
+        assert "True" in results[0]
+
+    @pytest.mark.asyncio
     async def test_set_root_debug_enabled_default_updates_config(self) -> None:
         commands = make_commands(qq_sender=FakeQQSender())
         commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
@@ -256,3 +269,4 @@ class TestPluginCommandsDebug:
         assert "maybe" in results[0]
         assert "debug_enabled_default" not in commands.config
         commands.config.save_config.assert_not_called()
+        commands.context._star_manager.reload.assert_not_called()

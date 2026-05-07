@@ -11,7 +11,9 @@ class SessionPasswordNeededError(Exception):
     pass
 
 
-def load_relogin_module(client_factory: MagicMock):
+def load_relogin_module(
+    client_factory: MagicMock, inputs: list[str] | None = None
+):
     root = Path(__file__).resolve().parents[1]
     module_path = root / "relogin.py"
     module_name = "astrbot_plugin_telegram_forwarder.relogin"
@@ -29,9 +31,14 @@ def load_relogin_module(client_factory: MagicMock):
         spec = importlib.util.spec_from_file_location(module_name, module_path)
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
-        with patch("builtins.input", side_effect=["123456", "hash", ""]):
+        with patch("builtins.input", side_effect=inputs or ["123456", "hash", ""]):
             spec.loader.exec_module(mod)
         return mod
+
+
+def test_relogin_exits_when_api_id_is_not_integer():
+    with pytest.raises(SystemExit, match="API ID 必须是整数"):
+        load_relogin_module(MagicMock(), inputs=["not-int", "hash", ""])
 
 
 @pytest.mark.asyncio
@@ -43,11 +50,18 @@ async def test_relogin_disconnects_when_sign_in_raises():
     client.send_code_request = AsyncMock()
     client.sign_in = AsyncMock(side_effect=RuntimeError("login failed"))
 
-    relogin_module = load_relogin_module(MagicMock(return_value=client))
+    client_factory = MagicMock(return_value=client)
+    relogin_module = load_relogin_module(client_factory)
     relogin_module._async_input = AsyncMock(side_effect=["+8613800000000", "12345"])
 
     await relogin_module.main()
 
+    client_factory.assert_called_once_with(
+        relogin_module.SESSION_FILE,
+        123456,
+        "hash",
+        proxy=None,
+    )
     client.disconnect.assert_awaited_once_with()
 
 

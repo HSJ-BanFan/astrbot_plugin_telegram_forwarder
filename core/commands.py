@@ -659,6 +659,7 @@ class PluginCommands:
                 "api_hash",
                 "telegram_session",
                 "proxy",
+                "debug_enabled_default",
             ]
             root_display = {}
             for key in interesting_root_keys:
@@ -674,6 +675,8 @@ class PluginCommands:
                             display = f"已上传 {len(val)} 个 session 文件"
                     else:
                         display = "格式异常"
+                elif key == "debug_enabled_default":
+                    display = str(bool(val)) if val is not None else "<未设置>"
                 else:
                     display = self.mask_sensitive(val, key)  # 脱敏
 
@@ -832,7 +835,7 @@ class PluginCommands:
                 ("api_id", "Telegram API ID（纯数字，从 my.telegram.org 获取）"),
                 ("api_hash", "Telegram API Hash（字符串，从 my.telegram.org 获取）"),
                 ("proxy", "代理地址（例如 http://127.0.0.1:7890 或 socks5://...）"),
-                ("debug_enabled_default", "QQ 发送诊断日志默认开关（true/false）"),
+                ("debug_enabled_default", "QQ 发送诊断日志默认开关(true/false)"),
             ]
 
         elif target_clean == "global":
