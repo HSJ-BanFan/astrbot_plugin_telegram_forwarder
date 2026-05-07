@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import os
 import shutil
 import uuid
 import zipfile
@@ -163,6 +164,34 @@ class TestDispatchMediaFile:
         assert type(result[0]).__name__ == "Video"
         assert result[0].file == "file:///mapped/tmp/video.mp4"
 
+    def test_video_path_mapping_falls_back_to_source_when_mapped_path_missing(
+        self, qq_module, monkeypatch
+    ):
+        source_path = "/tmp/video.mp4"
+        mapped_path = "/mapped/video.mp4"
+
+        def fake_isfile(path):
+            if path == source_path:
+                return True
+            if path == mapped_path:
+                return False
+            return False
+
+        monkeypatch.setattr(
+            qq_module.dispatch_media_file.__globals__["os"].path,
+            "isfile",
+            fake_isfile,
+        )
+
+        result = qq_module.dispatch_media_file(
+            source_path,
+            map_path=lambda _: mapped_path,
+        )
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "Video"
+        assert result[0].value == source_path
+
     def test_video_path_mapping_uses_valid_file_uri_for_posix_path(self, sender):
         sender._map_path = lambda p: "/plugin_data/video.mp4"
 
@@ -221,6 +250,35 @@ class TestDispatchMediaFile:
         assert result[0].file == "/mapped/report.txt"
         assert result[0].name == "report.txt"
 
+    def test_dispatch_media_file_falls_back_to_source_when_mapped_path_missing(
+        self, qq_module, monkeypatch
+    ):
+        source_path = "/tmp/report.txt"
+        mapped_path = "/mapped/report.txt"
+
+        def fake_isfile(path):
+            if path == source_path:
+                return True
+            if path == mapped_path:
+                return False
+            return False
+
+        monkeypatch.setattr(
+            qq_module.dispatch_media_file.__globals__["os"].path,
+            "isfile",
+            fake_isfile,
+        )
+
+        result = qq_module.dispatch_media_file(
+            source_path,
+            map_path=lambda _: mapped_path,
+        )
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "File"
+        assert result[0].file == source_path
+        assert result[0].name == "report.txt"
+
     @pytest.mark.asyncio
     async def test_patch_file_to_dict_uses_object_setattr_for_strict_models(self):
         previous_modules = plugin_conftest._register_mock_package_tree()
@@ -257,6 +315,64 @@ class TestDispatchMediaFile:
                 "file": "/plugin_data/demo/mapped.apk",
             },
         }
+
+
+class TestMediaDownloader:
+    @pytest.mark.asyncio
+    async def test_download_media_skips_video_over_100mb_even_without_max_size_limit(
+        self, qq_module
+    ):
+        downloader_path = (
+            Path(plugin_conftest._repo_root) / "core" / "downloader.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "astrbot_plugin_telegram_forwarder.core.downloader",
+            str(downloader_path),
+        )
+        downloader_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(downloader_module)
+
+        client = MagicMock()
+        client.is_connected.return_value = True
+        client.download_media = AsyncMock(return_value="/tmp/video.mp4")
+
+        downloader = downloader_module.MediaDownloader(
+            client=client,
+            plugin_data_dir="/tmp",
+        )
+
+        msg = type(
+            "Msg",
+            (),
+            {
+                "id": 1001,
+                "media": type(
+                    "Media",
+                    (),
+                    {
+                        "document": type(
+                            "Document",
+                            (),
+                            {
+                                "size": 101 * 1024 * 1024,
+                                "attributes": [],
+                            },
+                        )()
+                    },
+                )(),
+                "photo": None,
+                "video": object(),
+                "audio": None,
+                "voice": None,
+                "file": type("FileMeta", (), {"size": 101 * 1024 * 1024})(),
+                "sticker": None,
+            },
+        )()
+
+        files = await downloader.download_media(msg, max_size_mb=0)
+
+        assert files == []
+        client.download_media.assert_not_awaited()
 
 
 class TestGetSenderDisplayName:

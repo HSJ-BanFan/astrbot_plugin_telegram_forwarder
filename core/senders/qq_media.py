@@ -101,6 +101,12 @@ def dispatch_media_file(
         return [record]
     if ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
         mapped = map_path(fpath)
+        if mapped != fpath and not os.path.isfile(mapped) and os.path.isfile(fpath):
+            logger.warning(
+                f"[QQSender] Mapped video path not found, fallback to source path: "
+                f"source_path={fpath!r}, mapped_path={mapped!r}"
+            )
+            mapped = fpath
         if mapped != fpath:
             video = Video(file=_as_file_uri(mapped))
         else:
@@ -124,6 +130,12 @@ def dispatch_media_file(
             )
         return [video]
     mapped = map_path(fpath)
+    if mapped != fpath and not os.path.isfile(mapped) and os.path.isfile(fpath):
+        logger.warning(
+            f"[QQSender] Mapped file path not found, fallback to source path: "
+            f"source_path={fpath!r}, mapped_path={mapped!r}"
+        )
+        mapped = fpath
     component = _patch_file_to_dict(
         File(
             file=mapped,

@@ -41,22 +41,30 @@ class MediaDownloader:
         ):
             return local_files
 
-        # 检查大小限制 (图片除外)
+        # 检查大小限制
         is_photo = bool(msg.photo)
-        if not is_photo and max_size_mb > 0:
-            file_size = 0
-            if hasattr(msg.media, "document") and hasattr(msg.media.document, "size"):
-                file_size = msg.media.document.size
-            elif hasattr(msg.file, "size"):
-                file_size = msg.file.size
-
-            if file_size > max_size_mb * 1024 * 1024:
-                logger.info(
-                    f"[Downloader] 消息 {msg.id} 中的文件过大 ({file_size / 1024 / 1024:.2f} MB > {max_size_mb} MB)，跳过下载。"
-                )
-                return local_files
-
         is_video = bool(msg.video)
+
+        file_size = 0
+        if hasattr(msg.media, "document") and hasattr(msg.media.document, "size"):
+            file_size = msg.media.document.size
+        elif hasattr(msg, "file") and hasattr(msg.file, "size"):
+            file_size = msg.file.size
+
+        # QQ 平台对视频上传大小限制更严格，超过阈值直接跳过避免后续 rich media transfer failed
+        qq_video_max_mb = 100
+        if is_video and file_size > qq_video_max_mb * 1024 * 1024:
+            logger.info(
+                f"[Downloader] 消息 {msg.id} 视频过大 ({file_size / 1024 / 1024:.2f} MB > {qq_video_max_mb} MB)，跳过下载。"
+            )
+            return local_files
+
+        if not is_photo and max_size_mb > 0 and file_size > max_size_mb * 1024 * 1024:
+            logger.info(
+                f"[Downloader] 消息 {msg.id} 中的文件过大 ({file_size / 1024 / 1024:.2f} MB > {max_size_mb} MB)，跳过下载。"
+            )
+            return local_files
+
         is_audio = bool(msg.audio or msg.voice)
         is_file = bool(msg.file)
 
