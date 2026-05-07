@@ -522,9 +522,21 @@ class QQSender:
             )
 
         context_target_sessions = self._resolve_context_target_sessions(qq_targets)
+        real_batches = self._flatten_batches(batches)
+
+        if not real_batches:
+            logger.debug("[QQSender] 展平后无有效批次，跳过发送")
+            return QQSendSummary()
 
         if not context_target_sessions:
-            return QQSendSummary()
+            failed_batch_indexes = tuple(range(len(real_batches)))
+            return QQSendSummary(
+                failed_batch_indexes=failed_batch_indexes,
+                error_types={
+                    batch_index: "unresolved_target_session"
+                    for batch_index in failed_batch_indexes
+                },
+            )
 
         forward_cfg = self.config.get("forward_config", {})
         qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
@@ -533,12 +545,6 @@ class QQSender:
             target_circuit_fail_threshold,
             target_circuit_cooldown_sec,
         ) = self._resolve_send_limits(forward_cfg)
-
-        real_batches = self._flatten_batches(batches)
-
-        if not real_batches:
-            logger.debug("[QQSender] 展平后无有效批次，跳过发送")
-            return QQSendSummary()
 
         logger.debug(
             f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次"

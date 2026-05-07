@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,6 +25,12 @@ class PhoneCodeInvalidError(Exception):
 
 class SessionPasswordNeededError(Exception):
     pass
+
+
+class FakeConfig(dict):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.save_config = MagicMock()
 
 
 class FakeQQSender:
@@ -95,7 +101,7 @@ def make_commands(
     *, config_default: bool = False, qq_sender: FakeQQSender | None = None
 ) -> Any:
     commands_module = load_commands_module()
-    config = {"debug_enabled_default": config_default}
+    config = FakeConfig({"debug_enabled_default": config_default})
     forwarder = SimpleNamespace(qq_sender=qq_sender)
     if qq_sender is not None:
         qq_sender.config = config
@@ -219,3 +225,18 @@ class TestPluginCommandsDebug:
 
         assert len(results) == 1
         assert "/tg debug <on|off|status>" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_debug_enabled_default_updates_config(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(event, "root debug_enabled_default true"):
+            results.append(result)
+
+        assert commands.config["debug_enabled_default"] is True
+        commands.config.save_config.assert_called_once_with()
+        assert "已修改根配置 debug_enabled_default" in results[0]
+        assert "已自动重载插件" in results[1]

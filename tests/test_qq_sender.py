@@ -74,6 +74,61 @@ async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module
     assert result.target_successes[1] == {"aiocqhttp:GroupMessage:1"}
 
 
+@pytest.mark.asyncio
+async def test_special_media_chunk_records_success_before_later_batch_failure(qq_module):
+    send_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        batch_index = kwargs["batch_data"]["batch_index"]
+        send_calls.append(batch_index)
+        if batch_index == 1:
+            raise RuntimeError("second batch failed")
+
+    processed_batches = [
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.File(file="/tmp/a.bin", name="a.bin")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.File(file="/tmp/b.bin", name="b.bin")]],
+            "contains_audio": False,
+        },
+    ]
+    target_successes = {0: set(), 1: set()}
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batches=[[object()], [object()]],
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures={},
+        deferred_batch_indexes=set(),
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={"qq_merge_chunk_size": 10, "qq_merge_chunk_delay": 0},
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=lambda exc: str(exc),
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=AsyncMock(),
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_calls == [0, 1, 1]
+    assert result.target_successes[0] == {"aiocqhttp:GroupMessage:1"}
+    assert result.target_failures == {1: "second batch failed"}
+
+
 class TestDispatchMediaFile:
     def test_dispatch_by_extension(self, sender):
         cases = [
@@ -1617,6 +1672,32 @@ class TestSendSummary:
         assert summary.acked_batch_indexes == ()
         assert set(summary.failed_batch_indexes) == {0, 1}
         assert summary.error_types == {0: "timeout", 1: "timeout"}
+
+    @pytest.mark.asyncio
+    async def test_send_marks_numeric_targets_failed_when_platform_id_unresolved(self, sender):
+        sender.context.send_message = AsyncMock()
+        sender.config = {"forward_config": {"qq_merge_threshold": 99}}
+        sender.platform_id = None
+        sender._bootstrap_qq_runtime = AsyncMock()
+
+        msg1 = type("Msg", (), {"id": 1, "text": "a", "reply_to": None})()
+        msg2 = type("Msg", (), {"id": 2, "text": "b", "reply_to": None})()
+
+        summary = await sender.send(
+            batches=[[msg1], [msg2]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={"effective_target_qq_sessions": ["123456"]},
+            involved_channels=None,
+        )
+
+        sender.context.send_message.assert_not_awaited()
+        assert summary.acked_batch_indexes == ()
+        assert summary.failed_batch_indexes == (0, 1)
+        assert summary.error_types == {
+            0: "unresolved_target_session",
+            1: "unresolved_target_session",
+        }
 
     @pytest.mark.asyncio
     async def test_send_marks_preprocess_empty_batch_with_error_type(self, sender):
