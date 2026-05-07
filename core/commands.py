@@ -59,6 +59,22 @@ class PluginCommands:
                 targets.append(val)
         return targets
 
+    @staticmethod
+    def _parse_bool_value(raw_value: str) -> bool:
+        value = (raw_value or "").strip().lower()
+        return value in ("true", "1", "yes", "y", "开启", "开", "是")
+
+    @staticmethod
+    def _parse_tri_state_value(raw_value: str) -> str:
+        value = (raw_value or "").strip().lower()
+        if value in ("继承全局", "inherit", "default"):
+            return "继承全局"
+        if value in ("true", "1", "yes", "y", "开启", "开", "是"):
+            return "开启"
+        if value in ("false", "0", "no", "n", "关闭", "关", "否"):
+            return "关闭"
+        raise ValueError("仅支持：继承全局 / 开启 / 关闭")
+
     def _get_root_qq_targets(self):
         return self.config.get("target_qq_session", [])
 
@@ -381,6 +397,16 @@ class PluginCommands:
             "check_interval": 0,
             "msg_limit": 10,
             "priority": 0,
+            "exclude_text_on_media": "继承全局",
+            "filter_spoiler_messages": "继承全局",
+            "strip_markdown_links": "继承全局",
+            "strict_keyword_mode": "继承全局",
+            "ignore_global_filters": False,
+            "filter_keywords": [],
+            "filter_regex": "",
+            "monitor_keywords": [],
+            "monitor_regex": "",
+            "target_qq_sessions": [],
             "forward_types": ["文字", "图片", "视频", "音频", "文件"],
             "max_file_size": 0,
         }
@@ -773,6 +799,7 @@ class PluginCommands:
             "exclude_text_on_media",
             "filter_spoiler_messages",
             "strip_markdown_links",
+            "strict_keyword_mode",
         ]
 
         for key in inherit_fields:
@@ -780,6 +807,7 @@ class PluginCommands:
                 "exclude_text_on_media": "媒体消息仅发送媒体",
                 "filter_spoiler_messages": "过滤剧透消息",
                 "strip_markdown_links": "剥离MD链接只留文字",
+                "strict_keyword_mode": "关键词严格模式",
             }
             display_name = name_map.get(key, key.replace("_", " ").title())
 
@@ -862,6 +890,7 @@ class PluginCommands:
                 ("filter_regex", "全局正则过滤（Python re 语法）"),
                 ("monitor_keywords", "全局监听关键词（命中任一立即触发）"),
                 ("monitor_regex", "全局监听正则（命中立即触发）"),
+                ("strict_keyword_mode", "关键词严格模式（仅转发命中监听关键词的消息）"),
                 ("curfew_time", "宵禁时间段（格式 23:00-07:00，支持跨天，留空禁用）"),
             ]
 
@@ -912,6 +941,7 @@ class PluginCommands:
                 ("filter_regex", "本频道专属正则过滤"),
                 ("monitor_keywords", "本频道专属监听关键词（命中立即抓取）"),
                 ("monitor_regex", "本频道专属监听正则"),
+                ("strict_keyword_mode", "关键词严格模式（继承全局 / 开启 / 关闭）"),
             ]
 
         for field, desc in help_items:
@@ -955,6 +985,7 @@ class PluginCommands:
                 "filter_regex": "正则表达式，例如 ^(测试|广告)",
                 "monitor_keywords": "关键词1,关键词2",
                 "monitor_regex": "正则表达式",
+                "strict_keyword_mode": "true / false / 开启 / 关闭",
                 "curfew_time": "时间段，例如 23:00-07:00 或留空",
             }
         else:
@@ -974,6 +1005,7 @@ class PluginCommands:
                 "filter_regex": "正则表达式",
                 "monitor_keywords": "关键词1,关键词2",
                 "monitor_regex": "正则表达式",
+                "strict_keyword_mode": "继承全局 / 开启 / 关闭",
             }
 
         desc = mapping.get(field, "（格式要求请参考完整帮助）")
@@ -1034,18 +1066,11 @@ class PluginCommands:
                     x.strip() for x in v.split(",") if x.strip()
                 ],
                 "max_file_size": float,
-                "exclude_text_on_media": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "filter_spoiler_messages": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "strip_markdown_links": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "ignore_global_filters": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
+                "exclude_text_on_media": self._parse_tri_state_value,
+                "filter_spoiler_messages": self._parse_tri_state_value,
+                "strip_markdown_links": self._parse_tri_state_value,
+                "strict_keyword_mode": self._parse_tri_state_value,
+                "ignore_global_filters": self._parse_bool_value,
                 "filter_keywords": lambda v: [
                     x.strip() for x in v.split(",") if x.strip()
                 ],
@@ -1145,18 +1170,11 @@ class PluginCommands:
                     x.strip() for x in v.split(",") if x.strip()
                 ],
                 "max_file_size": float,
-                "exclude_text_on_media": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "filter_spoiler_messages": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "strip_markdown_links": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
-                "ignore_global_filters": lambda v: (
-                    v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-                ),
+                "exclude_text_on_media": self._parse_tri_state_value,
+                "filter_spoiler_messages": self._parse_tri_state_value,
+                "strip_markdown_links": self._parse_tri_state_value,
+                "strict_keyword_mode": self._parse_tri_state_value,
+                "ignore_global_filters": self._parse_bool_value,
                 "filter_keywords": lambda v: [
                     x.strip() for x in v.split(",") if x.strip()
                 ],
@@ -1326,24 +1344,13 @@ class PluginCommands:
             "curfew_time": str,
             "filter_regex": str,
             "monitor_regex": str,
-            "exclude_text_on_media": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
-            "filter_spoiler_messages": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
-            "strip_markdown_links": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
-            "enable_deduplication": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
-            "use_channel_title": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
-            "ignore_global_filters": lambda v: (
-                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
-            ),
+            "exclude_text_on_media": self._parse_bool_value,
+            "filter_spoiler_messages": self._parse_bool_value,
+            "strip_markdown_links": self._parse_bool_value,
+            "strict_keyword_mode": self._parse_bool_value,
+            "enable_deduplication": self._parse_bool_value,
+            "use_channel_title": self._parse_bool_value,
+            "ignore_global_filters": self._parse_bool_value,
             "forward_types": lambda v: [x.strip() for x in v.split(",") if x.strip()],
             "filter_keywords": lambda v: [x.strip() for x in v.split(",") if x.strip()],
             "monitor_keywords": lambda v: [
@@ -1368,6 +1375,12 @@ class PluginCommands:
             return
 
         handler = field_handlers[field]
+        tri_state_fields = {
+            "exclude_text_on_media",
+            "filter_spoiler_messages",
+            "strip_markdown_links",
+            "strict_keyword_mode",
+        }
 
         raw_lower = value_str.strip().lower()
         is_clear_cmd = raw_lower in ("[]", "清空", "clear", "none", "empty", "null")
@@ -1381,7 +1394,10 @@ class PluginCommands:
             value = []
         else:
             try:
-                value = handler(value_str)
+                if not is_global and field in tri_state_fields:
+                    value = self._parse_tri_state_value(value_str)
+                else:
+                    value = handler(value_str)
             except (ValueError, TypeError) as e:
                 field_help = self._get_single_field_help(target, field)
                 error_msg = str(e)

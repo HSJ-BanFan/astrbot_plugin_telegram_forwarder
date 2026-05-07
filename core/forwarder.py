@@ -320,25 +320,46 @@ class Forwarder:
             priority = 0
 
         # 3.8 媒体文本排除 & 剧透过滤
-        exclude_text_on_media = channel_cfg.get(
+        channel_exclude_text_on_media = channel_cfg.get(
             "exclude_text_on_media", "继承全局"
-        ) == "开启" or (
-            channel_cfg.get("exclude_text_on_media", "继承全局") == "继承全局"
-            and global_cfg.get("exclude_text_on_media", False)
         )
+        if isinstance(channel_exclude_text_on_media, bool):
+            exclude_text_on_media = channel_exclude_text_on_media
+        else:
+            exclude_text_on_media = channel_exclude_text_on_media == "开启" or (
+                channel_exclude_text_on_media == "继承全局"
+                and global_cfg.get("exclude_text_on_media", False)
+            )
 
-        filter_spoiler_messages = channel_cfg.get(
+        channel_filter_spoiler_messages = channel_cfg.get(
             "filter_spoiler_messages", "继承全局"
-        ) == "开启" or (
-            channel_cfg.get("filter_spoiler_messages", "继承全局") == "继承全局"
-            and global_cfg.get("filter_spoiler_messages", False)
         )
+        if isinstance(channel_filter_spoiler_messages, bool):
+            filter_spoiler_messages = channel_filter_spoiler_messages
+        else:
+            filter_spoiler_messages = channel_filter_spoiler_messages == "开启" or (
+                channel_filter_spoiler_messages == "继承全局"
+                and global_cfg.get("filter_spoiler_messages", False)
+            )
+
+        channel_strict_keyword_mode = channel_cfg.get(
+            "strict_keyword_mode", "继承全局"
+        )
+        if isinstance(channel_strict_keyword_mode, bool):
+            strict_keyword_mode = channel_strict_keyword_mode
+        else:
+            strict_keyword_mode = channel_strict_keyword_mode == "开启" or (
+                channel_strict_keyword_mode == "继承全局"
+                and global_cfg.get("strict_keyword_mode", False)
+            )
 
         # 3.9 Markdown 链接剥离规则
         strip_global = global_cfg.get("strip_markdown_links", False)
         strip_channel_raw = channel_cfg.get("strip_markdown_links", "继承全局")
 
-        if strip_channel_raw == "开启":
+        if isinstance(strip_channel_raw, bool):
+            strip_markdown_links = strip_channel_raw
+        elif strip_channel_raw == "开启":
             strip_markdown_links = True
         elif strip_channel_raw == "关闭":
             strip_markdown_links = False
@@ -367,6 +388,7 @@ class Forwarder:
             "priority": priority,
             "exclude_text_on_media": exclude_text_on_media,
             "filter_spoiler_messages": filter_spoiler_messages,
+            "strict_keyword_mode": strict_keyword_mode,
             "strip_markdown_links": strip_markdown_links,
             "start_time": channel_cfg.get("start_time", ""),
             "msg_limit": channel_cfg.get("msg_limit", 20),
@@ -828,8 +850,19 @@ class Forwarder:
                             should_skip = False
                             check_text_lower = full_check_text.lower()
 
+                            strict_keyword_mode = effective_cfg.get(
+                                "strict_keyword_mode", False
+                            )
+                            if strict_keyword_mode and not self._is_monitor_matched(
+                                m, effective_cfg
+                            ):
+                                logger.info(
+                                    f"[Filter] 消息 {m.id} 未命中监听规则，关键词严格模式已跳过。"
+                                )
+                                should_skip = True
+
                             filter_keywords = effective_cfg["filter_keywords"]
-                            if filter_keywords:
+                            if not should_skip and filter_keywords:
                                 for kw in filter_keywords:
                                     if self._is_keyword_matched(kw, check_text_lower):
                                         logger.info(

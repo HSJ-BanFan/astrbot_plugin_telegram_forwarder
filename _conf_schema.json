@@ -157,6 +157,17 @@
                         "default": "继承全局",
                         "hint": "开启后该频道 [文本](链接) 只保留文本"
                     },
+                    "strict_keyword_mode": {
+                        "description": "关键词严格模式",
+                        "type": "string",
+                        "options": [
+                            "继承全局",
+                            "开启",
+                            "关闭"
+                        ],
+                        "default": "继承全局",
+                        "hint": "开启后仅转发命中监听关键词的消息，未命中将跳过"
+                    },
                     "monitor_keywords": {
                         "type": "list",
                         "item_type": "string",
@@ -190,6 +201,11 @@
                 "priority": 0,
                 "exclude_text_on_media": "继承全局",
                 "filter_spoiler_messages": "继承全局",
+                "strip_markdown_links": "继承全局",
+                "strict_keyword_mode": "继承全局",
+                "ignore_global_filters": false,
+                "filter_keywords": [],
+                "filter_regex": "",
                 "forward_types": [
                     "文字",
                     "图片",
@@ -199,7 +215,8 @@
                 ],
                 "max_file_size": 0,
                 "monitor_keywords": [],
-                "monitor_regex": ""
+                "monitor_regex": "",
+                "target_qq_sessions": []
             }
         ],
         "hint": "添加并配置需要转发的 Telegram 频道",
@@ -256,6 +273,12 @@
                 "type": "bool",
                 "default": false,
                 "hint": "开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃"
+            },
+            "strict_keyword_mode": {
+                "description": "关键词严格模式",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后仅转发命中监听关键词的消息，未命中将跳过"
             },
             "forward_types": {
                 "description": "转发消息类型",
