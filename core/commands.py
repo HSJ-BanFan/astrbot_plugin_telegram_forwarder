@@ -832,6 +832,7 @@ class PluginCommands:
                 ("api_id", "Telegram API ID（纯数字，从 my.telegram.org 获取）"),
                 ("api_hash", "Telegram API Hash（字符串，从 my.telegram.org 获取）"),
                 ("proxy", "代理地址（例如 http://127.0.0.1:7890 或 socks5://...）"),
+                ("debug_enabled_default", "QQ 发送诊断日志默认开关（true/false）"),
             ]
 
         elif target_clean == "global":
@@ -936,6 +937,7 @@ class PluginCommands:
                 "api_id": "纯数字，例如：1234567",
                 "api_hash": "字符串，例如：a1b2c3d4e5f6g7h8i9j0",
                 "proxy": "代理地址，例如：http://127.0.0.1:7890",
+                "debug_enabled_default": "true / false / 开启 / 关闭",
             }
         elif target_clean == "global":
             mapping = {
@@ -1246,6 +1248,7 @@ class PluginCommands:
                 "api_id",
                 "api_hash",
                 "proxy",
+                "debug_enabled_default",
             }
 
             if field not in allowed_root_fields:
@@ -1274,6 +1277,8 @@ class PluginCommands:
                     value = []
                 else:
                     value = [x.strip() for x in value_str.split(",") if x.strip()]
+            elif field == "debug_enabled_default":
+                value = value_str.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
             else:
                 value = value_str
 
