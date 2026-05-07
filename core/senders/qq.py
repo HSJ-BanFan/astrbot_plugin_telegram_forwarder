@@ -525,7 +525,7 @@ class QQSender:
         real_batches = self._flatten_batches(batches)
 
         if not real_batches:
-            logger.debug("[QQSender] 展平后无有效批次，跳过发送")
+            logger.debug("[QQSender] 展平后无有效批次, 跳过发送")
             return QQSendSummary()
 
         if not context_target_sessions:

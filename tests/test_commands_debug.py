@@ -240,3 +240,19 @@ class TestPluginCommandsDebug:
         commands.config.save_config.assert_called_once_with()
         assert "已修改根配置 debug_enabled_default" in results[0]
         assert "已自动重载插件" in results[1]
+
+    @pytest.mark.asyncio
+    async def test_set_root_debug_enabled_default_rejects_unknown_token(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config.pop("debug_enabled_default", None)
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(event, "root debug_enabled_default maybe"):
+            results.append(result)
+
+        assert "❌ 值格式错误" in results[0]
+        assert "debug_enabled_default" in results[0]
+        assert "maybe" in results[0]
+        assert "debug_enabled_default" not in commands.config
+        commands.config.save_config.assert_not_called()

@@ -87,7 +87,10 @@ async def main():
         print("Session 文件已更新。现在您可以重启 AstrBot 了。")
     finally:
         if client is not None:
-            await client.disconnect()
+            try:
+                await client.disconnect()
+            except Exception as e:
+                print(f"断开 Telegram 客户端连接失败（已忽略）: {e}")
 
 
 if __name__ == "__main__":

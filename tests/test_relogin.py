@@ -65,3 +65,19 @@ async def test_relogin_disconnects_when_get_me_raises():
         await relogin_module.main()
 
     client.disconnect.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_relogin_preserves_original_error_when_disconnect_raises():
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock(side_effect=RuntimeError("disconnect failed"))
+    client.is_user_authorized = AsyncMock(return_value=True)
+    client.get_me = AsyncMock(side_effect=RuntimeError("session check failed"))
+
+    relogin_module = load_relogin_module(MagicMock(return_value=client))
+
+    with pytest.raises(RuntimeError, match="session check failed"):
+        await relogin_module.main()
+
+    client.disconnect.assert_awaited_once_with()

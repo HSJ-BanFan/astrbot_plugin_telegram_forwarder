@@ -514,10 +514,13 @@ def test_start_routes_connection_through_ensure_connected():
     client.get_dialogs = AsyncMock()
     wrapper.client = client
 
-    client_module.get_auth_cache().clear()
+    auth_cache = client_module.get_auth_cache()
+    auth_cache.clear()
 
     asyncio.run(wrapper.start())
 
     wrapper.ensure_connected.assert_awaited_once_with()
     client.connect.assert_not_awaited()
     client.get_dialogs.assert_awaited_once_with(limit=None)
+    assert wrapper._authorized is True
+    auth_cache.clear()

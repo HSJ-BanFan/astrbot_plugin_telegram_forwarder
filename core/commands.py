@@ -1278,7 +1278,19 @@ class PluginCommands:
                 else:
                     value = [x.strip() for x in value_str.split(",") if x.strip()]
             elif field == "debug_enabled_default":
-                value = value_str.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
+                normalized_value = value_str.lower()
+                true_tokens = {"true", "1", "yes", "y", "开启", "开", "是"}
+                false_tokens = {"false", "0", "no", "n", "关闭", "关", "否"}
+                if normalized_value in true_tokens:
+                    value = True
+                elif normalized_value in false_tokens:
+                    value = False
+                else:
+                    field_help = self._get_single_field_help(target, field)
+                    yield event.plain_result(
+                        f"❌ 值格式错误：root.{field} = {value_str!r}\n\n格式要求：\n{field_help}"
+                    )
+                    return
             else:
                 value = value_str
 
