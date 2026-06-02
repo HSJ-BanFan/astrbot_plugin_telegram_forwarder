@@ -44,6 +44,8 @@ class Main(star.Star):
         self.config = config
         self.bot = None
         self._runtime_bootstrap_task = None
+        self._web_loop = None
+        self.web_admin_server = None
 
         # ========== 设置数据目录 ==========
         self.plugin_data_dir = str(StarTools.get_data_dir())
@@ -123,10 +125,101 @@ class Main(star.Star):
                 "Telegram Forwarder: 缺少 api_id 或 api_hash，请在配置中填写。"
             )
 
+    def _start_web_admin_server(self) -> None:
+        web_config = self.config.get("web_config", {})
+        if isinstance(web_config, dict) and web_config.get("enabled") is False:
+            logger.info("Telegram Forwarder Web 管理页面未启用。")
+            return
+
+        try:
+            from .core.web_admin import WebAdminServer
+
+            self.web_admin_server = WebAdminServer(self, self._web_loop)
+            self.web_admin_server.start()
+        except Exception as e:
+            logger.error(f"Telegram Forwarder Web 管理页面启动失败: {e}")
+
+    async def activate_runtime_after_authorized(self, startup_grace: int | None = None):
+        """Start or refresh runtime jobs after Telegram authorization succeeds."""
+        if not self.client_wrapper.is_authorized():
+            return False
+
+        if startup_grace is None:
+            startup_grace = self.STARTUP_GRACE_SECONDS
+
+        if hasattr(self.forwarder, "qq_sender") and (
+            not self._runtime_bootstrap_task or self._runtime_bootstrap_task.done()
+        ):
+
+            async def _bootstrap_runtime_later():
+                await asyncio.sleep(startup_grace)
+                try:
+                    await self.forwarder.qq_sender.initialize_runtime()
+                except Exception as e:
+                    logger.debug(
+                        f"[Main] QQ sender runtime delayed bootstrap failed: {e}"
+                    )
+
+            self._runtime_bootstrap_task = asyncio.create_task(
+                _bootstrap_runtime_later()
+            )
+
+        forward_config = self.config.get("forward_config", {})
+        check_interval = forward_config.get("check_interval", 60)
+        send_interval = forward_config.get("send_interval", 60)
+
+        check_start_time = datetime.now() + timedelta(seconds=startup_grace)
+        self.scheduler.add_job(
+            self.forwarder.check_updates,
+            "interval",
+            seconds=check_interval,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=check_start_time,
+            id="telegram_forwarder_check_updates",
+            replace_existing=True,
+        )
+
+        send_start_time = datetime.now() + timedelta(seconds=startup_grace + 5)
+        self.scheduler.add_job(
+            self.forwarder.send_pending_messages,
+            "interval",
+            seconds=send_interval,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=send_start_time,
+            id="telegram_forwarder_send_pending",
+            replace_existing=True,
+        )
+
+        if not self.scheduler.running:
+            self.scheduler.start()
+
+        logger.info("Telegram Forwarder 已成功启动并激活调度器。")
+        logger.info(
+            f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')})"
+        )
+        logger.info(
+            f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
+        )
+        source_channels = self.config.get("source_channels", [])
+        channel_names = [
+            c.get("channel_username")
+            for c in source_channels
+            if isinstance(c, dict) and c.get("channel_username")
+        ]
+        logger.info(
+            f"正在监控频道: {', '.join(channel_names) if channel_names else '无'}"
+        )
+        return True
+
     async def initialize(self):
         """
         插件启动逻辑
         """
+        self._web_loop = asyncio.get_running_loop()
+        self._start_web_admin_server()
+
         # 启动 Telegram 客户端（处理登录、会话恢复等）
         if self.client_wrapper.client:
             logger.debug("正在尝试连接 Telegram 客户端...")
@@ -139,70 +232,7 @@ class Main(star.Star):
         )
 
         if is_authorized:
-            startup_grace = self.STARTUP_GRACE_SECONDS
-
-            if hasattr(self.forwarder, "qq_sender"):
-
-                async def _bootstrap_runtime_later():
-                    await asyncio.sleep(startup_grace)
-                    try:
-                        await self.forwarder.qq_sender.initialize_runtime()
-                    except Exception as e:
-                        logger.debug(
-                            f"[Main] QQ sender runtime delayed bootstrap failed: {e}"
-                        )
-
-                self._runtime_bootstrap_task = asyncio.create_task(
-                    _bootstrap_runtime_later()
-                )
-
-            # ========== 启动定时调度器 ==========
-            # 从全局 forward_config 对象中获取间隔
-            forward_config = self.config.get("forward_config", {})
-            check_interval = forward_config.get("check_interval", 60)
-            send_interval = forward_config.get("send_interval", 60)
-
-            # 任务 1: 检查更新 (Capture)
-            check_start_time = datetime.now() + timedelta(seconds=startup_grace)
-            self.scheduler.add_job(
-                self.forwarder.check_updates,
-                "interval",
-                seconds=check_interval,
-                max_instances=1,
-                coalesce=True,
-                next_run_time=check_start_time,
-            )
-
-            # 任务 2: 执行发送 (Send)
-            send_start_time = datetime.now() + timedelta(seconds=startup_grace + 5)
-            self.scheduler.add_job(
-                self.forwarder.send_pending_messages,
-                "interval",
-                seconds=send_interval,
-                max_instances=1,
-                coalesce=True,
-                next_run_time=send_start_time,
-            )
-
-            # 启动调度器
-            self.scheduler.start()
-
-            logger.info("Telegram Forwarder 已成功启动并激活调度器。")
-            logger.info(
-                f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')})"
-            )
-            logger.info(
-                f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
-            )
-            source_channels = self.config.get("source_channels", [])
-            channel_names = [
-                c.get("channel_username")
-                for c in source_channels
-                if c.get("channel_username")
-            ]
-            logger.info(
-                f"正在监控频道: {', '.join(channel_names) if channel_names else '无'}"
-            )
+            await self.activate_runtime_after_authorized()
         else:
             logger.error(
                 "Telegram 客户端未授权，定时任务未启动。请检查 session 文件或 api_id/api_hash。"
@@ -211,6 +241,10 @@ class Main(star.Star):
     async def terminate(self):
         """插件终止时的清理工作"""
         logger.debug("[Main] 正在停止插件...")
+
+        if self.web_admin_server:
+            self.web_admin_server.stop()
+            self.web_admin_server = None
 
         # 取消延迟初始化任务
         if self._runtime_bootstrap_task and not self._runtime_bootstrap_task.done():

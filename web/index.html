@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Telegram Forwarder</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="auth-screen" id="authScreen">
+      <form class="auth-panel" id="authForm">
+        <div class="auth-logo">TG</div>
+        <div>
+          <p class="eyebrow">Web Admin</p>
+          <h1>Telegram Forwarder</h1>
+        </div>
+        <label class="field">
+          <span>访问 Token</span>
+          <input id="tokenInput" type="password" autocomplete="current-password" value="123456" />
+        </label>
+        <button class="btn btn-primary full" type="submit">进入控制台</button>
+        <p class="auth-error" id="authError"></p>
+      </form>
+    </div>
+
+    <div class="app-shell" id="appShell" hidden>
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+          <div class="brand-dot">TG</div>
+          <div>
+            <strong>Telegram Forwarder</strong>
+            <span id="navSubtitle">Blue Console</span>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-section="overview">总览</button>
+          <button class="nav-item" data-section="login">Telegram 登录</button>
+          <button class="nav-item" data-section="targets">目标配置</button>
+          <button class="nav-item" data-section="channels">频道配置</button>
+          <button class="nav-item" data-section="merge">合并规则</button>
+          <button class="nav-item" data-section="global">全局转发</button>
+          <button class="nav-item" data-section="web">Web 设置</button>
+          <button class="nav-item" data-section="advanced">高级 JSON</button>
+        </nav>
+        <button class="btn btn-soft danger sidebar-exit" id="logoutBtn" type="button">退出</button>
+      </aside>
+
+      <button class="mobile-menu" id="mobileMenu" type="button" aria-label="打开导航">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Telegram Style Settings</p>
+            <h1 id="sectionTitle">总览</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="btn btn-soft" id="refreshBtn" type="button">刷新</button>
+            <button class="btn btn-primary" id="saveBtn" type="button">保存</button>
+          </div>
+        </header>
+
+        <section class="section active" id="section-overview">
+          <div class="status-grid">
+            <div class="metric-card metric-blue">
+              <span>Telegram</span>
+              <strong id="telegramStatus">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>调度器</span>
+              <strong id="schedulerStatus">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>监控频道</span>
+              <strong id="channelCount">-</strong>
+            </div>
+            <div class="metric-card">
+              <span>待发送队列</span>
+              <strong id="queueCount">-</strong>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>运行操作</h2>
+                <p id="runtimeMessage">手动触发、暂停或恢复转发任务。</p>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="btn btn-primary" id="runCheckBtn" type="button">立即抓取发送</button>
+              <button class="btn btn-soft" id="pauseBtn" type="button">暂停</button>
+              <button class="btn btn-soft" id="resumeBtn" type="button">恢复</button>
+              <button class="btn btn-soft danger" id="clearQueueBtn" type="button">清空队列</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>队列分布</h2>
+                <p>按频道查看待发送消息数量。</p>
+              </div>
+            </div>
+            <div class="queue-list" id="queueList"></div>
+          </div>
+        </section>
+
+        <section class="section" id="section-login">
+          <div class="login-layout">
+            <div class="login-side">
+              <div class="panel login-status-card" id="loginAccountCard">
+                <div class="panel-head">
+                  <div>
+                    <h2>Telegram 账号</h2>
+                    <p id="loginBadge">-</p>
+                  </div>
+                </div>
+                <div class="login-account" id="loginAccountInfo"></div>
+                <button class="btn btn-soft danger full" id="resetLoginBtn" type="button">重新登录</button>
+              </div>
+            </div>
+
+            <div class="panel login-flow-card">
+              <div class="panel-head">
+                <div>
+                  <h2>登录流程</h2>
+                  <p id="loginMessage">按顺序配置连接信息、发送验证码、提交验证码。</p>
+                </div>
+              </div>
+
+              <div class="step-list">
+                <section class="step-card active" data-login-step="connect">
+                  <div class="step-index">1</div>
+                  <div class="step-body">
+                    <h3>连接信息</h3>
+                    <div class="form-grid">
+                      <label class="field">API ID<input id="apiIdInput" type="number" inputmode="numeric" /></label>
+                      <label class="field">API Hash<input id="apiHashInput" type="password" autocomplete="off" /></label>
+                      <label class="field">手机号<input id="phoneInput" type="tel" placeholder="+8613800000000" /></label>
+                      <label class="field">代理<input id="proxyInput" type="text" placeholder="http://127.0.0.1:7890" /></label>
+                    </div>
+                    <div class="step-actions">
+                      <button class="btn btn-primary" id="sendCodeBtn" type="button">保存并发送验证码</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="step-card" data-login-step="code">
+                  <div class="step-index">2</div>
+                  <div class="step-body">
+                    <h3>验证码</h3>
+                    <div class="form-grid single">
+                      <label class="field">Telegram 验证码<input id="codeInput" type="text" inputmode="numeric" autocomplete="one-time-code" /></label>
+                    </div>
+                    <div class="step-actions">
+                      <button class="btn btn-primary" id="submitCodeBtn" type="button">提交验证码</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="step-card" data-login-step="password">
+                  <div class="step-index">3</div>
+                  <div class="step-body">
+                    <h3>两步验证</h3>
+                    <div class="form-grid single">
+                      <label class="field">两步验证密码<input id="passwordInput" type="password" autocomplete="current-password" /></label>
+                    </div>
+                    <div class="step-actions">
+                      <button class="btn btn-primary" id="submitPasswordBtn" type="button">提交密码</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="panel login-transfer-card">
+                <div class="panel-head">
+                  <div>
+                    <h2>登录信息导入导出</h2>
+                    <p>导出精简登录信息，只包含授权所需内容，不包含缓存记录。</p>
+                  </div>
+                </div>
+              <div class="settings-card">
+                <div class="action-row">
+                  <button class="btn btn-soft" id="exportSessionBtn" type="button">导出登录信息</button>
+                  <button class="btn btn-primary" id="importSessionBtn" type="button">导入登录信息</button>
+                </div>
+                <input id="sessionImportFile" type="file" accept="application/json,.json" hidden />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="section-targets">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>目标配置</h2>
+                <p>配置转发到 Telegram 与 QQ 的目标。</p>
+              </div>
+            </div>
+            <div class="settings-grid">
+              <div class="settings-card">
+                <h3>Telegram 目标</h3>
+                <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
+              </div>
+              <div class="settings-card">
+                <h3>QQ 目标</h3>
+                <label class="field">目标会话<textarea id="targetQQInput" rows="7"></textarea></label>
+              </div>
+              <div class="settings-card">
+                <h3>诊断</h3>
+                <label class="toggle-row">
+                  <input id="debugDefaultInput" type="checkbox" />
+                  <span>默认开启 QQ 发送诊断日志</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="section-channels">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>频道配置</h2>
+                <p>每个频道一张卡片，展开后按类型配置抓取、过滤、目标。</p>
+              </div>
+              <button class="btn btn-primary" id="addChannelBtn" type="button">新增频道</button>
+            </div>
+            <div class="channel-list" id="channelList"></div>
+          </div>
+        </section>
+
+        <section class="section" id="section-global">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>全局转发配置</h2>
+                <p>按类型切换，只显示当前类别的配置。</p>
+              </div>
+            </div>
+            <div class="segmented" id="forwardTabs"></div>
+            <div class="settings-grid" id="forwardConfigForm"></div>
+          </div>
+        </section>
+
+        <section class="section" id="section-merge">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>合并规则</h2>
+                <p>触发关键词后，将触发消息和后续 N 条消息作为一个逻辑组处理。</p>
+              </div>
+              <button class="btn btn-primary" id="addMergeRuleBtn" type="button">新增规则</button>
+            </div>
+            <div class="channel-list" id="mergeRuleList"></div>
+          </div>
+        </section>
+
+        <section class="section" id="section-web">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Web 设置</h2>
+                <p>host/port 保存后需要重载插件生效。</p>
+              </div>
+            </div>
+            <div class="settings-grid">
+              <div class="settings-card">
+                <h3>访问控制</h3>
+                <label class="toggle-row">
+                  <input id="webEnabledInput" type="checkbox" />
+                  <span>启用 Web 页面</span>
+                </label>
+                <label class="field">访问 Token<input id="webTokenInput" type="password" autocomplete="new-password" /></label>
+              </div>
+              <div class="settings-card">
+                <h3>监听</h3>
+                <label class="field">监听地址<input id="webHostInput" type="text" /></label>
+                <label class="field">监听端口<input id="webPortInput" type="number" inputmode="numeric" /></label>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <section class="section" id="section-advanced">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>完整配置 JSON</h2>
+                <p>用于批量编辑、排查配置或迁移配置。</p>
+              </div>
+              <div class="action-row">
+                <button class="btn btn-soft" id="exportConfigBtn" type="button">导出配置</button>
+                <button class="btn btn-soft" id="importConfigBtn" type="button">导入配置</button>
+                <button class="btn btn-primary" id="saveRawBtn" type="button">保存 JSON</button>
+              </div>
+            </div>
+            <input id="configImportFile" type="file" accept="application/json,.json" hidden />
+            <textarea class="json-editor" id="rawConfigInput" spellcheck="false"></textarea>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

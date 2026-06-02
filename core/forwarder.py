@@ -247,6 +247,39 @@ class Forwarder:
                 logger.error(f"[Monitor] 非法正则表达式 '{pattern}': {e}")
         return False
 
+    def _is_text_filter_matched(self, msg: Message, effective_cfg: dict) -> bool:
+        full_check_text = self._build_message_search_text(msg)
+        should_skip = False
+        check_text_lower = full_check_text.lower()
+
+        filter_keywords = effective_cfg["filter_keywords"]
+        if filter_keywords:
+            for kw in filter_keywords:
+                if self._is_keyword_matched(kw, check_text_lower):
+                    logger.info(f"[Filter] 消息 {msg.id} 命中关键词 '{kw}'")
+                    should_skip = True
+                    break
+
+        patterns = effective_cfg.get("filter_regex_patterns", [])
+
+        for pattern in patterns:
+            if not should_skip and pattern:
+                try:
+                    if re.search(
+                        pattern,
+                        full_check_text,
+                        re.IGNORECASE | re.DOTALL,
+                    ):
+                        logger.info(
+                            f"[Filter] 消息 {msg.id} 命中正则匹配: {pattern[:30]}..."
+                        )
+                        should_skip = True
+                        break
+                except re.error as e:
+                    logger.error(f"[Filter] 非法正则表达式 '{pattern}': {e}")
+
+        return should_skip
+
     def _get_effective_config(self, channel_name: str):
         """
         获取有效配置 (分过滤原则: 全局与频道配置均需符合)
@@ -487,6 +520,28 @@ class Forwarder:
                     monitor_hit_targets = []
 
                     if messages:
+                        message_pairs = [(channel_name, m) for m in messages]
+                        defer_from_index = self.message_merger.find_defer_from_index(
+                            channel_name, message_pairs
+                        )
+                        if defer_from_index is not None:
+                            deferred_count = len(messages) - defer_from_index
+                            if defer_from_index == 0:
+                                logger.info(
+                                    f"[Merge] 频道 {channel_name} 触发合并规则但后续消息未凑齐，暂缓 {deferred_count} 条消息。"
+                                )
+                                return []
+                            logger.info(
+                                f"[Merge] 频道 {channel_name} 触发合并规则但后续消息未凑齐，本轮先入队 {defer_from_index} 条，暂缓 {deferred_count} 条。"
+                            )
+                            messages = messages[:defer_from_index]
+                            message_pairs = message_pairs[:defer_from_index]
+
+                        merged_pairs = self.message_merger.merge_messages(
+                            message_pairs
+                        )
+                        messages = [m for _, m in merged_pairs]
+
                         # 先加入队列，再更新 last_id
                         pending_items = []
                         for m in messages:
@@ -500,11 +555,17 @@ class Forwarder:
                                 {
                                     "id": m.id,
                                     "time": m.date.timestamp(),
-                                    "grouped_id": m.grouped_id,
+                                    "grouped_id": getattr(
+                                        m, "_merge_group_id", None
+                                    )
+                                    or m.grouped_id,
                                     "is_cold_start": (
                                         last_id == 0 and start_date is not None
                                     ),
                                     "is_monitored": is_monitored,
+                                    "merge_rule_class": getattr(
+                                        m, "_merge_rule_class", ""
+                                    ),
                                 }
                             )
 
@@ -693,10 +754,21 @@ class Forwarder:
 
             if monitored_only:
                 if monitor_targets:
+                    monitored_group_keys = {
+                        (item["channel"], item["grouped_id"])
+                        for item in valid_pending
+                        if (item["channel"], item["id"]) in monitor_targets
+                        and item.get("grouped_id") is not None
+                    }
                     valid_pending = [
                         item
                         for item in valid_pending
                         if (item["channel"], item["id"]) in monitor_targets
+                        or (
+                            item.get("grouped_id") is not None
+                            and (item["channel"], item["grouped_id"])
+                            in monitored_group_keys
+                        )
                     ]
                 else:
                     valid_pending = [
@@ -849,6 +921,18 @@ class Forwarder:
                                 continue
                             raw_fetched_messages.append((channel, m))
                             all_fetched_keys.add((channel, m.id))
+                            meta = id_to_meta.get((channel, m.id))
+
+                            if (
+                                meta
+                                and meta.get("grouped_id") is not None
+                                and self._is_text_filter_matched(m, effective_cfg)
+                            ):
+                                individually_skipped_keys.add((channel, m.id))
+                                skipped_grouped_ids.add(
+                                    (channel, meta["grouped_id"])
+                                )
+                                continue
 
                             # 类型过滤
                             forward_types = effective_cfg["forward_types"]
@@ -895,7 +979,6 @@ class Forwarder:
                                     f"[Filter] 消息 {m.id} 为遮罩/剧透消息，已跳过。"
                                 )
                                 individually_skipped_keys.add((channel, m.id))
-                                meta = id_to_meta.get((channel, m.id))
                                 if meta and meta.get("grouped_id"):
                                     skipped_grouped_ids.add(
                                         (channel, meta["grouped_id"])
@@ -903,43 +986,12 @@ class Forwarder:
                                 continue
 
                             # 关键词/正则过滤
-                            full_check_text = self._build_message_search_text(m)
-                            should_skip = False
-                            check_text_lower = full_check_text.lower()
-
-                            filter_keywords = effective_cfg["filter_keywords"]
-                            if filter_keywords:
-                                for kw in filter_keywords:
-                                    if self._is_keyword_matched(kw, check_text_lower):
-                                        logger.info(
-                                            f"[Filter] 消息 {m.id} 命中关键词 '{kw}'"
-                                        )
-                                        should_skip = True
-                                        break
-
-                            patterns = effective_cfg.get("filter_regex_patterns", [])
-
-                            for pattern in patterns:
-                                if not should_skip and pattern:
-                                    try:
-                                        if re.search(
-                                            pattern,
-                                            full_check_text,
-                                            re.IGNORECASE | re.DOTALL,
-                                        ):
-                                            logger.info(
-                                                f"[Filter] 消息 {m.id} 命中正则匹配: {pattern[:30]}..."
-                                            )
-                                            should_skip = True
-                                            break
-                                    except re.error as e:
-                                        logger.error(
-                                            f"[Filter] 非法正则表达式 '{pattern}': {e}"
-                                        )
+                            should_skip = self._is_text_filter_matched(
+                                m, effective_cfg
+                            )
 
                             if should_skip:
                                 individually_skipped_keys.add((channel, m.id))
-                                meta = id_to_meta.get((channel, m.id))
                                 if meta and meta.get("grouped_id"):
                                     skipped_grouped_ids.add(
                                         (channel, meta["grouped_id"])

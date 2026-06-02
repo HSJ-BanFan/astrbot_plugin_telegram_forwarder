@@ -3,6 +3,7 @@ from telethon.tl.types import Message
 from astrbot.api import logger
 
 from .base import MergeRule
+from .keyword_next import KeywordNextNMerge
 from .someacg import SomeACGPreviewPlusOriginal
 
 
@@ -12,6 +13,7 @@ class MessageMerger:
     # 可用的规则类注册表
     RULE_CLASSES = {
         "SomeACGPreviewPlusOriginal": SomeACGPreviewPlusOriginal,
+        "KeywordNextNMerge": KeywordNextNMerge,
     }
 
     def __init__(self, config: dict):
@@ -23,11 +25,12 @@ class MessageMerger:
         """
         self.config = config
         self.merge_rules = self._load_merge_rules()
+        rule_count = sum(len(rules) for rules in self.merge_rules.values())
         logger.info(
-            f"[Merge] 合并引擎已启动，加载了 {len(self.merge_rules)} 条规则: {list(self.merge_rules.keys())}"
+            f"[Merge] 合并引擎已启动，加载了 {rule_count} 条规则: {list(self.merge_rules.keys())}"
         )
 
-    def _load_merge_rules(self) -> dict[str, MergeRule]:
+    def _load_merge_rules(self) -> dict[str, list[MergeRule]]:
         """
         从配置加载合并规则
         """
@@ -38,7 +41,7 @@ class MessageMerger:
         merge_rules = {}
 
         for rule_config in rules_config:
-            channel = rule_config.get("channel")
+            channel = str(rule_config.get("channel") or "").strip().lstrip("@#")
             rule_class_name = rule_config.get("rule_class", "")
             params = rule_config.get("params", {})
 
@@ -51,7 +54,8 @@ class MessageMerger:
                 continue
 
             rule_class = self.RULE_CLASSES[rule_class_name]
-            merge_rules[channel] = rule_class(params)
+            rule = rule_class(params)
+            merge_rules.setdefault(channel, []).append(rule)
 
             logger.info(
                 f"[Merge] 已加载频道 '{channel}' 的合并规则 '{rule_class_name}'"
@@ -89,8 +93,8 @@ class MessageMerger:
             channel_name, message1 = msg1
 
             # 检查此频道是否配置了合并规则
-            rule = self.merge_rules.get(channel_name)
-            if not rule:
+            rules = self.merge_rules.get(channel_name, [])
+            if not rules:
                 merged_messages.append(msg1)
                 used_indices.add(i)
                 continue
@@ -99,18 +103,25 @@ class MessageMerger:
                 f"[Merge] 发现频道 '{channel_name}' 的合并规则，正在检查消息 {i}"
             )
 
-            # 尝试查找可合并的消息
-            group_result = self._find_group(
-                i, messages, channel_name, rule, used_indices
-            )
+            matched_rule = None
+            group_result = {"messages": [msg1], "indices": [i]}
+            for rule in rules:
+                candidate_group = self._find_group(
+                    i, messages, channel_name, rule, used_indices
+                )
+                if len(candidate_group["messages"]) > 1:
+                    matched_rule = rule
+                    group_result = candidate_group
+                    break
+
             group_msgs = group_result["messages"]
             group_indices_list = group_result["indices"]
 
-            if len(group_msgs) > 1:
+            if matched_rule and len(group_msgs) > 1:
                 # 找到可合并的组，应用合并标记
-                group_key = rule.get_group_key(group_msgs[0])
+                group_key = matched_rule.get_group_key(group_msgs[0])
                 if group_key:
-                    rule.apply_merge_marker(group_msgs, group_key)
+                    matched_rule.apply_merge_marker(group_msgs, group_key)
                     logger.debug(
                         f"[Merge] 已合并频道 '{channel_name}' 的 {len(group_msgs)} 条消息，分组键: {group_key}"
                     )
@@ -128,6 +139,22 @@ class MessageMerger:
         )
 
         return merged_messages
+
+    def find_defer_from_index(
+        self,
+        channel_name: str,
+        messages: list[tuple[str, Message]],
+    ) -> int | None:
+        """返回应该暂缓处理的起始索引。"""
+        defer_indices = []
+        for rule in self.merge_rules.get(channel_name, []):
+            finder = getattr(rule, "find_defer_from_index", None)
+            if not callable(finder):
+                continue
+            defer_index = finder(messages, channel_name)
+            if defer_index is not None:
+                defer_indices.append(defer_index)
+        return min(defer_indices) if defer_indices else None
 
     def _find_group(
         self,
@@ -150,6 +177,10 @@ class MessageMerger:
         Returns:
             dict: {"messages": List[Tuple[str, Message]], "indices": List[int]}
         """
+        custom_finder = getattr(rule, "find_group", None)
+        if callable(custom_finder):
+            return custom_finder(start_index, messages, channel_name, used_indices)
+
         start_msg = messages[start_index]
         group_messages = [start_msg]
         group_indices = [start_index]

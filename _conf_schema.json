@@ -45,6 +45,43 @@
         "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
         "default": ""
     },
+    "web_config": {
+        "type": "object",
+        "description": "Web 管理页面",
+        "hint": "内置 Flask Web 管理页面配置，保存 host/port 后需要重载插件生效",
+        "items": {
+            "enabled": {
+                "description": "启用 Web 页面",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后插件启动时会同时启动 Flask Web 管理页面"
+            },
+            "host": {
+                "description": "监听地址",
+                "type": "string",
+                "default": "0.0.0.0",
+                "hint": "0.0.0.0 可供局域网手机/平板访问；127.0.0.1 仅本机访问"
+            },
+            "port": {
+                "description": "监听端口",
+                "type": "int",
+                "default": 8180,
+                "hint": "默认 8180"
+            },
+            "token": {
+                "description": "访问 Token",
+                "type": "string",
+                "default": "123456",
+                "hint": "打开 Web 页面后输入此 Token 才能读取和修改配置"
+            }
+        },
+        "default": {
+            "enabled": true,
+            "host": "0.0.0.0",
+            "port": 8180,
+            "token": "123456"
+        }
+    },
     "debug_enabled_default": {
         "description": "QQ 发送诊断日志",
         "type": "bool",
@@ -398,8 +435,8 @@
     },
     "merge_rules": {
         "type": "template_list",
-        "description": "消息合并规则（暂未实现）",
-        "hint": "针对不规范频道的多消息组合进行智能合并（如预览图+原图）",
+        "description": "消息合并规则",
+        "hint": "针对不规范频道的多消息组合进行智能合并（如关键词触发后合并后续 N 条、预览图+原图）",
         "templates": {
             "default": {
                 "name": "合并规则配置",
@@ -415,24 +452,47 @@
                         "description": "规则类名",
                         "options": [
                             "",
+                            "KeywordNextNMerge",
                             "SomeACGPreviewPlusOriginal"
                         ],
                         "default": "",
-                        "hint": "选择合并规则类。SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
+                        "hint": "KeywordNextNMerge: 触发关键词后合并后续 N 条；SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
                     },
                     "params": {
                         "type": "object",
                         "description": "规则参数",
                         "items": {
+                            "trigger_keywords": {
+                                "type": "list",
+                                "item_type": "string",
+                                "description": "触发关键词",
+                                "default": [],
+                                "hint": "KeywordNextNMerge 使用。命中后会把当前消息和后续 N 条合并为一个逻辑组"
+                            },
+                            "trigger_regex": {
+                                "type": "string",
+                                "description": "触发正则",
+                                "default": "",
+                                "hint": "KeywordNextNMerge 使用。可选，命中后触发合并"
+                            },
+                            "next_count": {
+                                "type": "int",
+                                "description": "后续消息数",
+                                "default": 2,
+                                "hint": "KeywordNextNMerge 使用。合并触发消息后面的 N 条消息"
+                            },
                             "time_window_seconds": {
                                 "type": "int",
-                                "description": "时间窗口 (秒)",
-                                "default": 10,
-                                "hint": "关联消息的最大时间差（默认10秒）"
+                                "description": "合并超时/时间窗口 (秒)",
+                                "default": 60,
+                                "hint": "KeywordNextNMerge 中为等待后续消息的超时窗口；SomeACG 中为关联消息最大时间差"
                             }
                         },
                         "default": {
-                            "time_window_seconds": 10
+                            "trigger_keywords": [],
+                            "trigger_regex": "",
+                            "next_count": 2,
+                            "time_window_seconds": 60
                         }
                     }
                 }

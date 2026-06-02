@@ -15,6 +15,7 @@ class Storage:
             "id": msg["id"],
             "time": msg["time"],
             "grouped_id": msg.get("grouped_id"),
+            "merge_rule_class": msg.get("merge_rule_class", ""),
             "is_cold_start": msg.get("is_cold_start", False),
             "is_monitored": msg.get("is_monitored", False),
             "retry_count": msg.get("retry_count", 0),
