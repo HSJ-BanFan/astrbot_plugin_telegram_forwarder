@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import os
+import secrets
 import shutil
 import sqlite3
 import tempfile
@@ -28,10 +30,11 @@ PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
 
 DEFAULT_WEB_CONFIG = {
     "enabled": True,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "port": 8180,
-    "token": "123456",
+    "token": "",
 }
+WEAK_DEFAULT_WEB_TOKENS = {"123456"}
 
 
 class WebAdminError(RuntimeError):
@@ -47,7 +50,9 @@ class WebAdminServer:
         self._thread: threading.Thread | None = None
         self._http_server = None
 
-        web_config = self.normalize_web_config(plugin.config.get("web_config", {}))
+        raw_web_config = plugin.config.get("web_config", {})
+        web_config = self.normalize_web_config(raw_web_config)
+        self._persist_web_config_if_changed(raw_web_config, web_config)
         self.enabled = web_config["enabled"]
         self.host = web_config["host"]
         self.port = web_config["port"]
@@ -73,9 +78,25 @@ class WebAdminServer:
             port = DEFAULT_WEB_CONFIG["port"]
         cfg["port"] = port
 
-        token = str(cfg.get("token") or DEFAULT_WEB_CONFIG["token"]).strip()
-        cfg["token"] = token or DEFAULT_WEB_CONFIG["token"]
+        token = str(cfg.get("token") or "").strip()
+        if not token or token in WEAK_DEFAULT_WEB_TOKENS:
+            token = secrets.token_urlsafe(32)
+        cfg["token"] = token
         return cfg
+
+    def _persist_web_config_if_changed(
+        self, raw: Any, normalized: dict[str, Any]
+    ) -> None:
+        if isinstance(raw, dict) and raw == normalized:
+            return
+        try:
+            self.plugin.config["web_config"] = dict(normalized)
+            self.plugin.config.save_config()
+            logger.info(
+                "[WebAdmin] 已写入安全的 Web 管理页面配置，Token 可在 web_config.token 查看。"
+            )
+        except Exception as exc:
+            logger.warning(f"[WebAdmin] 写入 Web 管理页面配置失败: {exc}")
 
     @staticmethod
     def _to_bool(value: Any, default: bool = False) -> bool:
@@ -153,15 +174,22 @@ class WebAdminServer:
             auth_header = request.headers.get("Authorization", "").strip()
             if auth_header.lower().startswith("bearer "):
                 return auth_header[7:].strip()
+            body = request.get_json(silent=True) or {}
             return (
                 request.headers.get("X-Admin-Token", "").strip()
                 or request.args.get("token", "").strip()
-                or (request.get_json(silent=True) or {}).get("token", "")
+                or str(body.get("token", "")).strip()
+            )
+
+        def token_matches(candidate: str) -> bool:
+            return hmac.compare_digest(
+                str(candidate).encode("utf-8"),
+                str(self.token).encode("utf-8"),
             )
 
         def require_auth(handler):
             def wrapped(*args, **kwargs):
-                if extract_token() != self.token:
+                if not token_matches(extract_token()):
                     return json_error("未授权：请提供正确的 Web Token。", 401)
                 return handler(*args, **kwargs)
 
@@ -188,7 +216,7 @@ class WebAdminServer:
 
         @app.post("/api/auth/check")
         def auth_check():
-            return json_ok({"authorized": extract_token() == self.token})
+            return json_ok({"authorized": token_matches(extract_token())})
 
         @app.get("/api/status")
         @require_auth
@@ -325,6 +353,7 @@ class WebAdminServer:
         if self._http_server:
             try:
                 self._http_server.shutdown()
+                self._http_server.server_close()
             except Exception as exc:
                 logger.debug(f"[WebAdmin] shutdown failed: {exc}")
         if self._thread and self._thread.is_alive():
@@ -479,12 +508,15 @@ class WebAdminServer:
         TelegramClientWrapper.clear_cache(temp_session_path)
 
         copied_official_backup = False
+        backup_completed = False
+        deleted_official_files = False
         try:
             for path in self._session_files(official_session_path):
                 if os.path.exists(path):
                     os.makedirs(backup_dir, exist_ok=True)
                     shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
                     copied_official_backup = True
+            backup_completed = True
 
             try:
                 if official_wrapper.client and official_wrapper.client.is_connected():
@@ -496,6 +528,7 @@ class WebAdminServer:
             for path in self._session_files(official_session_path):
                 if os.path.exists(path):
                     os.remove(path)
+            deleted_official_files = True
 
             installed = False
             for temp_path in self._session_files(temp_session_path):
@@ -508,7 +541,7 @@ class WebAdminServer:
             if not installed:
                 raise WebAdminError("临时登录会话文件不存在，请重新登录。")
         except Exception:
-            if copied_official_backup:
+            if deleted_official_files and backup_completed and copied_official_backup:
                 for path in self._session_files(official_session_path):
                     if os.path.exists(path):
                         try:
@@ -636,8 +669,8 @@ class WebAdminServer:
             if key == "api_id":
                 try:
                     value = int(value or 0)
-                except (TypeError, ValueError):
-                    raise WebAdminError("api_id 必须是数字。")
+                except (TypeError, ValueError) as exc:
+                    raise WebAdminError("api_id 必须是数字。") from exc
             elif key in ("target_qq_session", "telegram_session"):
                 value = self._as_string_list(value)
             elif key == "debug_enabled_default":
@@ -751,6 +784,8 @@ class WebAdminServer:
             f"user_session_import_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
         )
         copied_backup = False
+        backup_completed = False
+        deleted_session_files = False
 
         try:
             if wrapper.client and wrapper.client.is_connected():
@@ -765,27 +800,34 @@ class WebAdminServer:
                     os.makedirs(backup_dir, exist_ok=True)
                     shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
                     copied_backup = True
+            backup_completed = True
 
             if has_string_session:
                 for path in self._session_files(session_path):
                     if os.path.exists(path):
                         os.remove(path)
+                deleted_session_files = True
                 self._write_string_session(
                     session_path,
                     str(bundle.get("string_session")).strip(),
                 )
             else:
+                deleted_session_files = True
                 self._write_session_bundle(session_path, bundle["files"])
         except Exception:
-            for path in self._session_files(session_path):
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
-            if copied_backup:
-                for backup_path in Path(backup_dir).glob("*"):
-                    shutil.copy2(str(backup_path), os.path.join(wrapper.plugin_data_dir, backup_path.name))
+            if deleted_session_files and backup_completed:
+                for path in self._session_files(session_path):
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except Exception:
+                            pass
+                if copied_backup:
+                    for backup_path in Path(backup_dir).glob("*"):
+                        shutil.copy2(
+                            str(backup_path),
+                            os.path.join(wrapper.plugin_data_dir, backup_path.name),
+                        )
             raise
 
         phone = str(bundle.get("phone") or "").strip()
@@ -997,9 +1039,27 @@ class WebAdminServer:
 
     async def runtime_check(self) -> dict[str, Any]:
         self.plugin.forwarder._stopping = False
-        asyncio.create_task(self.plugin.forwarder.check_updates())
-        asyncio.create_task(self.plugin.forwarder.send_pending_messages())
+        self._track_runtime_task(self.plugin.forwarder.check_updates())
+        self._track_runtime_task(self.plugin.forwarder.send_pending_messages())
         return {"message": "已触发一次抓取与发送。"}
+
+    def _track_runtime_task(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        runtime_tasks = getattr(self, "_runtime_tasks", None)
+        if runtime_tasks is None:
+            runtime_tasks = self._runtime_tasks = set()
+        runtime_tasks.add(task)
+
+        def on_done(done_task):
+            runtime_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.error(f"[WebAdmin] 运行任务失败: {exc}", exc_info=True)
+
+        task.add_done_callback(on_done)
 
     async def runtime_pause(self) -> dict[str, Any]:
         self.plugin.command_handler._paused = True

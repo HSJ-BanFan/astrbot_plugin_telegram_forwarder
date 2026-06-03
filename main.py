@@ -126,13 +126,15 @@ class Main(star.Star):
             )
 
     def _start_web_admin_server(self) -> None:
-        web_config = self.config.get("web_config", {})
-        if isinstance(web_config, dict) and web_config.get("enabled") is False:
-            logger.info("Telegram Forwarder Web 管理页面未启用。")
-            return
-
         try:
             from .core.web_admin import WebAdminServer
+
+            web_config = self.config.get("web_config", {})
+            if isinstance(web_config, dict) and not WebAdminServer._to_bool(
+                web_config.get("enabled"), True
+            ):
+                logger.info("Telegram Forwarder Web 管理页面未启用。")
+                return
 
             self.web_admin_server = WebAdminServer(self, self._web_loop)
             self.web_admin_server.start()

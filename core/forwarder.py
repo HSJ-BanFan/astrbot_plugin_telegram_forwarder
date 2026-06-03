@@ -257,13 +257,12 @@ class Forwarder:
             for kw in filter_keywords:
                 if self._is_keyword_matched(kw, check_text_lower):
                     logger.info(f"[Filter] 消息 {msg.id} 命中关键词 '{kw}'")
-                    should_skip = True
-                    break
+                    return True
 
         patterns = effective_cfg.get("filter_regex_patterns", [])
 
         for pattern in patterns:
-            if not should_skip and pattern:
+            if pattern:
                 try:
                     if re.search(
                         pattern,

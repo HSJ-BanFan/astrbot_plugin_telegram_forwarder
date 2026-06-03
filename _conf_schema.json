@@ -59,8 +59,8 @@
             "host": {
                 "description": "监听地址",
                 "type": "string",
-                "default": "0.0.0.0",
-                "hint": "0.0.0.0 可供局域网手机/平板访问；127.0.0.1 仅本机访问"
+                "default": "127.0.0.1",
+                "hint": "默认仅本机访问；如需局域网访问可显式改为 0.0.0.0"
             },
             "port": {
                 "description": "监听端口",
@@ -71,15 +71,15 @@
             "token": {
                 "description": "访问 Token",
                 "type": "string",
-                "default": "123456",
-                "hint": "打开 Web 页面后输入此 Token 才能读取和修改配置"
+                "default": "",
+                "hint": "留空会自动生成随机 Token；打开 Web 页面后输入此 Token 才能读取和修改配置"
             }
         },
         "default": {
             "enabled": true,
-            "host": "0.0.0.0",
+            "host": "127.0.0.1",
             "port": 8180,
-            "token": "123456"
+            "token": ""
         }
     },
     "debug_enabled_default": {

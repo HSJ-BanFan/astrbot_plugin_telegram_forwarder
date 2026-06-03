@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import shutil
 import sqlite3
@@ -88,30 +89,23 @@ class TelegramClientWrapper:
         try:
             from telethon.sessions.sqlite import SQLiteSession
 
-            session = SQLiteSession(None)
-            try:
-                conn = getattr(session, "_conn", None)
-                if not conn:
-                    return fallback_columns
-                columns = conn.execute("PRAGMA table_info(sessions)").fetchall()
-                column_names = [column[1] for column in columns]
-                if (
-                    TelegramClientWrapper._telethon_reads_takeout_id_as_tmp_key()
-                    and "takeout_id" in column_names
-                    and "tmp_auth_key" in column_names
-                    and column_names.index("takeout_id")
-                    < column_names.index("tmp_auth_key")
-                ):
-                    reordered = [col for col in column_names if col != "tmp_auth_key"]
-                    takeout_idx = reordered.index("takeout_id")
-                    reordered.insert(takeout_idx, "tmp_auth_key")
-                    return reordered
-                return column_names or fallback_columns
-            finally:
-                try:
-                    session.close()
-                except Exception:
-                    pass
+            source = inspect.getsource(SQLiteSession)
+            if "tmp_auth_key" not in source:
+                return fallback_columns
+
+            columns = [
+                "dc_id",
+                "server_address",
+                "port",
+                "auth_key",
+                "takeout_id",
+                "tmp_auth_key",
+            ]
+            if TelegramClientWrapper._telethon_reads_takeout_id_as_tmp_key():
+                columns.remove("tmp_auth_key")
+                takeout_idx = columns.index("takeout_id")
+                columns.insert(takeout_idx, "tmp_auth_key")
+            return columns
         except Exception as e:
             logger.debug(f"[Client] 检测 Telethon session schema 失败: {e}")
             return fallback_columns
@@ -120,7 +114,6 @@ class TelegramClientWrapper:
     def _telethon_reads_takeout_id_as_tmp_key() -> bool:
         """Detect Telethon versions whose read order treats takeout_id as tmp_auth_key."""
         try:
-            import inspect
             from telethon.sessions.sqlite import SQLiteSession
 
             source = inspect.getsource(SQLiteSession.__init__)

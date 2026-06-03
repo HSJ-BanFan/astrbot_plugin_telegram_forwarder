@@ -69,10 +69,10 @@
 插件内置 Flask Web 管理页面，启动插件后默认监听：
 
 ```text
-http://<AstrBot 所在机器 IP>:8180/
+http://127.0.0.1:8180/
 ```
 
-默认 Web Token：`123456`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`。
+首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。
 
 页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 

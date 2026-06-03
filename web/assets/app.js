@@ -85,7 +85,7 @@ const MERGE_RULE_CLASSES = [
   { value: "KeywordNextNMerge", label: "关键词后 N 条合并" },
   { value: "SomeACGPreviewPlusOriginal", label: "SomeACG 预览图+原图" },
 ];
-const DEFAULT_WEB_CONFIG = { enabled: true, host: "0.0.0.0", port: 8180, token: "123456" };
+const DEFAULT_WEB_CONFIG = { enabled: true, host: "127.0.0.1", port: 8180, token: "" };
 
 const els = {};
 const state = {
@@ -742,7 +742,7 @@ function collectRootConfig() {
     enabled: els.webEnabledInput.checked,
     host: els.webHostInput.value.trim() || DEFAULT_WEB_CONFIG.host,
     port: intValue("webPortInput", DEFAULT_WEB_CONFIG.port),
-    token: els.webTokenInput.value.trim() || DEFAULT_WEB_CONFIG.token,
+    token: els.webTokenInput.value.trim(),
   };
 }
 
@@ -1186,7 +1186,7 @@ function bindEvents() {
 async function boot() {
   cacheElements();
   bindEvents();
-  els.tokenInput.value = state.token || "123456";
+  els.tokenInput.value = state.token || "";
   if (!state.token) return;
   try {
     if (await checkToken(state.token)) {
@@ -1195,7 +1195,8 @@ async function boot() {
       localStorage.removeItem("telegram_forwarder_token");
       state.token = "";
     }
-  } catch {
+  } catch (error) {
+    console.warn("Token validation failed:", error);
     localStorage.removeItem("telegram_forwarder_token");
     state.token = "";
   }
