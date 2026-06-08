@@ -186,28 +186,7 @@
                 }
             }
         },
-        "default": [
-            {
-                "__template_key": "default",
-                "channel_username": "heyTchuang",
-                "start_time": "",
-                "check_interval": 0,
-                "msg_limit": 10,
-                "priority": 0,
-                "exclude_text_on_media": "继承全局",
-                "filter_spoiler_messages": "继承全局",
-                "forward_types": [
-                    "文字",
-                    "图片",
-                    "视频",
-                    "音频",
-                    "文件"
-                ],
-                "max_file_size": 0,
-                "monitor_keywords": [],
-                "monitor_regex": ""
-            }
-        ],
+        "default": [],
         "hint": "添加并配置需要转发的 Telegram 频道",
         "obvious_hint": true
     },
