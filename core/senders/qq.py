@@ -9,6 +9,7 @@ import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from telethon.tl.types import Message
 
@@ -618,23 +619,39 @@ class QQSender:
             deferred_batch_indexes=deferred_batch_indexes,
         )
 
+    @staticmethod
+    def _absolute_lexical_path(path: str | Path) -> Path:
+        path_obj = Path(path)
+        if not path_obj.is_absolute():
+            path_obj = Path.cwd() / path_obj
+
+        anchor = path_obj.anchor
+        parts: list[str] = []
+        for part in path_obj.parts:
+            if part in {"", ".", anchor}:
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part)
+        return Path(anchor, *parts) if anchor else Path(*parts)
+
     def _is_plugin_data_file(self, path: str) -> bool:
         plugin_data_dir = getattr(self, "plugin_data_dir", None) or getattr(
             self.downloader, "plugin_data_dir", None
         )
         if not plugin_data_dir:
             return False
-        plugin_entry_dir = os.path.abspath(plugin_data_dir)
-        plugin_real_dir = os.path.realpath(plugin_data_dir)
-        entry_path = os.path.abspath(path)
-        real_path = os.path.realpath(path)
         try:
-            return (
-                os.path.commonpath([plugin_entry_dir, entry_path]) == plugin_entry_dir
-                and os.path.commonpath([plugin_real_dir, real_path]) == plugin_real_dir
-                and os.path.isfile(entry_path)
-            )
-        except ValueError:
+            plugin_entry_dir = self._absolute_lexical_path(plugin_data_dir)
+            entry_path = self._absolute_lexical_path(path)
+            plugin_real_dir = plugin_entry_dir.resolve()
+            real_path = entry_path.resolve()
+            entry_path.relative_to(plugin_entry_dir)
+            real_path.relative_to(plugin_real_dir)
+            return entry_path.is_file()
+        except (OSError, RuntimeError, ValueError):
             return False
 
     def _cleanup_files(self, files: list[str]):

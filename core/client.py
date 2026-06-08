@@ -1,9 +1,9 @@
 import asyncio
-import os
 import re
 import shutil
 import sqlite3
 import sys
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import socks
@@ -100,7 +100,7 @@ class TelegramClientWrapper:
             )
         )
 
-    def __init__(self, config: AstrBotConfig, plugin_data_dir: str):
+    def __init__(self, config: AstrBotConfig, plugin_data_dir: Path):
         """
         初始化客户端封装
 
@@ -115,12 +115,12 @@ class TelegramClientWrapper:
         self._init_client()
 
     def _session_path(self) -> str:
-        return os.path.join(self.plugin_data_dir, "user_session")
+        return str(self.plugin_data_dir / "user_session")
 
     @staticmethod
     def _ensure_compatible_session_schema(session_path: str) -> None:
-        session_file = f"{session_path}.session"
-        if not os.path.exists(session_file):
+        session_file = Path(f"{session_path}.session")
+        if not session_file.exists():
             return
 
         conn = sqlite3.connect(session_file)
@@ -136,8 +136,8 @@ class TelegramClientWrapper:
         if "tmp_auth_key" not in column_names:
             return
 
-        backup_file = f"{session_file}.bak"
-        if not os.path.exists(backup_file):
+        backup_file = Path(f"{session_file}.bak")
+        if not backup_file.exists():
             shutil.copy2(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)
@@ -209,7 +209,7 @@ class TelegramClientWrapper:
         return self.client.is_connected()
 
     async def disconnect(self, timeout: float = 5.0) -> None:
-        """Safely disconnect the current Telethon client."""
+        """安全断开当前 Telethon 客户端。"""
         if not self.client or not self.client.is_connected():
             return
         await asyncio.wait_for(self.client.disconnect(), timeout=timeout)  # type: ignore
@@ -224,7 +224,7 @@ class TelegramClientWrapper:
         return getattr(sent, "phone_code_hash", "")
 
     async def sign_in_with_code(self, phone: str, code: str, phone_code_hash: str = ""):
-        """Use login code to sign in. Returns (ok, False); 2FA is signaled via SessionPasswordNeededError."""
+        """使用验证码登录。返回 (ok, False)；两步验证由 SessionPasswordNeededError 表示。"""
         if not await self.ensure_connected():
             raise RuntimeError("Telegram 客户端未初始化，请先设置 api_id/api_hash")
         if phone_code_hash:
@@ -439,7 +439,7 @@ class TelegramClientWrapper:
             authorized = await self.client.is_user_authorized()
             if not authorized:
                 logger.warning(
-                    f"[Client] 客户端未授权。会话路径: {os.path.join(self.plugin_data_dir, 'user_session.session')}"
+                    f"[Client] 客户端未授权。会话路径: {self.plugin_data_dir / 'user_session.session'}"
                 )
 
                 phone = self.config.get("phone")
@@ -523,7 +523,7 @@ class TelegramClientWrapper:
     async def disconnect_and_clear_cache(
         session_path: str, timeout: float = 5.0
     ) -> None:
-        """Disconnect any cached client for a session and then clear caches."""
+        """断开指定会话的缓存客户端并清理缓存。"""
         cache = get_client_cache()
         cached_client = cache.get(session_path)
 

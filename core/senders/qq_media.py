@@ -5,9 +5,8 @@
 2. 按文件后缀把媒体文件转换成对应的 QQ 消息组件。
 """
 
-import os
 from collections.abc import Callable
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MethodType
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -18,6 +17,8 @@ from astrbot.api.message_components import File, Image, Plain, Record, Video
 from .qq_batch_builder import ProcessedBatchData
 
 _ = Plain
+
+_logged_path_mapping_states: set[str] = set()
 
 
 def _set_component_attr(component: object, name: str, value: object) -> None:
@@ -131,14 +132,58 @@ def _iter_mapping_pairs(mappings: object) -> list[tuple[str, str]]:
     return pairs
 
 
-def _configured_path_mappings(context: Any) -> object:
-    core_config = getattr(context, "_config", None)
-    if not core_config or not hasattr(core_config, "get"):
+def _extract_config_path_mappings(config: Any) -> object:
+    if config is None or not hasattr(config, "get"):
         return []
-    platform_settings = core_config.get("platform_settings", {})
-    if not platform_settings or not hasattr(platform_settings, "get"):
+    platform_settings = config.get("platform_settings", {})
+    if not isinstance(platform_settings, dict):
         return []
-    return platform_settings.get("path_mapping", [])
+    mappings = platform_settings.get("path_mapping", [])
+    if isinstance(mappings, str | dict | list | tuple | set):
+        return mappings
+    return []
+
+
+def _path_mapping_sources(context: Any) -> list[tuple[str, object]]:
+    sources: list[tuple[str, object]] = []
+    context_mappings = _extract_config_path_mappings(getattr(context, "_config", None))
+    if _iter_mapping_pairs(context_mappings):
+        sources.append(("context._config", context_mappings))
+
+    try:
+        from astrbot.core import astrbot_config
+    except Exception:
+        astrbot_config = None
+
+    global_mappings = _extract_config_path_mappings(astrbot_config)
+    if _iter_mapping_pairs(global_mappings):
+        sources.append(("astrbot.core.astrbot_config", global_mappings))
+
+    return sources
+
+
+def _log_path_mapping_state_once(*, fpath: str, sources: list[tuple[str, object]]) -> None:
+    if sources:
+        summary = ", ".join(
+            f"{name}={len(_iter_mapping_pairs(mappings))}" for name, mappings in sources
+        )
+        key = f"loaded:{summary}"
+        if key not in _logged_path_mapping_states:
+            _logged_path_mapping_states.add(key)
+            logger.info(f"[QQSender] Path mapping rules visible: {summary}")
+        return
+
+    source_text = _normalize_path_text(fpath)
+    if "/data/plugin_data/" not in f"/{source_text}":
+        return
+    key = "missing:data_plugin_data"
+    if key in _logged_path_mapping_states:
+        return
+    _logged_path_mapping_states.add(key)
+    logger.warning(
+        "[QQSender] No path_mapping rules visible while sending plugin_data media; "
+        f"path will stay host-local: {fpath!r}"
+    )
 
 
 def _map_path_with_pathlib(mappings: object, fpath: str) -> str:
@@ -169,7 +214,7 @@ def _safe_file_size(path: str | None) -> int | None:
     if not path:
         return None
     try:
-        return os.path.getsize(path)
+        return Path(path).stat().st_size
     except OSError:
         return None
 
@@ -182,19 +227,25 @@ def map_path_with_config(
     当 AstrBot 与 QQ 平台运行在不同宿主环境时，下载得到的本地路径未必能被目标平台直接访问。
     这里统一处理宿主机路径到容器路径的映射，避免具体发送逻辑分散关心环境差异。
     """
-    mappings = _configured_path_mappings(context)
-    mapped = _map_path_with_pathlib(mappings, fpath)
-    if mapped != fpath:
-        return mapped
+    sources = _path_mapping_sources(context)
+    _log_path_mapping_state_once(fpath=fpath, sources=sources)
+    for _, mappings in sources:
+        mapped = _map_path_with_pathlib(mappings, fpath)
+        if mapped != fpath:
+            return mapped
 
     if path_mapping is None:
         return fpath
-    try:
-        return path_mapping(mappings, fpath)
-    except Exception as exc:
-        logger.warning(
-            f"[QQSender] AstrBot path mapping failed: path={fpath!r}, error={exc!r}"
-        )
+    for _, mappings in sources:
+        try:
+            mapped = path_mapping(mappings, fpath)
+            if mapped != fpath:
+                return mapped
+        except Exception as exc:
+            logger.warning(
+                f"[QQSender] AstrBot path mapping failed: path={fpath!r}, "
+                f"error={exc!r}"
+            )
     return fpath
 
 
@@ -210,7 +261,8 @@ def dispatch_media_file(
     不同媒体类型在 QQ 端支持能力不同，因此这里按后缀做保守映射：
     图片优先转图片组件，音频按配置决定走语音还是文件，视频和普通文件则尽量保留可访问路径。
     """
-    ext = os.path.splitext(fpath)[1].lower()
+    path_obj = Path(fpath)
+    ext = path_obj.suffix.lower()
     if ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
         return [Image.fromFileSystem(fpath)]
     if ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"):
@@ -220,18 +272,18 @@ def dispatch_media_file(
                 File(
                     file=mapped,
                     url="",
-                    name=os.path.basename(fpath),
+                    name=path_obj.name,
                 )
             )
             _set_component_attr(component, "_tgf_source_path", fpath)
             return [component]
-        mapped = map_path(fpath)
-        if mapped != fpath:
-            record = Record(file=_as_file_uri(mapped), path=fpath)
-        else:
-            record = Record.fromFileSystem(fpath)
+        # aiocqhttp 会在 AstrBot 进程内把 Record 转为 base64，
+        # 因此 Record.file 必须保持为 AstrBot 宿主机可读取的路径。
+        # 映射后的路径仍会在后续发送源文件兜底时使用。
+        record = Record.fromFileSystem(fpath)
         if getattr(record, "path", None) is None:
             setattr(record, "path", fpath)
+        _set_component_attr(record, "_tgf_source_path", fpath)
         return [record]
     if ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
         mapped = map_path(fpath)
@@ -262,7 +314,7 @@ def dispatch_media_file(
         File(
             file=mapped,
             url="",
-            name=os.path.basename(fpath),
+            name=path_obj.name,
         )
     )
     _set_component_attr(component, "_tgf_source_path", fpath)
@@ -283,9 +335,9 @@ def _patch_file_to_dict(f: File) -> File:
         f.__dict__["file"] = file_value
 
         # 跨环境路径映射（如 Docker 容器路径 /plugin_data/...）在当前宿主机上
-        # 可能就是不可达的。AstrBot 的 File.get_file() 因 os.path.exists() 为
+        # 可能就是不可达的。AstrBot 的 File.get_file() 因 Path.exists() 为
         # false 会丢弃这些路径，导致后续发给 OneBot 的文件载荷为空。
-        if "://" not in file_value and not os.path.exists(file_value):
+        if "://" not in file_value and not Path(file_value).exists():
 
             async def _plugin_to_dict(self: File) -> dict:
                 return {

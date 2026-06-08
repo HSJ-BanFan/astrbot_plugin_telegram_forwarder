@@ -1,4 +1,4 @@
-"""Tests for PluginCommands debug command."""
+"""PluginCommands debug 命令测试。"""
 
 import importlib.util
 import sys

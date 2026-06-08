@@ -78,11 +78,13 @@
 
 ##### 1）获取住宅 / ISP 静态 IP
 
-如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。可以按需选择下面的入口：
+如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。可以根据您的偏好选择以下方式：
 
 <details>
-<summary><b>🎁 免费获取（完整配置教学）</b></summary>
+<summary><b>🎁 免费获取（使用原始完整配置教学）</b></summary>
 <br>
+
+##### 一、获取试用住宅 IP
 
 * <a href="https://www.lycheeip.com/home/ip?utm_source=chatgpt.com" target="_blank">免费获取住宅 / ISP 静态 IP</a>
 
@@ -115,6 +117,45 @@ password  → 密码
 
 <img src="resources/img/proxy-trial.png" alt="代理试用开通示例" style="max-width: 100%;" />
 
+##### 二、在 Firefox 中配置代理
+
+打开：
+
+<pre>
+Firefox → 设置 → 常规 → 网络设置 → 设置
+</pre>
+
+选择：
+
+<pre>
+手动配置代理
+</pre>
+
+填写 `hostname` 和 `port`，并勾选“也将此代理用于 HTTPS”。
+
+不要把整行 `global.example.com:10000:username:password` 直接填进去，应拆开填写：
+
+<pre>
+HTTP 代理：global.example.com
+端口：10000
+</pre>
+
+<img src="resources/img/firefox-proxy-settings.png" alt="Firefox 代理配置" style="max-width: 100%;" />
+
+保存后，先在 Firefox 打开：
+
+<pre>
+https://api.ipify.org
+</pre>
+
+首次访问时会弹出代理认证框，输入代理后台提供的用户名和密码。如果页面显示的 IP 已经变成代理出口 IP，说明代理配置成功。
+
+##### 三、检查代理出口
+
+确认 `api.ipify.org` 显示的是代理出口 IP 后，如需继续检查 IP 质量，可使用 [IPPure](https://ippure.com/?utm_source=chatgpt.com)。优先选择原生 / 住宅 IP，尽量避免机房、Cloud、VPS 以及 AWS / Azure / Google Cloud / Leaseweb 等机房 ASN。
+
+<img src="resources/img/ippure-check-result.png" alt="IPPure 检测结果" style="max-width: 100%;" />
+
 </details>
 
 <details>
@@ -123,47 +164,11 @@ password  → 密码
 
 * <a href="https://mitce.net/aff.php?aff=41410" target="_blank">订阅台湾 / 香港静态 IP</a>（约每月 3 元 / 100GB，以页面实际信息为准）
 
+**使用方法：**
+
+该付费链接提供的是代理软件订阅（机场订阅）。购买后复制订阅链接，直接导入您的代理客户端软件（如 Clash、v2rayN、Shadowrocket 等），开启系统代理或配合浏览器代理插件使用即可，无需进行任何繁琐的浏览器手动配置。
+
 </details>
-
-
-##### 2）在 Firefox 中配置代理
-
-打开：
-
-```text
-Firefox → 设置 → 常规 → 网络设置 → 设置
-```
-
-选择：
-
-```text
-手动配置代理
-```
-
-填写 `hostname` 和 `port`，并勾选“也将此代理用于 HTTPS”。
-
-不要把整行 `global.example.com:10000:username:password` 直接填进去，应拆开填写：
-
-```text
-HTTP 代理：global.example.com
-端口：10000
-```
-
-![Firefox 代理配置](resources/img/firefox-proxy-settings.png)
-
-保存后，先在 Firefox 打开：
-
-```text
-https://api.ipify.org
-```
-
-首次访问时会弹出代理认证框，输入代理后台提供的用户名和密码。如果页面显示的 IP 已经变成代理出口 IP，说明代理配置成功。
-
-##### 3）检查代理出口
-
-确认 `api.ipify.org` 显示的是代理出口 IP 后，如需继续检查 IP 质量，可使用 [IPPure](https://ippure.com/?utm_source=chatgpt.com)。优先选择原生 / 住宅 IP，尽量避免机房、Cloud、VPS 以及 AWS / Azure / Google Cloud / Leaseweb 等机房 ASN。
-
-![IPPure 检测结果](resources/img/ippure-check-result.png)
 
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
 * **telegram_session**: 

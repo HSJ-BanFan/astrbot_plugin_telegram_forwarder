@@ -13,7 +13,7 @@ QQSendSummaryT = TypeVar("QQSendSummaryT", covariant=True)
 
 
 class QQSendSummaryFactory(Protocol[QQSendSummaryT]):
-    """Factory protocol for constructing QQ send summary objects."""
+    """用于构造 QQ 发送汇总对象的工厂协议。"""
 
     def __call__(
         self,

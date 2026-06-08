@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
+
 
 def load_client_module(
     telethon_version: str = "1.42.0", client_factory: MagicMock | None = None
@@ -93,8 +95,8 @@ def make_current_session_db(path: Path):
 def make_test_dir() -> Path:
     root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
     root.mkdir(exist_ok=True)
-    path = root / f"session-schema-{uuid.uuid4().hex}"
-    path.mkdir()
+    path = root / f"session-schema-{uuid.uuid4().hex}" / PLUGIN_NAME
+    path.mkdir(parents=True)
     return path
 
 
@@ -117,7 +119,9 @@ def load_main_module(data_dir: Path):
     )
     star_base = type("Star", (), {"__init__": lambda self, *args, **kwargs: None})
     star_stub = SimpleNamespace(Star=star_base, Context=object)
-    star_tools = SimpleNamespace(get_data_dir=lambda: data_dir)
+    path_utils_stub = SimpleNamespace(
+        get_astrbot_plugin_data_path=lambda: data_dir.parent
+    )
     telegram_wrapper = MagicMock()
 
     stubbed_modules = {
@@ -131,7 +135,9 @@ def load_main_module(data_dir: Path):
         "astrbot.api.event": SimpleNamespace(
             AstrMessageEvent=object, filter=filter_stub
         ),
-        "astrbot.api.star": SimpleNamespace(StarTools=star_tools),
+        "astrbot.core": MagicMock(),
+        "astrbot.core.utils": SimpleNamespace(path_utils=path_utils_stub),
+        "astrbot.core.utils.path_utils": path_utils_stub,
         "astrbot_plugin_telegram_forwarder": MagicMock(__path__=[]),
         "astrbot_plugin_telegram_forwarder.common": MagicMock(__path__=[]),
         "astrbot_plugin_telegram_forwarder.common.storage": SimpleNamespace(
@@ -196,6 +202,23 @@ def test_main_rejects_uploaded_session_path_outside_plugin_data_dir():
         main_module.TelegramClientWrapper.clear_cache.assert_not_called()
     finally:
         outside_file.unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_main_accepts_uploaded_session_path_inside_plugin_data_dir():
+    tmp_dir = make_test_dir()
+    uploaded_file = tmp_dir / "uploaded.session"
+    uploaded_file.write_text("session", encoding="utf-8")
+    try:
+        main_module = load_main_module(tmp_dir)
+
+        main_module.Main(MagicMock(), {"telegram_session": [uploaded_file.name]})
+
+        assert (tmp_dir / "user_session.session").read_text(encoding="utf-8") == "session"
+        main_module.TelegramClientWrapper.clear_cache.assert_called_with(
+            str(tmp_dir / "user_session")
+        )
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -268,7 +291,7 @@ def test_init_client_does_not_block_older_telethon_versions_by_default():
     tmp_dir = make_test_dir()
     try:
         wrapper = client_module.TelegramClientWrapper(
-            {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
+            {"api_id": 123, "api_hash": "hash"}, tmp_dir
         )
 
         assert wrapper.client is not None
@@ -287,7 +310,7 @@ def test_init_client_blocks_unsupported_telethon_versions_with_guidance():
     tmp_dir = make_test_dir()
     try:
         wrapper = client_module.TelegramClientWrapper(
-            {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
+            {"api_id": 123, "api_hash": "hash"}, tmp_dir
         )
 
         assert wrapper.client is None
@@ -314,7 +337,7 @@ def test_init_client_reports_expected_six_schema_error_as_dependency_issue():
     tmp_dir = make_test_dir()
     try:
         wrapper = client_module.TelegramClientWrapper(
-            {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
+            {"api_id": 123, "api_hash": "hash"}, tmp_dir
         )
 
         assert wrapper.client is None
@@ -345,7 +368,7 @@ def test_init_client_repairs_schema_error_and_retries_constructor():
         make_current_session_db(tmp_dir / "user_session.session")
 
         wrapper = client_module.TelegramClientWrapper(
-            {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
+            {"api_id": 123, "api_hash": "hash"}, tmp_dir
         )
 
         assert wrapper.client is client
@@ -473,9 +496,9 @@ def test_init_client_reports_schema_migration_failure_without_caching_client():
             "_ensure_compatible_session_schema",
             side_effect=sqlite3.DatabaseError("broken schema"),
         ) as repair_schema:
-            wrapper = client_module.TelegramClientWrapper(
-                {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
-            )
+                wrapper = client_module.TelegramClientWrapper(
+                    {"api_id": 123, "api_hash": "hash"}, tmp_dir
+                )
 
         assert wrapper.client is None
         telegram_client.assert_called_once()

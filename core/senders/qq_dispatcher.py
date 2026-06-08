@@ -6,10 +6,10 @@
 """
 
 import asyncio
-import os
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from astrbot.api import logger
@@ -366,7 +366,7 @@ async def send_processed_batch(
         if not path:
             return None
         try:
-            return os.path.getsize(path)
+            return Path(path).stat().st_size
         except OSError:
             return None
 
@@ -441,7 +441,7 @@ async def send_processed_batch(
                     if path:
                         mapped = map_path(path)
                         file_component = build_file_component(
-                            name=os.path.basename(path),
+                            name=Path(path).name,
                             file_path=mapped,
                         )
                         _patch_file_to_dict(file_component)
@@ -567,7 +567,7 @@ async def send_processed_batch(
                                     f"error_type={type(send_error).__name__}, error={send_error!r}"
                                 )
                                 file_component = build_file_component(
-                                    name=os.path.basename(path),
+                                    name=Path(path).name,
                                     file_path=mapped,
                                 )
                                 _patch_file_to_dict(file_component)

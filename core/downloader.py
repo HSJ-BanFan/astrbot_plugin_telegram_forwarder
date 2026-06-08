@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from telethon.tl.types import Message
 
@@ -11,7 +12,7 @@ class MediaDownloader:
     """
 
     def __init__(
-        self, client, plugin_data_dir: str, max_file_size: int = 500 * 1024 * 1024
+        self, client, plugin_data_dir: Path, max_file_size: int = 500 * 1024 * 1024
     ):
         self.client = client
         self.plugin_data_dir = plugin_data_dir

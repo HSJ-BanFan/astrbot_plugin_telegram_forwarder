@@ -1,4 +1,4 @@
-"""Tests for Forwarder pending removal behavior."""
+"""Forwarder 待发送队列移除行为测试。"""
 
 import asyncio
 import importlib.util

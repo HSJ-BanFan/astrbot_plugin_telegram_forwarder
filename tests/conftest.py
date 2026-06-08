@@ -1,10 +1,10 @@
-"""测试 conftest — 通过包路径注册直接加载 qq.py。"""
+"""通过包路径直接加载 qq.py 的测试夹具。"""
 
 import asyncio
 import importlib.util
 import inspect
-import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,15 +33,15 @@ def pytest_pyfunc_call(pyfuncitem):
     return True
 
 
-# ─── Mock qq.py 的所有顶层 import 依赖 ───
+# 模拟 qq.py 使用的所有顶层导入依赖。
 
-# telethon
+# Telethon 依赖。
 mock_telethon_types = MagicMock()
 sys.modules["telethon"] = MagicMock()
 sys.modules["telethon.tl"] = MagicMock()
 sys.modules["telethon.tl.types"] = mock_telethon_types
 
-# astrbot 模块树
+# AstrBot 模块树。
 mock_logger = MagicMock()
 mock_star = MagicMock()
 mock_star.Context = type("Context", (), {})
@@ -49,7 +49,7 @@ mock_star.Star = type("Star", (), {"__init__": lambda self, *a, **kw: None})
 
 
 def _make_comp(name):
-    """创建一个模拟的 AstrBot 消息组件类。"""
+    """创建模拟的 AstrBot 消息组件类。"""
 
     def _init(self, *args, **kwargs):
         if name == "MessageChain":
@@ -87,14 +87,14 @@ sys.modules["astrbot.api.message_components"] = MagicMock(
     }
 )
 
-# astrbot.core.utils.path_util
+# astrbot.core.utils.path_util 依赖。
 sys.modules["astrbot.core"] = MagicMock()
 sys.modules["astrbot.core.utils"] = MagicMock()
 mock_path_util = MagicMock()
 mock_path_util.path_Mapping = None
 sys.modules["astrbot.core.utils.path_util"] = mock_path_util
 
-# ─── 模拟相对导入目标的模块 ───
+# 模拟相对导入使用的模块。
 
 mock_text_tools = MagicMock()
 mock_text_tools.clean_telegram_text = lambda text, **kw: text
@@ -106,8 +106,8 @@ mock_text_tools.to_telethon_entity = lambda s: (
 mock_downloader = MagicMock()
 mock_downloader.MediaDownloader = type("MediaDownloader", (), {})
 
-# 注册为 qq.py 相对导入能解析到的包路径
-_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 注册包路径，确保 qq.py 的相对导入可以解析。
+_repo_root = Path(__file__).resolve().parents[1]
 _pkg = "astrbot_plugin_telegram_forwarder"
 
 
@@ -121,21 +121,21 @@ def _register_mock_package_tree():
     }
 
     pkg_module = type(sys)(_pkg)
-    pkg_module.__path__ = [_repo_root]
+    pkg_module.__path__ = [str(_repo_root)]
     sys.modules[_pkg] = pkg_module
 
     core_module = type(sys)(f"{_pkg}.core")
-    core_module.__path__ = [os.path.join(_repo_root, "core")]
+    core_module.__path__ = [str(_repo_root / "core")]
     sys.modules[f"{_pkg}.core"] = core_module
 
     senders_module = type(sys)(f"{_pkg}.core.senders")
-    senders_module.__path__ = [os.path.join(_repo_root, "core", "senders")]
+    senders_module.__path__ = [str(_repo_root / "core" / "senders")]
     sys.modules[f"{_pkg}.core.senders"] = senders_module
 
     sys.modules[f"{_pkg}.core.senders.qq"] = MagicMock()
 
     common_module = type(sys)(f"{_pkg}.common")
-    common_module.__path__ = [os.path.join(_repo_root, "common")]
+    common_module.__path__ = [str(_repo_root / "common")]
     sys.modules[f"{_pkg}.common"] = common_module
 
     sys.modules[f"{_pkg}.common.text_tools"] = mock_text_tools
@@ -150,13 +150,13 @@ def _restore_mock_package_tree(previous_modules):
     sys.modules.update(previous_modules)
 
 
-# ─── qq.py 源文件路径 ───
+# qq.py 的源文件路径。
 
-_qq_path = os.path.join(_repo_root, "core", "senders", "qq.py")
+_qq_path = str(_repo_root / "core" / "senders" / "qq.py")
 
 
 def load_qq_module():
-    """加载 qq.py 为独立模块。"""
+    """以隔离模块形式加载 qq.py。"""
     previous_modules = _register_mock_package_tree()
     spec = importlib.util.spec_from_file_location(
         "astrbot_plugin_telegram_forwarder.core.senders.qq",

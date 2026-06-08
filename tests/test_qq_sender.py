@@ -1,8 +1,9 @@
-"""Tests for QQSender helper behavior."""
+"""QQSender 辅助行为测试。"""
 
 import asyncio
 import importlib.util
 import shutil
+import sys
 import uuid
 import zipfile
 from pathlib import Path
@@ -210,19 +211,34 @@ class TestDispatchMediaFile:
         assert len(result) == 1
         assert type(result[0]).__name__ == "File"
 
-    def test_audio_record_uses_mapped_path_when_mapping_exists(self, sender):
+    def test_audio_record_keeps_host_path_when_mapping_exists(
+        self, sender, qq_module, monkeypatch
+    ):
+        source_path = r"E:\host\plugin_data\audio.flac"
         sender.context._config = {
             "platform_settings": {
                 "path_mapping": ["E:/host/plugin_data:/plugin_data"],
             },
         }
 
-        result = sender._dispatch_media_file(r"E:\host\plugin_data\audio.flac")
+        def fake_from_file_system(path):
+            record = qq_module.Record(file=f"file:///{path}")
+            record.path = path
+            return record
+
+        monkeypatch.setattr(
+            qq_module.Record,
+            "fromFileSystem",
+            staticmethod(fake_from_file_system),
+        )
+
+        result = sender._dispatch_media_file(source_path)
 
         assert len(result) == 1
         assert type(result[0]).__name__ == "Record"
-        assert result[0].file == "file:///plugin_data/audio.flac"
-        assert result[0].path == r"E:\host\plugin_data\audio.flac"
+        assert result[0].file == f"file:///{source_path}"
+        assert result[0].path == source_path
+        assert "/plugin_data/audio.flac" not in result[0].file
 
     def test_dispatch_media_file_uses_mapped_path_for_generic_file(self, qq_module):
         result = qq_module.dispatch_media_file(
@@ -281,6 +297,31 @@ class TestDispatchMediaFile:
                 },
             },
         )()
+
+        result = qq_module.map_path_with_config(
+            fpath=r"E:\host\data\plugin_data\clip.flac",
+            context=context,
+            path_mapping=None,
+        )
+
+        assert result == "/plugin_data/clip.flac"
+
+    def test_map_path_with_config_reads_global_astrbot_config_when_context_is_empty(
+        self, qq_module, monkeypatch
+    ):
+        monkeypatch.setattr(
+            sys.modules["astrbot.core"],
+            "astrbot_config",
+            {
+                "platform_settings": {
+                    "path_mapping": [
+                        "E:/host/data/plugin_data:/plugin_data",
+                    ],
+                },
+            },
+            raising=False,
+        )
+        context = type("Context", (), {})()
 
         result = qq_module.map_path_with_config(
             fpath=r"E:\host\data\plugin_data\clip.flac",
@@ -978,7 +1019,7 @@ class TestAudioBatchSending:
                 "apk_direct_link_base_url": "https://files.example.com/downloads",
             }
         }
-        sender.downloader.plugin_data_dir = str(plugin_data_dir)
+        sender.downloader.plugin_data_dir = plugin_data_dir
         sender.context.send_message = AsyncMock(
             side_effect=[
                 RuntimeError("rich media transfer failed"),
@@ -1036,7 +1077,7 @@ class TestAudioBatchSending:
                 "apk_direct_link_base_url": "",
             }
         }
-        sender.downloader.plugin_data_dir = str(plugin_data_dir)
+        sender.downloader.plugin_data_dir = plugin_data_dir
         sender.context.send_message = AsyncMock(
             side_effect=[
                 RuntimeError("rich media transfer failed"),
@@ -1153,6 +1194,11 @@ class TestAudioBatchSending:
         )
 
         assert sender.context.send_message.await_count == 2
+        record_component = (
+            sender.context.send_message.await_args_list[0].args[1].chain[0]
+        )
+        assert type(record_component).__name__ == "Record"
+        assert record_component.file == "file:////tmp/audio.ogg"
         file_component = sender.context.send_message.await_args_list[1].args[1].chain[0]
         assert type(file_component).__name__ == "File"
         assert file_component.file == "/mapped/audio.ogg"
@@ -1902,7 +1948,7 @@ class TestCleanupFiles:
         original_file = tmp_path / "original.mp4"
         temp_file.write_bytes(b"zip")
         original_file.write_bytes(b"video")
-        sender.plugin_data_dir = str(tmp_path)
+        sender.plugin_data_dir = tmp_path
 
         processed_batches = [
             {
@@ -1925,12 +1971,31 @@ class TestCleanupFiles:
         unsafe_file = root / f"unsafe-{plugin_data_dir.name}.bin"
         safe_file.write_text("safe", encoding="utf-8")
         unsafe_file.write_text("unsafe", encoding="utf-8")
-        sender.plugin_data_dir = str(plugin_data_dir)
+        sender.plugin_data_dir = plugin_data_dir
 
         try:
             sender._cleanup_files([str(safe_file), str(unsafe_file)])
 
             assert not safe_file.exists()
+            assert unsafe_file.exists()
+        finally:
+            unsafe_file.unlink(missing_ok=True)
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    def test_cleanup_files_rejects_parent_traversal_outside_plugin_data_dir(
+        self, sender
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"qq-cleanup-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        unsafe_file = root / f"unsafe-{plugin_data_dir.name}.bin"
+        unsafe_file.write_text("unsafe", encoding="utf-8")
+        sender.plugin_data_dir = plugin_data_dir
+
+        try:
+            sender._cleanup_files([str(plugin_data_dir / ".." / unsafe_file.name)])
+
             assert unsafe_file.exists()
         finally:
             unsafe_file.unlink(missing_ok=True)
@@ -1946,7 +2011,7 @@ class TestCleanupFiles:
         safe_file = plugin_data_dir / "download.bin"
         external_link = root / f"external-link-{plugin_data_dir.name}.bin"
         safe_file.write_text("safe", encoding="utf-8")
-        sender.plugin_data_dir = str(plugin_data_dir)
+        sender.plugin_data_dir = plugin_data_dir
 
         try:
             try:
@@ -1969,7 +2034,7 @@ class TestCleanupFiles:
         plugin_data_dir.mkdir()
         safe_file = plugin_data_dir / "download.bin"
         safe_file.write_text("safe", encoding="utf-8")
-        sender.plugin_data_dir = str(plugin_data_dir)
+        sender.plugin_data_dir = plugin_data_dir
 
         remove_error = OSError("locked")
         monkeypatch.setattr("os.remove", MagicMock(side_effect=remove_error))

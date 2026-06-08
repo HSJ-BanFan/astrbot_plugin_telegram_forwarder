@@ -1,8 +1,8 @@
 import asyncio
-import os
 import random
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 from telethon.errors import (
     FloodWaitError,
@@ -323,8 +323,8 @@ class PluginCommands:
             logger.debug(f"[Login] disconnect during reset failed: {e}")
 
         try:
-            session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
-            wrapper.clear_cache(session_path)
+            session_path = wrapper.plugin_data_dir / "user_session"
+            wrapper.clear_cache(str(session_path))
 
             # 删除磁盘上的 session 相关文件（如果存在）
             for suffix in (
@@ -333,10 +333,10 @@ class PluginCommands:
                 ".session-shm",
                 ".session-wal",
             ):
-                p = f"{session_path}{suffix}"
-                if os.path.exists(p):
+                p = Path(f"{session_path}{suffix}")
+                if p.exists():
                     try:
-                        os.remove(p)
+                        p.unlink()
                     except Exception as e:
                         logger.debug(f"[Login] remove session file failed {p}: {e}")
 

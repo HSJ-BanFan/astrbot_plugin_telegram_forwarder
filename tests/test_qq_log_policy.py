@@ -1,4 +1,4 @@
-"""Tests for QQLogPolicy debug gating."""
+"""QQLogPolicy debug 开关测试。"""
 
 import conftest as plugin_conftest
 

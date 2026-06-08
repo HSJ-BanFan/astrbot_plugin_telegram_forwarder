@@ -1,4 +1,4 @@
-"""QQ sender shared type definitions."""
+"""QQ 发送器共享类型定义。"""
 
 from typing import Literal, Protocol
 
@@ -18,7 +18,7 @@ SendKind = Literal[
 
 
 class SendMessageFn(Protocol):
-    """Unified QQ send wrapper callable."""
+    """统一的 QQ 发送封装可调用对象。"""
 
     async def __call__(
         self,
