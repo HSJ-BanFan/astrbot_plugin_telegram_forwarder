@@ -89,7 +89,7 @@ class Storage:
             self.save()
             logger.debug(f"[Storage] 更新频道 {channel_name} 的数字 ID 为 {channel_id}")
 
-    def get_channel_name_by_id(self, channel_id: int) -> str:
+    def get_channel_name_by_id(self, channel_id: int) -> str | None:
         """根据数字 ID 获取频道名"""
         for name, info in self.persistence.get("channels", {}).items():
             if info.get("channel_id") == channel_id:
@@ -101,7 +101,7 @@ class Storage:
         channel_name: str,
         msg_id: int,
         timestamp: float,
-        grouped_id: int = None,
+        grouped_id: int | None = None,
         is_cold_start: bool = False,
         is_monitored: bool = False,
     ):

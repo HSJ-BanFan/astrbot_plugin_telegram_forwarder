@@ -66,7 +66,10 @@ async def main():
     print(f"正在连接... (Session路径: {SESSION_FILE})")
     client = None
     try:
-        client = TelegramClient(SESSION_FILE, api_id, api_hash, proxy=proxy_setting)
+        client_kwargs = {}
+        if proxy_setting is not None:
+            client_kwargs["proxy"] = proxy_setting
+        client = TelegramClient(SESSION_FILE, api_id, api_hash, **client_kwargs)
 
         await client.connect()
 
@@ -92,7 +95,7 @@ async def main():
     finally:
         if client is not None:
             try:
-                await client.disconnect()
+                await client.disconnect()  # type: ignore
             except Exception as e:
                 print(f"断开 Telegram 客户端连接失败（已忽略）: {e}")
 

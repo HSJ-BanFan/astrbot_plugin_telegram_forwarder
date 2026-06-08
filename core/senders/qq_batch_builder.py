@@ -8,8 +8,16 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict
 
+from telethon.tl.types import Message
+
 from astrbot.api import logger
-from astrbot.api.message_components import File, Plain, Record, Video
+from astrbot.api.message_components import (
+    BaseMessageComponent,
+    File,
+    Plain,
+    Record,
+    Video,
+)
 
 from ...common.text_tools import clean_telegram_text, is_numeric_channel_id
 
@@ -28,7 +36,7 @@ class ProcessedBatchData(TypedDict):
     """
 
     batch_index: int
-    nodes_data: list[list[object]]
+    nodes_data: list[list[BaseMessageComponent]]
     local_files: list[str]
     contains_audio: bool
 
@@ -42,7 +50,7 @@ class ProcessedBatch:
     """
 
     batch_index: int
-    nodes_data: list[list[object]]
+    nodes_data: list[list[BaseMessageComponent]]
     local_files: list[str]
     contains_audio: bool
 
@@ -71,7 +79,7 @@ class BuildBatchesResult:
 async def build_processed_batches(
     *,
     sender: "QQSender",
-    real_batches: list[list[object]],
+    real_batches: list[list[Message]],
     src_channel: str,
     display_name: str | None,
     involved_channels: list[str] | None,
@@ -137,7 +145,9 @@ async def build_processed_batches(
 
                 reply_header = getattr(msg, "reply_to", None)
                 reply_id = getattr(reply_header, "reply_to_msg_id", None)
-                reply_preview = reply_preview_cache.get(reply_id)
+                reply_preview = None
+                if reply_id is not None:
+                    reply_preview = reply_preview_cache.get(reply_id)
                 if reply_preview and not should_exclude_text:
                     text_parts.insert(0, reply_preview)
 

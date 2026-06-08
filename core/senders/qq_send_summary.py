@@ -9,7 +9,7 @@ from typing import Protocol, TypeVar
 
 from .qq_batch_builder import ProcessedBatchData
 
-QQSendSummaryT = TypeVar("QQSendSummaryT")
+QQSendSummaryT = TypeVar("QQSendSummaryT", covariant=True)
 
 
 class QQSendSummaryFactory(Protocol[QQSendSummaryT]):

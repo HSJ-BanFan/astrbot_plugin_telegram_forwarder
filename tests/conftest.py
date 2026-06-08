@@ -162,10 +162,12 @@ def load_qq_module():
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
         _qq_path,
     )
+    assert spec is not None
     mod = importlib.util.module_from_spec(spec)
     mod.__package__ = "astrbot_plugin_telegram_forwarder.core.senders"
 
     try:
+        assert spec.loader is not None
         spec.loader.exec_module(mod)
     finally:
         _restore_mock_package_tree(previous_modules)

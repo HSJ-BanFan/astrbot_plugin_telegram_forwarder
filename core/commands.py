@@ -576,6 +576,11 @@ class PluginCommands:
                 return
 
             original_name = cfg.get("channel_username")
+            if not original_name:
+                yield event.plain_result(
+                    f"❌ 频道 @{channel_name} 的配置缺少 channel_username，无法清空队列。"
+                )
+                return
             data = self.forwarder.storage.get_channel_data(original_name)
             old_len = len(data["pending_queue"])
             if old_len == 0:
@@ -635,7 +640,7 @@ class PluginCommands:
 
         return "".join(result)
 
-    async def get_config(self, event: AstrMessageEvent, target: str = None):
+    async def get_config(self, event: AstrMessageEvent, target: str | None = None):
         """查看频道、全局或根配置"""
         if not target:
             yield event.plain_result(
@@ -848,7 +853,10 @@ class PluginCommands:
                 ("qq_merge_threshold", "QQ 合并转发阈值（≥此值打包合并，≤1=永不合并）"),
                 ("retention_period", "待发消息最长保留时间（秒，超期丢弃，默认86400）"),
                 ("max_file_size", "非图片媒体大小上限（MB，0=不限制）"),
-                ("apk_fallback_mode", "APK 发送失败兜底模式（关闭/直链/压缩包/直链优先失败转压缩包）"),
+                (
+                    "apk_fallback_mode",
+                    "APK 发送失败兜底模式（关闭/直链/压缩包/直链优先失败转压缩包）",
+                ),
                 ("apk_direct_link_base_url", "APK 直链基址（仅在直链模式下生效）"),
                 (
                     "exclude_text_on_media",
@@ -1068,9 +1076,11 @@ class PluginCommands:
             is_clear_cmd = raw_lower in ("[]", "清空", "clear", "none", "empty", "null")
 
             for ch_cfg in channels:
-                if not isinstance(ch_cfg, dict) or not ch_cfg.get("channel_username"):
+                if not isinstance(ch_cfg, dict):
                     continue
                 channel_name = ch_cfg.get("channel_username")
+                if not channel_name:
+                    continue
                 target_name = (
                     channel_name
                     if is_numeric_channel_id(channel_name)
@@ -1489,9 +1499,7 @@ class PluginCommands:
             if had_override:
                 config_default = bool(self.config.get("debug_enabled_default", False))
                 if config_default:
-                    yield event.plain_result(
-                        "已清除运行时覆盖，当前配置页默认为开启。"
-                    )
+                    yield event.plain_result("已清除运行时覆盖，当前配置页默认为开启。")
                 else:
                     yield event.plain_result(
                         "已关闭 QQ 发送诊断日志（运行时覆盖已清除，回退到配置页默认：关闭）。"
@@ -1509,9 +1517,7 @@ class PluginCommands:
             else:
                 source = f"config default ({'开启' if config_default else '关闭'})"
             state = "开启" if effective else "关闭"
-            yield event.plain_result(
-                f"QQ 发送诊断日志：{state}（来源：{source}）"
-            )
+            yield event.plain_result(f"QQ 发送诊断日志：{state}（来源：{source}）")
             return
 
         yield event.plain_result(

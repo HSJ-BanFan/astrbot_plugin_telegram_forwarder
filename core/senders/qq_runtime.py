@@ -91,7 +91,9 @@ def get_platform_bot(platform: object) -> object | None:
         try:
             return platform.get_client()
         except Exception as exc:
-            logger.debug(f"[QQSender] get_client() failed while selecting platform bot: {exc}")
+            logger.debug(
+                f"[QQSender] get_client() failed while selecting platform bot: {exc}"
+            )
             return None
     if hasattr(platform, "bot"):
         return platform.bot

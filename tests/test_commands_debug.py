@@ -91,6 +91,15 @@ async def collect_results(
     return results
 
 
+async def collect_clear_queue(
+    commands: Any, event: MagicMock, target: str | None = None
+) -> list[str]:
+    results = []
+    async for result in commands.clear_queue(event, target):
+        results.append(result)
+    return results
+
+
 def make_event() -> MagicMock:
     event = MagicMock()
     event.plain_result.side_effect = lambda message: message
@@ -270,3 +279,26 @@ class TestPluginCommandsDebug:
         assert "debug_enabled_default" not in commands.config
         commands.config.save_config.assert_not_called()
         commands.context._star_manager.reload.assert_not_called()
+
+
+class TestPluginCommandsClearQueue:
+    @pytest.mark.asyncio
+    async def test_clear_queue_reports_channel_config_without_username(self) -> None:
+        commands_module = load_commands_module()
+        storage = SimpleNamespace(
+            persistence={"channels": {}},
+            get_all_pending=MagicMock(return_value=[{"channel": "demo"}]),
+            get_channel_data=MagicMock(),
+            save=MagicMock(),
+        )
+        forwarder = SimpleNamespace(storage=storage)
+        commands = commands_module.PluginCommands(MagicMock(), FakeConfig({}), forwarder)
+        commands._find_channel_cfg = MagicMock(return_value={"display_name": "demo"})
+        event = make_event()
+
+        results = await collect_clear_queue(commands, event, "demo")
+
+        assert results == [
+            "❌ 频道 @demo 的配置缺少 channel_username，无法清空队列。"
+        ]
+        storage.get_channel_data.assert_not_called()

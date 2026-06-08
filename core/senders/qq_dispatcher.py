@@ -8,7 +8,7 @@
 import asyncio
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -58,9 +58,9 @@ class DispatchResult:
 
 async def dispatch_processed_batches_to_targets(
     *,
-    context_target_sessions: list[str],
-    real_batches: list[list[object]],
-    processed_batches: list[ProcessedBatchData],
+    context_target_sessions: Sequence[str],
+    real_batch_count: int,
+    processed_batches: Sequence[ProcessedBatchData],
     target_successes: dict[int, set[str]],
     target_failures: dict[int, str],
     deferred_batch_indexes: set[int],
@@ -101,7 +101,7 @@ async def dispatch_processed_batches_to_targets(
                 logger.warning(
                     f"[QQSender] 目标 {target_session} 熔断冷却中，跳过本轮发送"
                 )
-                deferred_batch_indexes.update(range(len(real_batches)))
+                deferred_batch_indexes.update(range(real_batch_count))
                 continue
 
             unified_msg_origin = target_session
@@ -214,7 +214,9 @@ async def dispatch_processed_batches_to_targets(
                         chunk_failed = False
                         for batch_data in chunk_batches:
                             batch_index = batch_data["batch_index"]
-                            if target_session in target_successes.get(batch_index, set()):
+                            if target_session in target_successes.get(
+                                batch_index, set()
+                            ):
                                 continue
                             try:
                                 await send_processed_batch_fn(
@@ -325,12 +327,18 @@ async def send_processed_batch(
     以尽量兼顾 QQ 平台兼容性与消息展示完整性。
     """
 
+    def build_file_component(*, name: str | None, file_path: str) -> File:
+        return File(name="" if name is None else str(name), file=file_path, url="")
+
     def normalize_file_payload(component: File) -> File:
         if getattr(component, "file", None):
             return component
         compat_file = getattr(component, "file_", None)
         if compat_file:
-            normalized = File(file=compat_file, name=getattr(component, "name", None))
+            normalized = build_file_component(
+                name=getattr(component, "name", None),
+                file_path=compat_file,
+            )
             if getattr(component, "file_", None) is not None:
                 setattr(normalized, "file_", component.file_)
             for attr_name in ("_tgf_source_path",):
@@ -391,6 +399,7 @@ async def send_processed_batch(
         return
 
     if batch_data.get("contains_audio"):
+
         async def send_common_components(components: list) -> None:
             if not components:
                 return
@@ -431,10 +440,9 @@ async def send_processed_batch(
                         )
                     if path:
                         mapped = map_path(path)
-                        file_component = File(
-                            file=mapped,
-                            url="",
+                        file_component = build_file_component(
                             name=os.path.basename(path),
+                            file_path=mapped,
                         )
                         _patch_file_to_dict(file_component)
                         log_file_payload(file_component)
@@ -558,10 +566,9 @@ async def send_processed_batch(
                                     f"file_size={safe_file_size(path)}, "
                                     f"error_type={type(send_error).__name__}, error={send_error!r}"
                                 )
-                                file_component = File(
-                                    file=mapped,
-                                    url="",
+                                file_component = build_file_component(
                                     name=os.path.basename(path),
+                                    file_path=mapped,
                                 )
                                 _patch_file_to_dict(file_component)
                                 log_file_payload(file_component)

@@ -33,6 +33,7 @@ from .qq_file_fallback import (
     handle_apk_file_send_failure,
     resolve_apk_fallback_policy,
 )
+from .qq_log_policy import QQLogPolicy
 from .qq_media import (
     File,
     Image,
@@ -51,6 +52,7 @@ from .qq_reply_preview import (
 )
 from .qq_runtime import get_platform_bot, get_platform_instances, select_qq_platform
 from .qq_send_prep import (
+    FlattenableBatches,
     flatten_batches,
     normalize_qq_targets,
     positive_int,
@@ -68,10 +70,11 @@ from .qq_targets import (
     session_platform_ids,
     split_qq_targets,
 )
-from .qq_log_policy import QQLogPolicy
 from .qq_types import SendKind
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
+
+
 @dataclass(frozen=True)
 class QQSendSummary:
     """面向上层调用方法的 QQ 批次发送结果。
@@ -213,9 +216,7 @@ class QQSender:
         target_session: str,
     ) -> bool:
         return await handle_apk_file_send_failure(
-            policy=resolve_apk_fallback_policy(
-                self.config.get("forward_config", {})
-            ),
+            policy=resolve_apk_fallback_policy(self.config.get("forward_config", {})),
             component=component,
             error=error,
             batch_data=batch_data,
@@ -424,7 +425,9 @@ class QQSender:
         return resolve_send_limits(forward_cfg)
 
     @staticmethod
-    def _flatten_batches(batches: list[list[Message]]) -> list[list[Message]]:
+    def _flatten_batches(
+        batches: FlattenableBatches[Message],
+    ) -> list[list[Message]]:
         return flatten_batches(batches)
 
     async def _resolve_bot_send_identity(self) -> tuple[int, str]:
@@ -445,7 +448,7 @@ class QQSender:
         self_id = 0
         node_name = (
             await self._ensure_node_name(bot, cache_fallback=True) if bot else "AstrBot"
-        )
+        ) or "AstrBot"
         if bot:
             try:
                 info = await bot.get_login_info()
@@ -478,7 +481,7 @@ class QQSender:
 
     async def send(
         self,
-        batches: list[list[Message]],
+        batches: FlattenableBatches[Message],
         src_channel: str,
         display_name: str | None = None,
         effective_cfg: dict[str, object] | None = None,
@@ -532,10 +535,9 @@ class QQSender:
             failed_batch_indexes = tuple(range(len(real_batches)))
             return QQSendSummary(
                 failed_batch_indexes=failed_batch_indexes,
-                error_types={
-                    batch_index: "unresolved_target_session"
-                    for batch_index in failed_batch_indexes
-                },
+                error_types=dict.fromkeys(
+                    failed_batch_indexes, "unresolved_target_session"
+                ),
             )
 
         forward_cfg = self.config.get("forward_config", {})
@@ -581,7 +583,7 @@ class QQSender:
         try:
             dispatch_result = await dispatch_processed_batches_to_targets(
                 context_target_sessions=context_target_sessions,
-                real_batches=real_batches,
+                real_batch_count=len(real_batches),
                 processed_batches=processed_batches,
                 target_successes=target_successes,
                 target_failures=target_failures,

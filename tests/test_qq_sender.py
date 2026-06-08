@@ -47,7 +47,7 @@ async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module
 
     result = await qq_module.dispatch_processed_batches_to_targets(
         context_target_sessions=["aiocqhttp:GroupMessage:1"],
-        real_batches=[[object()], [object()], [object()]],
+        real_batch_count=3,
         processed_batches=processed_batches,
         target_successes=target_successes,
         target_failures=target_failures,
@@ -101,7 +101,7 @@ async def test_special_media_chunk_records_success_before_later_batch_failure(qq
 
     result = await qq_module.dispatch_processed_batches_to_targets(
         context_target_sessions=["aiocqhttp:GroupMessage:1"],
-        real_batches=[[object()], [object()]],
+        real_batch_count=2,
         processed_batches=processed_batches,
         target_successes=target_successes,
         target_failures={},
@@ -228,9 +228,11 @@ class TestDispatchMediaFile:
             "astrbot_plugin_telegram_forwarder.core.senders.qq_media",
             str(Path(plugin_conftest._repo_root) / "core" / "senders" / "qq_media.py"),
         )
+        assert spec is not None
         qq_media = importlib.util.module_from_spec(spec)
         qq_media.__package__ = "astrbot_plugin_telegram_forwarder.core.senders"
         try:
+            assert spec.loader is not None
             spec.loader.exec_module(qq_media)
         finally:
             plugin_conftest._restore_mock_package_tree(previous_modules)
@@ -772,6 +774,31 @@ class TestAudioBatchSending:
 
         sent_file = sender.context.send_message.await_args_list[0].args[1].chain[0]
         assert sent_file.file == "/mapped/audio.ogg"
+
+    @pytest.mark.asyncio
+    async def test_file_send_does_not_stringify_missing_file_name(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock()
+        file_component = qq_module.File(name="placeholder")
+        file_component.file = ""
+        file_component.name = None
+        file_component.file_ = "/mapped/audio.ogg"
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[file_component]],
+                "contains_audio": False,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        sent_file = sender.context.send_message.await_args_list[0].args[1].chain[0]
+        assert sent_file.file == "/mapped/audio.ogg"
+        assert getattr(sent_file, "name", None) != "None"
 
     @pytest.mark.asyncio
     async def test_file_send_overrides_to_dict_for_nonexistent_mapped_path(

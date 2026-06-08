@@ -6,11 +6,12 @@
 """
 
 from collections.abc import Mapping, Sequence
-from typing import TypeAlias, TypeGuard, cast
+from typing import TypeAlias, TypeGuard, TypeVar, cast
 
-Batch: TypeAlias = list[object]
-NestedBatches: TypeAlias = list[Batch]
-FlattenableBatches: TypeAlias = Sequence[Batch | NestedBatches]
+BatchItem = TypeVar("BatchItem")
+Batch: TypeAlias = list[BatchItem]
+NestedBatches: TypeAlias = list[Batch[BatchItem]]
+FlattenableBatches: TypeAlias = Sequence[Batch[BatchItem] | NestedBatches[BatchItem]]
 
 
 def _as_str_object_mapping(value: object) -> Mapping[str, object]:
@@ -20,7 +21,9 @@ def _as_str_object_mapping(value: object) -> Mapping[str, object]:
     return {}
 
 
-def _is_nested_batches(item: Batch | NestedBatches) -> TypeGuard[NestedBatches]:
+def _is_nested_batches(
+    item: Batch[BatchItem] | NestedBatches[BatchItem],
+) -> TypeGuard[NestedBatches[BatchItem]]:
     """判断是否为一层嵌套的批次分组，例如 ``[[msg1], [msg2]]``。"""
     return bool(item) and all(isinstance(sub, list) for sub in item)
 
@@ -138,7 +141,7 @@ def resolve_send_limits(forward_cfg: Mapping[str, object]) -> tuple[int, int, in
     )
 
 
-def flatten_batches(batches: FlattenableBatches) -> list[Batch]:
+def flatten_batches(batches: FlattenableBatches[BatchItem]) -> list[Batch[BatchItem]]:
     """把一层嵌套的批次分组展平为逻辑批次列表。
 
     Args:
@@ -147,10 +150,10 @@ def flatten_batches(batches: FlattenableBatches) -> list[Batch]:
     Returns:
         保持原顺序的展平后逻辑批次列表。
     """
-    real_batches: list[Batch] = []
+    real_batches: list[Batch[BatchItem]] = []
     for item in batches:
         if _is_nested_batches(item):
             real_batches.extend(item)
         else:
-            real_batches.append(cast(Batch, item))
+            real_batches.append(cast(Batch[BatchItem], item))
     return real_batches

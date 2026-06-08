@@ -13,7 +13,7 @@ class MessageFilter:
         self.config = config
 
     def filter_messages(
-        self, messages: list[tuple[str, Message]], logger_func: Callable = None
+        self, messages: list[tuple[str, Message]], logger_func: Callable | None = None
     ) -> list[tuple[str, Message]]:
         """
         应用过滤规则，返回过滤后的消息列表

@@ -324,7 +324,7 @@ async def queue(self, event: AstrMessageEvent):
 
 
 @tg.command("clearqueue")
-async def clearqueue(self, event: AstrMessageEvent, target: str = None):
+async def clearqueue(self, event: AstrMessageEvent, target: str | None = None):
     """清空待发送队列"""
     async for result in self.command_handler.clear_queue(event, target):
         yield result

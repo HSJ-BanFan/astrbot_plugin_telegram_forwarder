@@ -1,11 +1,13 @@
 import asyncio
 import os
+import re
 import shutil
 import sqlite3
 import sys
 from urllib.parse import urlparse, urlunparse
 
 import socks
+import telethon
 from telethon import TelegramClient
 
 from astrbot.api import AstrBotConfig, logger
@@ -38,6 +40,46 @@ class TelegramClientWrapper:
     def _is_wrong_session_error(exc: Exception) -> bool:
         error_text = f"{exc!r} {exc}".casefold()
         return "wrong session id" in error_text
+
+    @staticmethod
+    def _is_session_schema_error(exc: Exception) -> bool:
+        error_text = f"{exc!r} {exc}".casefold()
+        return "too many values to unpack" in error_text and "expected 5" in error_text
+
+    @staticmethod
+    def _is_unsupported_session_schema_error(exc: Exception) -> bool:
+        error_text = f"{exc!r} {exc}".casefold()
+        return (
+            "not enough values to unpack" in error_text
+            and "expected 6" in error_text
+        )
+
+    @staticmethod
+    def _telethon_version_text() -> str:
+        version = getattr(telethon, "__version__", "")
+        return version if isinstance(version, str) else ""
+
+    @staticmethod
+    def _telethon_version_tuple(version: str) -> tuple[int, int, int] | None:
+        match = re.match(r"^\s*(\d+)\.(\d+)(?:\.(\d+))?", version)
+        if not match:
+            return None
+        major, minor, patch = match.groups()
+        return int(major), int(minor), int(patch or 0)
+
+    @classmethod
+    def _is_unsupported_telethon_version(cls) -> bool:
+        version_tuple = cls._telethon_version_tuple(cls._telethon_version_text())
+        return version_tuple is not None and version_tuple >= (1, 43, 0)
+
+    @classmethod
+    def _log_unsupported_telethon_version(cls) -> None:
+        version_text = cls._telethon_version_text() or "unknown"
+        logger.error(
+            f"[Client] 当前 Telethon 版本 {version_text} 与本插件 session schema 不兼容。"
+            " 请在 AstrBot 插件环境中重装依赖，使 telethon 满足 >=1.42.0,<1.43.0；"
+            " 例如: pip install --upgrade --force-reinstall \"telethon>=1.42.0,<1.43.0\"",
+        )
 
     @staticmethod
     def _redact_proxy_url(proxy_url: str) -> str:
@@ -85,14 +127,14 @@ class TelegramClientWrapper:
         try:
             columns = conn.execute("PRAGMA table_info(sessions)").fetchall()
             column_names = [column[1] for column in columns]
-            if "tmp_auth_key" not in column_names:
-                return
-
-            rows = conn.execute(
-                "SELECT dc_id, server_address, port, auth_key, takeout_id FROM sessions"
-            ).fetchall()
         finally:
             conn.close()
+
+        if not column_names:
+            return
+
+        if "tmp_auth_key" not in column_names:
+            return
 
         backup_file = f"{session_file}.bak"
         if not os.path.exists(backup_file):
@@ -100,6 +142,9 @@ class TelegramClientWrapper:
 
         conn = sqlite3.connect(session_file)
         try:
+            rows = conn.execute(
+                "SELECT dc_id, server_address, port, auth_key, takeout_id FROM sessions"
+            ).fetchall()
             conn.execute("ALTER TABLE sessions RENAME TO sessions_legacy")
             conn.execute(
                 """
@@ -122,7 +167,7 @@ class TelegramClientWrapper:
             )
             conn.execute("DROP TABLE sessions_legacy")
             conn.commit()
-        except Exception:
+        except sqlite3.Error:
             conn.close()
             shutil.copy2(backup_file, session_file)
             raise
@@ -167,7 +212,7 @@ class TelegramClientWrapper:
         """Safely disconnect the current Telethon client."""
         if not self.client or not self.client.is_connected():
             return
-        await asyncio.wait_for(self.client.disconnect(), timeout=timeout)
+        await asyncio.wait_for(self.client.disconnect(), timeout=timeout)  # type: ignore
 
     async def send_login_code(self, phone: str) -> str:
         """发送登录验证码并返回 phone_code_hash。"""
@@ -239,15 +284,14 @@ class TelegramClientWrapper:
 
         # 只有在配置完整时才创建客户端
         if api_id and api_hash:
+            if self._is_unsupported_telethon_version():
+                self._log_unsupported_telethon_version()
+                self.client = None
+                return
+
             # 会话文件路径：存储登录状态和缓存
             # 使用 .session 扩展名，Telethon 会自动添加
             session_path = self._session_path()
-            try:
-                self._ensure_compatible_session_schema(session_path)
-            except Exception as e:
-                logger.warning(
-                    f"[Client] 会话 schema 自愈失败，继续尝试启动: {e}", exc_info=True
-                )
 
             # ========== 检查缓存 ==========
             cache = get_client_cache()
@@ -285,15 +329,48 @@ class TelegramClientWrapper:
                     logger.error(f"[Client] 代理 URL 格式错误: {e}")
 
             # ========== 创建 Telegram 客户端 ==========
-            self.client = TelegramClient(
-                session_path,
-                api_id,
-                api_hash,
-                proxy=proxy_setting,
-                connection_retries=None,
-                retry_delay=5,
-                auto_reconnect=True,
-            )
+            client_kwargs = {}
+            if proxy_setting is not None:
+                client_kwargs["proxy"] = proxy_setting
+
+            try:
+                self.client = TelegramClient(
+                    session_path,
+                    api_id,
+                    api_hash,
+                    connection_retries=None,  # type: ignore
+                    retry_delay=5,
+                    auto_reconnect=True,
+                    **client_kwargs,
+                )
+            except Exception as e:
+                if self._is_unsupported_session_schema_error(e):
+                    self._log_unsupported_telethon_version()
+                    self.client = None
+                    return
+                if not self._is_session_schema_error(e):
+                    raise
+                logger.warning(
+                    f"[Client] 检测到 Telethon 会话 schema 不兼容，尝试备份并修复 {session_path}.session: {e}"
+                )
+                try:
+                    self._ensure_compatible_session_schema(session_path)
+                    self.client = TelegramClient(
+                        session_path,
+                        api_id,
+                        api_hash,
+                        connection_retries=None,  # type: ignore
+                        retry_delay=5,
+                        auto_reconnect=True,
+                        **client_kwargs,
+                    )
+                except Exception as schema_error:
+                    logger.error(
+                        f"[Client] 会话 schema 自愈失败，无法加载 {session_path}.session。"
+                        f" 请使用 relogin.py 重新生成 session: {schema_error}"
+                    )
+                    self.client = None
+                    return
 
             # ========== 加入缓存 ==========
             cache[session_path] = self.client

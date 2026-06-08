@@ -154,9 +154,7 @@ class QQLogPolicy:
         """
         if not self._debug_enabled():
             return
-        logger.info(
-            f"[QQSender] {node_name} -> {target}: 单条消息 (音频已拆分补文件)"
-        )
+        logger.info(f"[QQSender] {node_name} -> {target}: 单条消息 (音频已拆分补文件)")
 
     def log_target_summary(
         self,

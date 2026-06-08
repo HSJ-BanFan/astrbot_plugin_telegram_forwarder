@@ -78,40 +78,53 @@
 
 ##### 1）获取住宅 / ISP 静态 IP
 
-可以使用提供住宅代理的服务商，例如 [LycheeIP](https://www.lycheeip.com/home/ip?utm_source=chatgpt.com)。如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。
+如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。可以按需选择下面的入口：
+
+<details>
+<summary><b>🎁 免费获取（完整配置教学）</b></summary>
+<br>
+
+* <a href="https://www.lycheeip.com/home/ip?utm_source=chatgpt.com" target="_blank">免费获取住宅 / ISP 静态 IP</a>
 
 操作流程：
 
-```text
+<pre>
 1. 打开代理服务商网站并注册账号
 2. 进入个人中心，找到自己的用户 ID
 3. 联系客服，发送用户 ID，申请试用住宅 IP / 动态住宅流量
 4. 客服开通后，进入代理后台生成代理线路
 5. 获取代理信息
-```
+</pre>
 
 代理后台一般会生成类似下面的格式：
 
-```text
-hostname:port:username:password
-```
+<pre>hostname:port:username:password</pre>
 
 例如：
 
-```text
-global.example.com:10000:username-session-xxxx:password
-```
+<pre>global.example.com:10000:username-session-xxxx:password</pre>
 
 这里需要拆成四部分使用：
 
-```text
+<pre>
 hostname  → 代理地址
 port      → 端口
 username  → 用户名
 password  → 密码
-```
+</pre>
 
-![代理试用开通示例](resources/img/proxy-trial.png)
+<img src="resources/img/proxy-trial.png" alt="代理试用开通示例" style="max-width: 100%;" />
+
+</details>
+
+<details>
+<summary><b>💰 付费获取（直接订阅链接）</b></summary>
+<br>
+
+* <a href="https://mitce.net/aff.php?aff=41410" target="_blank">订阅台湾 / 香港静态 IP</a>（约每月 3 元 / 100GB，以页面实际信息为准）
+
+</details>
+
 
 ##### 2）在 Firefox 中配置代理
 

@@ -4,7 +4,7 @@ import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
-from telethon.tl.types import Message
+from telethon.tl.types import Message  # type: ignore
 
 from astrbot.api import AstrBotConfig, logger, star
 
@@ -844,7 +844,10 @@ class Forwarder:
                         msgs = await self.client.get_messages(
                             to_telethon_entity(channel), ids=ids
                         )
-                        for m in msgs:
+                        msg_iterable = []
+                        if msgs is not None:
+                            msg_iterable = msgs if isinstance(msgs, list) else [msgs]
+                        for m in msg_iterable:
                             if not m or not isinstance(m, Message):
                                 continue
                             raw_fetched_messages.append((channel, m))
@@ -1416,7 +1419,9 @@ class Forwarder:
                     for (batch_indexes, _), result in zip(
                         exclusive_tasks, exclusive_results
                     ):
-                        if isinstance(result, Exception):
+                        if isinstance(result, BaseException):
+                            if not isinstance(result, Exception):
+                                raise result
                             qq_summary = self._merge_send_summaries(
                                 qq_summary,
                                 QQSendSummary(
@@ -1745,7 +1750,7 @@ class Forwarder:
 
                 # --- 转发查重逻辑 ---
                 if enable_dedup and message.fwd_from and message.fwd_from.from_id:
-                    from telethon.tl.types import PeerChannel
+                    from telethon.tl.types import PeerChannel  # type: ignore
 
                     if isinstance(message.fwd_from.from_id, PeerChannel):
                         src_channel_id = message.fwd_from.from_id.channel_id
