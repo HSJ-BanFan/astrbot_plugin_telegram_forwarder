@@ -210,6 +210,20 @@ class TestDispatchMediaFile:
         assert len(result) == 1
         assert type(result[0]).__name__ == "File"
 
+    def test_audio_record_uses_mapped_path_when_mapping_exists(self, sender):
+        sender.context._config = {
+            "platform_settings": {
+                "path_mapping": ["E:/host/plugin_data:/plugin_data"],
+            },
+        }
+
+        result = sender._dispatch_media_file(r"E:\host\plugin_data\audio.flac")
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "Record"
+        assert result[0].file == "file:///plugin_data/audio.flac"
+        assert result[0].path == r"E:\host\plugin_data\audio.flac"
+
     def test_dispatch_media_file_uses_mapped_path_for_generic_file(self, qq_module):
         result = qq_module.dispatch_media_file(
             "/tmp/report.txt",
@@ -220,6 +234,85 @@ class TestDispatchMediaFile:
         assert type(result[0]).__name__ == "File"
         assert result[0].file == "/mapped/report.txt"
         assert result[0].name == "report.txt"
+
+    def test_map_path_with_config_maps_file_uri_windows_path_without_core_mapper(
+        self, qq_module
+    ):
+        context = type(
+            "Context",
+            (),
+            {
+                "_config": {
+                    "platform_settings": {
+                        "path_mapping": [
+                            "E:/MySecondBrain/dev-workspace/projects/automation/"
+                            "tooling/AsrtBot/asrtbot/data/plugin_data:/plugin_data"
+                        ],
+                    },
+                },
+            },
+        )()
+
+        result = qq_module.map_path_with_config(
+            fpath=(
+                r"file:///E:\MySecondBrain\dev-workspace\projects\automation"
+                r"\tooling\AsrtBot\asrtbot\data\plugin_data"
+                r"\astrbot_plugin_telegram_forwarder\MK2.mov"
+            ),
+            context=context,
+            path_mapping=None,
+        )
+
+        assert result == "/plugin_data/astrbot_plugin_telegram_forwarder/MK2.mov"
+
+    def test_map_path_with_config_maps_plain_windows_path_without_core_mapper(
+        self, qq_module
+    ):
+        context = type(
+            "Context",
+            (),
+            {
+                "_config": {
+                    "platform_settings": {
+                        "path_mapping": [
+                            "E:/host/data/plugin_data:/plugin_data",
+                        ],
+                    },
+                },
+            },
+        )()
+
+        result = qq_module.map_path_with_config(
+            fpath=r"E:\host\data\plugin_data\clip.flac",
+            context=context,
+            path_mapping=None,
+        )
+
+        assert result == "/plugin_data/clip.flac"
+
+    def test_map_path_with_config_does_not_match_partial_prefix(self, qq_module):
+        context = type(
+            "Context",
+            (),
+            {
+                "_config": {
+                    "platform_settings": {
+                        "path_mapping": [
+                            "E:/host/data/plugin_data:/plugin_data",
+                        ],
+                    },
+                },
+            },
+        )()
+        source_path = r"E:\host\data\plugin_data_backup\clip.flac"
+
+        result = qq_module.map_path_with_config(
+            fpath=source_path,
+            context=context,
+            path_mapping=None,
+        )
+
+        assert result == source_path
 
     @pytest.mark.asyncio
     async def test_patch_file_to_dict_uses_object_setattr_for_strict_models(self):

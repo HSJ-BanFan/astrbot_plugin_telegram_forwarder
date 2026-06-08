@@ -7,8 +7,10 @@
 
 import os
 from collections.abc import Callable
+from pathlib import PurePosixPath, PureWindowsPath
 from types import MethodType
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from astrbot.api import logger
 from astrbot.api.message_components import File, Image, Plain, Record, Video
@@ -38,6 +40,131 @@ def _as_file_uri(path: str) -> str:
     return f"file:///{path}"
 
 
+def _has_windows_drive(path: str) -> bool:
+    return len(path) >= 2 and path[0].isalpha() and path[1] == ":"
+
+
+def _strip_file_uri(path: str) -> str:
+    parts = urlsplit(path)
+    if parts.scheme != "file":
+        return path
+    if parts.netloc and _has_windows_drive(parts.netloc):
+        raw_path = f"{parts.netloc}{parts.path}"
+    elif parts.netloc and parts.netloc.lower() != "localhost":
+        raw_path = f"//{parts.netloc}{parts.path}"
+    else:
+        raw_path = parts.path
+    return unquote(raw_path)
+
+
+def _normalize_path_text(path: str) -> str:
+    normalized = _strip_file_uri(str(path)).replace("\\", "/")
+    if normalized.startswith("/") and _has_windows_drive(normalized[1:]):
+        normalized = normalized[1:]
+    stripped = normalized.rstrip("/\\")
+    return stripped or normalized
+
+
+def _split_mapping_rule(mapping: str) -> tuple[str, str] | None:
+    parts = mapping.split(":")
+    if len(parts) < 2:
+        return None
+
+    if len(parts[0]) == 1 and parts[0].isalpha() and parts[1].startswith(("/", "\\")):
+        from_ = f"{parts[0]}:{parts[1]}"
+        target_parts = parts[2:]
+    else:
+        from_ = parts[0]
+        target_parts = parts[1:]
+
+    if not target_parts:
+        return None
+
+    if (
+        len(target_parts) >= 2
+        and len(target_parts[0]) == 1
+        and target_parts[0].isalpha()
+        and target_parts[1].startswith(("/", "\\"))
+    ):
+        to_ = f"{target_parts[0]}:{':'.join(target_parts[1:])}"
+    else:
+        to_ = ":".join(target_parts)
+
+    return from_.strip(), to_.strip()
+
+
+def _iter_mapping_pairs(mappings: object) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    if isinstance(mappings, dict):
+        for from_, to_ in mappings.items():
+            pairs.append((str(from_), str(to_)))
+        return pairs
+    if isinstance(mappings, str):
+        mapping_items = [mappings]
+    else:
+        try:
+            mapping_items = list(mappings)  # type: ignore[arg-type]
+        except TypeError:
+            return pairs
+
+    for mapping in mapping_items:
+        if isinstance(mapping, str):
+            pair = _split_mapping_rule(mapping)
+            if pair is not None:
+                pairs.append(pair)
+        elif isinstance(mapping, dict):
+            from_ = (
+                mapping.get("from")
+                or mapping.get("from_")
+                or mapping.get("source")
+                or mapping.get("src")
+            )
+            to_ = mapping.get("to") or mapping.get("target") or mapping.get("dst")
+            if from_ is not None and to_ is not None:
+                pairs.append((str(from_), str(to_)))
+        else:
+            try:
+                from_, to_ = mapping
+            except (TypeError, ValueError):
+                continue
+            pairs.append((str(from_), str(to_)))
+    return pairs
+
+
+def _configured_path_mappings(context: Any) -> object:
+    core_config = getattr(context, "_config", None)
+    if not core_config or not hasattr(core_config, "get"):
+        return []
+    platform_settings = core_config.get("platform_settings", {})
+    if not platform_settings or not hasattr(platform_settings, "get"):
+        return []
+    return platform_settings.get("path_mapping", [])
+
+
+def _map_path_with_pathlib(mappings: object, fpath: str) -> str:
+    source_text = _normalize_path_text(fpath)
+    for from_, to_ in _iter_mapping_pairs(mappings):
+        from_text = _normalize_path_text(from_)
+        to_text = _normalize_path_text(to_)
+        if not from_text or not to_text:
+            continue
+
+        use_windows = _has_windows_drive(source_text) or _has_windows_drive(from_text)
+        path_cls = PureWindowsPath if use_windows else PurePosixPath
+        source_path = path_cls(source_text)
+        from_path = path_cls(from_text)
+
+        try:
+            relative = source_path.relative_to(from_path)
+        except ValueError:
+            continue
+
+        mapped = PurePosixPath(to_text).joinpath(*relative.parts).as_posix()
+        logger.info(f"[QQSender] Path mapping: {fpath!r} -> {mapped!r}")
+        return mapped
+    return fpath
+
+
 def _safe_file_size(path: str | None) -> int | None:
     if not path:
         return None
@@ -55,16 +182,19 @@ def map_path_with_config(
     当 AstrBot 与 QQ 平台运行在不同宿主环境时，下载得到的本地路径未必能被目标平台直接访问。
     这里统一处理宿主机路径到容器路径的映射，避免具体发送逻辑分散关心环境差异。
     """
+    mappings = _configured_path_mappings(context)
+    mapped = _map_path_with_pathlib(mappings, fpath)
+    if mapped != fpath:
+        return mapped
+
+    if path_mapping is None:
+        return fpath
     try:
-        if path_mapping is None:
-            return fpath
-        core_config = getattr(context, "_config", None)
-        if core_config:
-            mappings = core_config.get("platform_settings", {}).get("path_mapping", [])
-            if mappings:
-                return path_mapping(mappings, fpath)
-    except Exception:
-        pass
+        return path_mapping(mappings, fpath)
+    except Exception as exc:
+        logger.warning(
+            f"[QQSender] AstrBot path mapping failed: path={fpath!r}, error={exc!r}"
+        )
     return fpath
 
 
@@ -95,7 +225,11 @@ def dispatch_media_file(
             )
             _set_component_attr(component, "_tgf_source_path", fpath)
             return [component]
-        record = Record.fromFileSystem(fpath)
+        mapped = map_path(fpath)
+        if mapped != fpath:
+            record = Record(file=_as_file_uri(mapped), path=fpath)
+        else:
+            record = Record.fromFileSystem(fpath)
         if getattr(record, "path", None) is None:
             setattr(record, "path", fpath)
         return [record]
