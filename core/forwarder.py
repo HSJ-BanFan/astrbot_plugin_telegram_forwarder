@@ -591,6 +591,16 @@ class Forwarder:
             error_types={**current.error_types, **incoming.error_types},
         )
 
+    @staticmethod
+    def _qq_batch_message_counts(batches: list) -> list[int]:
+        counts: list[int] = []
+        for batch in batches:
+            if batch and all(isinstance(item, list) for item in batch):
+                counts.extend(len(sub_batch) for sub_batch in batch)
+            else:
+                counts.append(len(batch))
+        return counts
+
     def _remove_dispatched_batches(
         self, batch_meta: list[dict], send_summary: QQSendSummary
     ) -> None:
@@ -1105,7 +1115,7 @@ class Forwarder:
                     )
                 return
 
-            actual_sent_count = 0
+            attempted_send_count = sum(len(msgs) for msgs, _ in final_batches)
             send_summary = None
             batch_meta = []
             for msgs, channel in final_batches:
@@ -1138,8 +1148,6 @@ class Forwarder:
                 send_summary = await self._send_sorted_messages_in_batches(
                     final_batches
                 )
-                for msgs, _ in final_batches:
-                    actual_sent_count += len(msgs)
             except Exception as e:
                 logger.error(f"[Send] 转发过程出现错误: {e}")
                 if global_cfg.get("send_result_strict_ack", False):
@@ -1301,8 +1309,11 @@ class Forwarder:
 
                 if all_processed_meta:
                     processed_count = len(all_processed_meta)
-                    skipped_count = processed_count - actual_sent_count
-                    msg = f"[Send] 处理完成: 成功 {actual_sent_count}"
+                    skipped_count = processed_count - attempted_send_count
+                    if global_cfg.get("send_result_strict_ack", False):
+                        msg = f"[Send] 处理完成: 尝试 {attempted_send_count}"
+                    else:
+                        msg = f"[Send] 处理完成: 成功 {attempted_send_count}"
                     if skipped_count > 0:
                         msg += f" | 跳过 {skipped_count}"
                     new_all_pending = self.storage.get_all_pending()
@@ -1586,6 +1597,7 @@ class Forwarder:
         is_mixed: bool = False,
         involved_channels: list[str] | None = None,
     ):
+        batch_message_counts = self._qq_batch_message_counts(batches)
         try:
             qq_summary = await self.qq_sender.send(
                 batches=batches,
@@ -1597,9 +1609,9 @@ class Forwarder:
             if qq_summary is None:
                 return QQSendSummary()
             success_count = sum(
-                len(batches[index])
+                batch_message_counts[index]
                 for index in qq_summary.acked_batch_indexes
-                if 0 <= index < len(batches)
+                if 0 <= index < len(batch_message_counts)
             )
             self.stats["forward_success"] += success_count
             logger.debug(f"[Stats] QQ 转发成功 {success_count} 条  @{src_channel}")
@@ -1626,7 +1638,7 @@ class Forwarder:
                 },
             )
         except Exception as e:
-            failed_count = sum(len(b) for b in batches)
+            failed_count = sum(batch_message_counts)
             self.stats["forward_failed"] += failed_count
             logger.error(f"[Stats] QQ 转发失败 {failed_count} 条  @{src_channel} : {e}")
             return QQSendSummary(

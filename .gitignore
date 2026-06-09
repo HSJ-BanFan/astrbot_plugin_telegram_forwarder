@@ -27,12 +27,12 @@ ENV/
 .idea/
 pyrightconfig.json
 
-# Tooling / Developer scripts
-.claude/
+# AI tooling local state
 .claude
+.understand-anything
+.omo/
 .worktrees/
 CLAUDE.md
-.understand-anything/
-.understand-anything
+# Developer scripts
 condense.js
 condensed.json

@@ -232,7 +232,7 @@ https://api.ipify.org
 * **Q: 音频链接不显示？**
   * **A**: 插件会将外链和语音分两条消息发送，请检查消息是否被群管屏蔽。
 * **Q: 大文件发送失败？**
-  * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。
+  * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。QQ 发送会按本地文件大小自动延长等待时间；超时不会自动重复发送，以避免重复消息。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 

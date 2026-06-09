@@ -75,6 +75,19 @@ from .qq_types import SendKind
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
 
+DEFAULT_QQ_SEND_TIMEOUT_SEC = 30.0
+QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES = 10 * 1024 * 1024
+QQ_LARGE_FILE_GRACE_STEP_BYTES = 10 * 1024 * 1024
+QQ_LARGE_FILE_GRACE_STEP_SEC = 5.0
+QQ_MAX_INITIAL_SEND_TIMEOUT_SEC = 300.0
+MEDIA_SEND_KINDS = {
+    "audio_record",
+    "audio_file",
+    "video_file",
+    "special_media",
+    "fallback_zip",
+}
+
 
 @dataclass(frozen=True)
 class QQSendSummary:
@@ -167,13 +180,65 @@ class QQSender:
             log_policy=self._log_policy,
         )
 
+    @staticmethod
+    def _component_local_paths(component: object) -> list[str]:
+        paths: list[str] = []
+        for attr_name in ("_tgf_source_path", "path", "file", "file_"):
+            value = getattr(component, attr_name, None)
+            if not value:
+                continue
+            path = str(value)
+            if "://" in path:
+                continue
+            paths.append(path)
+        return paths
+
+    @classmethod
+    def _message_chain_local_file_size(cls, components: list[object]) -> int:
+        total_size = 0
+        seen_paths: set[str] = set()
+        for component in components:
+            for path in cls._component_local_paths(component):
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                try:
+                    total_size += Path(path).stat().st_size
+                except OSError:
+                    continue
+        return total_size
+
+    @staticmethod
+    def _timeout_for_payload_size(file_size: int) -> float:
+        if file_size <= QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES:
+            return DEFAULT_QQ_SEND_TIMEOUT_SEC
+        extra_bytes = file_size - QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES
+        steps = (
+            extra_bytes + QQ_LARGE_FILE_GRACE_STEP_BYTES - 1
+        ) // QQ_LARGE_FILE_GRACE_STEP_BYTES
+        timeout = DEFAULT_QQ_SEND_TIMEOUT_SEC + steps * QQ_LARGE_FILE_GRACE_STEP_SEC
+        return min(float(timeout), QQ_MAX_INITIAL_SEND_TIMEOUT_SEC)
+
+    def _resolve_send_timeout_sec(
+        self,
+        send_kind: SendKind,
+        components: list[object] | None = None,
+    ) -> float:
+        if components is None:
+            components = []
+        if send_kind not in MEDIA_SEND_KINDS:
+            return DEFAULT_QQ_SEND_TIMEOUT_SEC
+        return self._timeout_for_payload_size(
+            self._message_chain_local_file_size(components)
+        )
+
     async def _send_with_timeout(
         self,
         unified_msg_origin: str,
         message_chain: MessageChain,
         *,
         send_kind: SendKind,
-        timeout_sec: float = 30.0,
+        timeout_sec: float | None = None,
     ) -> None:
         started_at = time.monotonic()
         components = list(getattr(message_chain, "chain", []))
@@ -185,6 +250,8 @@ class QQSender:
             getattr(primary_component, "path", None),
         )
         payload_file = getattr(primary_component, "file", None)
+        if timeout_sec is None:
+            timeout_sec = self._resolve_send_timeout_sec(send_kind, components)
         try:
             await asyncio.wait_for(
                 self.context.send_message(unified_msg_origin, message_chain),
@@ -195,7 +262,8 @@ class QQSender:
             logger.warning(
                 f"[QQSender] send kind={send_kind} target={unified_msg_origin} "
                 f"component_types={component_types} payload_file={payload_file!r} "
-                f"source_path={source_path!r} timeout after {duration:.3f}s"
+                f"source_path={source_path!r} timeout after {duration:.3f}s "
+                f"(timeout={timeout_sec:.3f}s)"
             )
             raise
         duration = time.monotonic() - started_at

@@ -13,6 +13,40 @@ import conftest as plugin_conftest
 import pytest
 
 
+SENDMSG_RESULT_ZERO_MESSAGE = (
+    "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
+    "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:\n"
+    "{\n"
+    '    "result": 0,\n'
+    '    "errMsg": ""\n'
+    "}\n"
+)
+SENDMSG_RESULT_ZERO_RESULT = {
+    "status": "failed",
+    "retcode": 1200,
+    "data": None,
+    "message": SENDMSG_RESULT_ZERO_MESSAGE,
+    "wording": SENDMSG_RESULT_ZERO_MESSAGE,
+}
+
+
+class FakeActionFailed(Exception):
+    def __init__(self, result: dict):
+        self.result = result
+
+    @property
+    def retcode(self):
+        return self.result["retcode"]
+
+    def __repr__(self):
+        return "<ActionFailed " + ", ".join(
+            f"{key}={value!r}" for key, value in self.result.items()
+        ) + ">"
+
+    def __str__(self):
+        return self.__repr__()
+
+
 def test_get_platform_bot_returns_none_and_logs_when_get_client_raises(qq_module):
     plugin_conftest.mock_logger.debug.reset_mock()
 
@@ -76,6 +110,62 @@ async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module
 
 
 @pytest.mark.asyncio
+async def test_big_merge_fallback_treats_sendmsg_result_zero_timeout_as_delivered(
+    qq_module,
+):
+    send_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        batch_index = kwargs["batch_data"]["batch_index"]
+        send_calls.append(batch_index)
+        if batch_index == 1:
+            raise FakeActionFailed(SENDMSG_RESULT_ZERO_RESULT)
+
+    async def send_message_fn(*args, **kwargs):
+        raise RuntimeError("big merge failed")
+
+    processed_batches = [
+        {"batch_index": 0, "nodes_data": [[qq_module.Plain("a")]], "contains_audio": False},
+        {"batch_index": 1, "nodes_data": [[qq_module.Plain("b")]], "contains_audio": False},
+    ]
+    target_successes = {0: set(), 1: set()}
+    target_failures: dict[int, str] = {}
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batch_count=2,
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures=target_failures,
+        deferred_batch_indexes=set(),
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={"qq_merge_chunk_size": 10, "qq_merge_chunk_delay": 0},
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=qq_module.classify_send_error,
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=send_message_fn,
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_calls == [0, 1]
+    assert result.target_successes == {
+        0: {"aiocqhttp:GroupMessage:1"},
+        1: {"aiocqhttp:GroupMessage:1"},
+    }
+    assert result.target_failures == {}
+
+
+@pytest.mark.asyncio
 async def test_special_media_chunk_records_success_before_later_batch_failure(qq_module):
     send_calls: list[int] = []
 
@@ -126,7 +216,7 @@ async def test_special_media_chunk_records_success_before_later_batch_failure(qq
         log_policy=None,
     )
 
-    assert send_calls == [0, 1, 1]
+    assert send_calls == [0, 1]
     assert result.target_successes[0] == {"aiocqhttp:GroupMessage:1"}
     assert result.target_failures == {1: "second batch failed"}
     assert success_targets == ["aiocqhttp:GroupMessage:1"]
@@ -1283,10 +1373,12 @@ class TestAudioBatchSending:
         assert sender.context.send_message.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_audio_record_timeout_log_includes_exception_type(
+    async def test_audio_record_timeout_logs_without_retry(
         self, sender, qq_module
     ):
-        sender.context.send_message = AsyncMock(side_effect=[asyncio.TimeoutError(), None])
+        sender.context.send_message = AsyncMock(
+            side_effect=[asyncio.TimeoutError(), None]
+        )
         qq_module.logger.warning.reset_mock()
         record = qq_module.Record.fromFileSystem("/tmp/audio.ogg")
         record.path = "/tmp/audio.ogg"
@@ -1307,9 +1399,15 @@ class TestAudioBatchSending:
         warning_messages = [
             call.args[0]
             for call in qq_module.logger.warning.call_args_list
-            if call.args and "语音条发送失败" in call.args[0]
+            if call.args
         ]
-        assert any("error_type=TimeoutError" in message for message in warning_messages)
+        assert sender.context.send_message.await_count == 2
+        assert any(
+            "send kind=audio_record" in message
+            and "timeout=30.000s" in message
+            for message in warning_messages
+        )
+        assert not any("attempt 1/2" in message for message in warning_messages)
 
     @pytest.mark.asyncio
     async def test_audio_batch_sends_caption_record_file_for_each_pair(
@@ -1346,6 +1444,28 @@ class TestAudioBatchSending:
 
 
 class TestQQSendWrapper:
+    def test_resolve_send_timeout_uses_default_for_small_payloads(
+        self, sender, qq_module
+    ):
+        video = qq_module.Video.fromFileSystem("/tmp/missing-small.mp4")
+        video.path = "/tmp/missing-small.mp4"
+
+        assert sender._resolve_send_timeout_sec("plain") == 30.0
+        assert sender._resolve_send_timeout_sec("big_merge") == 30.0
+        assert sender._resolve_send_timeout_sec("special_media", [video]) == 30.0
+
+    def test_resolve_send_timeout_adds_time_for_large_payload(
+        self, sender, qq_module, tmp_path
+    ):
+        video_path = tmp_path / "large.mp4"
+        with video_path.open("wb") as handle:
+            handle.seek((25 * 1024 * 1024) - 1)
+            handle.write(b"\0")
+        video = qq_module.Video.fromFileSystem(str(video_path))
+        video.path = str(video_path)
+
+        assert sender._resolve_send_timeout_sec("special_media", [video]) == 40.0
+
     @pytest.mark.asyncio
     async def test_send_with_timeout_logs_send_kind_and_duration(
         self, sender, qq_module
@@ -1388,6 +1508,35 @@ class TestQQSendWrapper:
                 send_kind="plain",
                 timeout_sec=0.01,
             )
+
+    @pytest.mark.asyncio
+    async def test_send_with_timeout_does_not_retry_timeout(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(
+            side_effect=[asyncio.TimeoutError(), None]
+        )
+        qq_module.logger.warning.reset_mock()
+        message_chain = MagicMock(name="message_chain")
+
+        with pytest.raises(asyncio.TimeoutError):
+            await sender._send_with_timeout(
+                unified_msg_origin="target",
+                message_chain=message_chain,
+                send_kind="plain",
+            )
+
+        assert sender.context.send_message.await_count == 1
+        warning_messages = [
+            call.args[0]
+            for call in qq_module.logger.warning.call_args_list
+            if call.args
+        ]
+        assert any(
+            "send kind=plain" in message and "timeout=30.000s" in message
+            for message in warning_messages
+        )
+        assert not any("attempt 1/2" in message for message in warning_messages)
 
     @pytest.mark.asyncio
     async def test_send_processed_batch_logs_special_media_send_kind(
@@ -1468,6 +1617,44 @@ class TestVideoBatchSending:
             and "target=target" in message
             and "error_type=RuntimeError" in message
             and "rich media transfer failed" in message
+            for message in warning_messages
+        )
+
+    @pytest.mark.asyncio
+    async def test_video_batch_timeout_does_not_retry_or_send_source_file_fallback(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(side_effect=asyncio.TimeoutError())
+        qq_module.logger.warning.reset_mock()
+        sender._map_path = lambda path: path.replace("/tmp", "/mapped/tmp", 1)
+        video = qq_module.Video.fromFileSystem("/tmp/video.mp4")
+        video.path = "/tmp/video.mp4"
+
+        with pytest.raises(asyncio.TimeoutError):
+            await sender._send_processed_batch(
+                batch_data={
+                    "batch_index": 0,
+                    "nodes_data": [[video]],
+                    "contains_audio": False,
+                    "local_files": [],
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 1
+        assert all(type(call.args[1].chain[0]).__name__ == "Video" for call in calls)
+        warning_messages = [
+            call.args[0]
+            for call in qq_module.logger.warning.call_args_list
+            if call.args
+        ]
+        assert any(
+            "视频发送超时，跳过本轮源文件补发" in message
+            and "error_type=TimeoutError" in message
             for message in warning_messages
         )
 
@@ -2196,7 +2383,7 @@ class TestTargetLevelFailFast:
         )
 
         assert sender.context.send_message.await_count == 0
-        assert sender._send_processed_batch.await_count == 2
+        assert sender._send_processed_batch.await_count == 1
         assert summary.acked_batch_indexes == ()
         assert summary.failed_batch_indexes == (0, 1, 2)
 
@@ -2252,7 +2439,7 @@ class TestTargetLevelFailFast:
         )
 
         assert sender.context.send_message.await_count == 0
-        assert sender._send_processed_batch.await_count == 4
+        assert sender._send_processed_batch.await_count == 3
         assert summary.acked_batch_indexes == (0, 2)
         assert summary.failed_batch_indexes == (1,)
 
@@ -2327,10 +2514,11 @@ class TestBigMergeFallback:
         )
 
     @pytest.mark.asyncio
-    async def test_big_merge_failure_fallback_splits_video_and_file_components(
+    async def test_big_merge_direct_batch_splits_video_and_file_components(
         self, sender
     ):
         self._configure_sender(sender)
+        sender.context.send_message = AsyncMock()
         mixed_media_msg = self._make_msg(1, text="caption")
         plain_msg = self._make_msg(2, text="tail")
 
@@ -2351,30 +2539,31 @@ class TestBigMergeFallback:
         )
 
         calls = sender.context.send_message.await_args_list
-        assert sender.context.send_message.await_count == 5
+        assert sender.context.send_message.await_count == 4
         assert any(
             len(call.args[1].chain) == 1
             and type(call.args[1].chain[0]).__name__ == "Video"
-            for call in calls[1:]
+            for call in calls
         )
         assert any(
             len(call.args[1].chain) == 1
             and type(call.args[1].chain[0]).__name__ == "File"
-            for call in calls[1:]
+            for call in calls
         )
         assert all(
             not any(
                 type(component).__name__ == "Video" for component in call.args[1].chain
             )
             or len(call.args[1].chain) == 1
-            for call in calls[1:]
+            for call in calls
         )
 
     @pytest.mark.asyncio
-    async def test_big_merge_failure_fallback_keeps_audio_record_and_file_semantics(
+    async def test_big_merge_direct_batch_keeps_audio_record_and_file_semantics(
         self, sender
     ):
         self._configure_sender(sender)
+        sender.context.send_message = AsyncMock()
         audio_msg = self._make_msg(1, text="caption")
         plain_msg = self._make_msg(2, text="tail")
 
@@ -2395,16 +2584,16 @@ class TestBigMergeFallback:
         )
 
         calls = sender.context.send_message.await_args_list
-        assert sender.context.send_message.await_count == 5
+        assert sender.context.send_message.await_count == 4
         assert any(
             len(call.args[1].chain) == 1
             and type(call.args[1].chain[0]).__name__ == "Record"
-            for call in calls[1:]
+            for call in calls
         )
         assert (
             sum(
                 1
-                for call in calls[1:]
+                for call in calls
                 if len(call.args[1].chain) == 1
                 and type(call.args[1].chain[0]).__name__ == "File"
             )
@@ -2524,6 +2713,16 @@ class TestQQTargetHelpers:
         assert (
             qq_module.classify_send_error(RuntimeError("WebSocket API call timeout"))
             == "timeout"
+        )
+        assert (
+            qq_module.classify_send_error(FakeActionFailed(SENDMSG_RESULT_ZERO_RESULT))
+            == "sendmsg_confirmation_timeout"
+        )
+        assert (
+            qq_module.classify_send_error(
+                RuntimeError(str(FakeActionFailed(SENDMSG_RESULT_ZERO_RESULT)))
+            )
+            == "sendmsg_confirmation_timeout"
         )
         assert (
             qq_module.classify_send_error(RuntimeError("retcode=1200"))
