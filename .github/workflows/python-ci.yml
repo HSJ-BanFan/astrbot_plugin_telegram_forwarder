@@ -7,9 +7,6 @@ on:
   push:
     branches:
       - main
-      - "review/**"
-      - "fix/**"
-      - "feature/**"
 
 jobs:
   test:
