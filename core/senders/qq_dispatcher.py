@@ -159,7 +159,7 @@ async def dispatch_processed_batches_to_targets(
                                 target_successes[batch_data["batch_index"]].add(
                                     target_session
                                 )
-                            record_target_success(target_session)
+                                record_target_success(target_session)
                         elif len(chunk_nodes) > 1:
                             nodes_list = [
                                 Node(uin=self_id, name=node_name, content=nc)

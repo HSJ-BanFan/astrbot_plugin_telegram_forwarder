@@ -88,7 +88,9 @@ async def main():
 
         print("登录成功！")
         me = await client.get_me()
-        print(f"当前用户: {me.first_name} (@{me.username})")
+        first_name = getattr(me, "first_name", "") or ""
+        username = getattr(me, "username", "") or ""
+        print(f"当前用户: {first_name} (@{username})")
         print("Session 文件已更新。现在您可以重启 AstrBot 了。")
     finally:
         if client is not None:

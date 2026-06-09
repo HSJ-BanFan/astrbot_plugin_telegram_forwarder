@@ -98,6 +98,7 @@ async def test_special_media_chunk_records_success_before_later_batch_failure(qq
         },
     ]
     target_successes = {0: set(), 1: set()}
+    success_targets: list[str] = []
     lock = asyncio.Lock()
 
     result = await qq_module.dispatch_processed_batches_to_targets(
@@ -114,7 +115,7 @@ async def test_special_media_chunk_records_success_before_later_batch_failure(qq
         node_name="bot",
         get_lock=lambda target: lock,
         target_is_open=lambda target, now_ts: False,
-        record_target_success=lambda target: None,
+        record_target_success=lambda target: success_targets.append(target),
         record_target_failure=lambda target, **kwargs: None,
         classify_send_error=lambda exc: str(exc),
         send_processed_batch_fn=send_processed_batch_fn,
@@ -128,6 +129,7 @@ async def test_special_media_chunk_records_success_before_later_batch_failure(qq
     assert send_calls == [0, 1, 1]
     assert result.target_successes[0] == {"aiocqhttp:GroupMessage:1"}
     assert result.target_failures == {1: "second batch failed"}
+    assert success_targets == ["aiocqhttp:GroupMessage:1"]
 
 
 class TestDispatchMediaFile:
@@ -1117,6 +1119,59 @@ class TestAudioBatchSending:
                 assert archive.namelist() == ["base.apk"]
                 assert archive.read("base.apk") == b"apk-binary"
         finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_apk_zip_fallback_creates_missing_plugin_data_dir(
+        self, sender, qq_module
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        source_dir = root / f"apk-source-{uuid.uuid4().hex}"
+        plugin_data_dir = root / f"apk-missing-target-{uuid.uuid4().hex}"
+        source_dir.mkdir()
+        apk_path = source_dir / "base.apk"
+        apk_path.write_bytes(b"apk-binary")
+
+        sender.config = {
+            "forward_config": {
+                "apk_fallback_mode": "zip",
+                "apk_direct_link_base_url": "",
+            }
+        }
+        sender.downloader.plugin_data_dir = plugin_data_dir
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("rich media transfer failed"),
+                None,
+            ]
+        )
+        sender._map_path = lambda path: path
+        file_component = qq_module.File(file=str(apk_path), name="base.apk")
+        file_component.file_ = str(apk_path)
+        file_component._tgf_source_path = str(apk_path)
+        batch_data = {
+            "nodes_data": [[file_component]],
+            "local_files": [str(apk_path)],
+            "contains_audio": False,
+        }
+
+        try:
+            await sender._send_processed_batch(
+                batch_data=batch_data,
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+            zip_path = Path(batch_data["local_files"][1])
+            assert zip_path.parent == plugin_data_dir
+            assert zip_path.is_file()
+            with zipfile.ZipFile(zip_path) as archive:
+                assert archive.read("base.apk") == b"apk-binary"
+        finally:
+            shutil.rmtree(source_dir, ignore_errors=True)
             shutil.rmtree(plugin_data_dir, ignore_errors=True)
 
     @pytest.mark.asyncio

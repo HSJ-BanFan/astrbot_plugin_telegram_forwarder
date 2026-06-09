@@ -78,7 +78,7 @@ class TelegramClientWrapper:
         logger.error(
             f"[Client] 当前 Telethon 版本 {version_text} 与本插件 session schema 不兼容。"
             " 请在 AstrBot 插件环境中重装依赖，使 telethon 满足 >=1.42.0,<1.43.0；"
-            " 例如: pip install --upgrade --force-reinstall \"telethon>=1.42.0,<1.43.0\"",
+            ' 例如: pip install --upgrade --force-reinstall "telethon>=1.42.0,<1.43.0"',
         )
 
     @staticmethod

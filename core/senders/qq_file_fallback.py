@@ -145,6 +145,7 @@ def _create_apk_zip_archive(
 ) -> tuple[str, str]:
     source = Path(source_path)
     target_dir = plugin_data_dir if plugin_data_dir else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
     archive_name = f"{original_name}.zip"
     archive_path = target_dir / archive_name
     suffix = 1
