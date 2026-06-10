@@ -50,8 +50,7 @@ class TelegramClientWrapper:
     def _is_unsupported_session_schema_error(exc: Exception) -> bool:
         error_text = f"{exc!r} {exc}".casefold()
         return (
-            "not enough values to unpack" in error_text
-            and "expected 6" in error_text
+            "not enough values to unpack" in error_text and "expected 6" in error_text
         )
 
     @staticmethod
@@ -141,6 +140,7 @@ class TelegramClientWrapper:
             shutil.copy2(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)
+        migration_failed = False
         try:
             rows = conn.execute(
                 "SELECT dc_id, server_address, port, auth_key, takeout_id FROM sessions"
@@ -167,12 +167,15 @@ class TelegramClientWrapper:
             )
             conn.execute("DROP TABLE sessions_legacy")
             conn.commit()
-        except sqlite3.Error:
-            conn.close()
-            shutil.copy2(backup_file, session_file)
+        except Exception:
+            migration_failed = True
             raise
-        else:
+        finally:
+            # 始终关闭连接；迁移失败时在关闭后再回滚备份，
+            # 确保回滚时 SQLite 句柄已释放（Windows 下覆盖 .session 尤为依赖此点）。
             conn.close()
+            if migration_failed:
+                shutil.copy2(backup_file, session_file)
 
     async def ensure_connected(self) -> bool:
         if not self.client:
