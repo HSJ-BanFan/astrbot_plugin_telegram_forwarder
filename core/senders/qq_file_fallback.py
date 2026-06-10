@@ -1,10 +1,10 @@
 """QQ 文件发送失败后的兜底策略辅助函数。"""
 
-import os
 import posixpath
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from astrbot.api import logger
@@ -68,11 +68,11 @@ def _get_file_component_name(component: File) -> str:
     for attr_name in ("name",):
         value = getattr(component, attr_name, None)
         if value:
-            return os.path.basename(str(value))
+            return Path(str(value)).name
     for attr_name in ("_tgf_source_path", "file", "file_"):
         value = getattr(component, attr_name, None)
         if value:
-            return os.path.basename(str(value))
+            return Path(str(value)).name
     return "download.apk"
 
 
@@ -89,11 +89,11 @@ def _get_file_component_source_path(component: File) -> str:
 
 def _is_apk_component(component: File) -> bool:
     name = _get_file_component_name(component).lower()
-    _, ext = os.path.splitext(name)
+    ext = Path(name).suffix
     if ext in APK_FALLBACK_EXTENSIONS:
         return True
     source_path = _get_file_component_source_path(component).lower()
-    _, source_ext = os.path.splitext(source_path)
+    source_ext = Path(source_path).suffix
     return source_ext in APK_FALLBACK_EXTENSIONS
 
 
@@ -141,21 +141,23 @@ def _build_file_component(
 
 
 def _create_apk_zip_archive(
-    source_path: str, original_name: str, *, plugin_data_dir: str | None
+    source_path: str, original_name: str, *, plugin_data_dir: Path | None
 ) -> tuple[str, str]:
-    target_dir = plugin_data_dir or os.path.dirname(source_path) or "."
+    source = Path(source_path)
+    target_dir = plugin_data_dir if plugin_data_dir else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
     archive_name = f"{original_name}.zip"
-    archive_path = os.path.join(target_dir, archive_name)
+    archive_path = target_dir / archive_name
     suffix = 1
-    while os.path.exists(archive_path):
+    while archive_path.exists():
         archive_name = f"{original_name}.{suffix}.zip"
-        archive_path = os.path.join(target_dir, archive_name)
+        archive_path = target_dir / archive_name
         suffix += 1
     with zipfile.ZipFile(
         archive_path, "w", compression=zipfile.ZIP_DEFLATED
     ) as archive:
-        archive.write(source_path, arcname=original_name)
-    return archive_path, archive_name
+        archive.write(source, arcname=original_name)
+    return str(archive_path), archive_name
 
 
 async def handle_apk_file_send_failure(
@@ -169,7 +171,7 @@ async def handle_apk_file_send_failure(
     send_message_fn: SendMessageFn,
     map_path: Callable[[str], str],
     classify_send_error: Callable[[Exception], str],
-    plugin_data_dir: str | None,
+    plugin_data_dir: Path | None,
 ) -> bool:
     if policy.mode == "off" or not _is_apk_component(component):
         return False
@@ -208,7 +210,7 @@ async def handle_apk_file_send_failure(
         return False
 
     source_path = _get_file_component_source_path(component)
-    if not source_path or not os.path.isfile(source_path):
+    if not source_path or not Path(source_path).is_file():
         logger.warning(
             f"[QQSender] APK 文件发送失败且缺少可访问源文件，无法压缩兜底: target={target_session}, file={original_name}, source={source_path!r}"
         )

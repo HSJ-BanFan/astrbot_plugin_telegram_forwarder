@@ -29,6 +29,7 @@ def load_relogin_module(
     with patch.dict(sys.modules, stubbed_modules):
         sys.modules.pop(module_name, None)
         spec = importlib.util.spec_from_file_location(module_name, module_path)
+        assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         with patch("builtins.input", side_effect=inputs or ["123456", "hash", ""]):
@@ -60,7 +61,6 @@ async def test_relogin_disconnects_when_sign_in_raises():
         relogin_module.SESSION_FILE,
         123456,
         "hash",
-        proxy=None,
     )
     client.disconnect.assert_awaited_once_with()
 

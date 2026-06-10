@@ -60,6 +60,22 @@ def make_test_dir() -> Path:
     return path
 
 
+def test_storage_accepts_pathlike_data_file():
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    data_path = tmp_dir / "data.json"
+    try:
+        storage = storage_module.Storage(data_path)
+
+        storage.update_channel_id("demo", 123)
+
+        assert data_path.is_file()
+        reloaded = storage_module.Storage(data_path)
+        assert reloaded.get_channel_name_by_id(123) == "demo"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def test_add_batch_initializes_retry_fields():
     storage_module = load_storage_module()
     tmp_dir = make_test_dir()

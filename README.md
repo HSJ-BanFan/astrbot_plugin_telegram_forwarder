@@ -78,79 +78,97 @@
 
 ##### 1）获取住宅 / ISP 静态 IP
 
-可以使用提供住宅代理的服务商，例如 [LycheeIP](https://www.lycheeip.com/home/ip?utm_source=chatgpt.com)。如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。
+如果只是为了申请 Telegram `api_id / api_hash`，优先选择住宅 / ISP IP，不建议使用机房代理。可以根据您的偏好选择以下方式：
+
+<details>
+<summary><b>🎁 免费获取（使用原始完整配置教学）</b></summary>
+<br>
+
+##### 一、获取试用住宅 IP
+
+* <a href="https://www.lycheeip.com/home/ip?utm_source=chatgpt.com" target="_blank">免费获取住宅 / ISP 静态 IP</a>
 
 操作流程：
 
-```text
+<pre>
 1. 打开代理服务商网站并注册账号
 2. 进入个人中心，找到自己的用户 ID
 3. 联系客服，发送用户 ID，申请试用住宅 IP / 动态住宅流量
 4. 客服开通后，进入代理后台生成代理线路
 5. 获取代理信息
-```
+</pre>
 
 代理后台一般会生成类似下面的格式：
 
-```text
-hostname:port:username:password
-```
+<pre>hostname:port:username:password</pre>
 
 例如：
 
-```text
-global.example.com:10000:username-session-xxxx:password
-```
+<pre>global.example.com:10000:username-session-xxxx:password</pre>
 
 这里需要拆成四部分使用：
 
-```text
+<pre>
 hostname  → 代理地址
 port      → 端口
 username  → 用户名
 password  → 密码
-```
+</pre>
 
-![代理试用开通示例](resources/img/proxy-trial.png)
+<img src="resources/img/proxy-trial.png" alt="代理试用开通示例" style="max-width: 100%;" />
 
-##### 2）在 Firefox 中配置代理
+##### 二、在 Firefox 中配置代理
 
 打开：
 
-```text
+<pre>
 Firefox → 设置 → 常规 → 网络设置 → 设置
-```
+</pre>
 
 选择：
 
-```text
+<pre>
 手动配置代理
-```
+</pre>
 
 填写 `hostname` 和 `port`，并勾选“也将此代理用于 HTTPS”。
 
 不要把整行 `global.example.com:10000:username:password` 直接填进去，应拆开填写：
 
-```text
+<pre>
 HTTP 代理：global.example.com
 端口：10000
-```
+</pre>
 
-![Firefox 代理配置](resources/img/firefox-proxy-settings.png)
+<img src="resources/img/firefox-proxy-settings.png" alt="Firefox 代理配置" style="max-width: 100%;" />
 
 保存后，先在 Firefox 打开：
 
-```text
+<pre>
 https://api.ipify.org
-```
+</pre>
 
 首次访问时会弹出代理认证框，输入代理后台提供的用户名和密码。如果页面显示的 IP 已经变成代理出口 IP，说明代理配置成功。
 
-##### 3）检查代理出口
+##### 三、检查代理出口
 
 确认 `api.ipify.org` 显示的是代理出口 IP 后，如需继续检查 IP 质量，可使用 [IPPure](https://ippure.com/?utm_source=chatgpt.com)。优先选择原生 / 住宅 IP，尽量避免机房、Cloud、VPS 以及 AWS / Azure / Google Cloud / Leaseweb 等机房 ASN。
 
-![IPPure 检测结果](resources/img/ippure-check-result.png)
+<img src="resources/img/ippure-check-result.png" alt="IPPure 检测结果" style="max-width: 100%;" />
+
+</details>
+
+<details>
+<summary><b>💰 付费获取（直接订阅链接）</b></summary>
+<br>
+
+* <a href="https://mitce.net/aff.php?aff=41410" target="_blank">订阅台湾 / 香港静态 IP</a>（约每月 3 元 / 100GB，以页面实际信息为准）
+
+**使用方法：**
+
+该付费链接提供的是代理软件订阅（机场订阅）。购买后复制订阅链接，直接导入您的代理客户端软件（如 Clash、v2rayN、Shadowrocket 等），开启系统代理或配合浏览器代理插件使用即可，无需进行任何繁琐的浏览器手动配置。
+
+</details>
 
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
 * **telegram_session**: 
@@ -214,7 +232,7 @@ https://api.ipify.org
 * **Q: 音频链接不显示？**
   * **A**: 插件会将外链和语音分两条消息发送，请检查消息是否被群管屏蔽。
 * **Q: 大文件发送失败？**
-  * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。
+  * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。QQ 发送会按本地文件大小自动延长等待时间；超时不会自动重复发送，以避免重复消息。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 

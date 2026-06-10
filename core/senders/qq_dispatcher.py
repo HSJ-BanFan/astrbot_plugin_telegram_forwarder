@@ -6,10 +6,10 @@
 """
 
 import asyncio
-import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from astrbot.api import logger
@@ -19,6 +19,8 @@ from astrbot.api.message_components import File, Node, Nodes, Record, Video
 from .qq_batch_builder import ProcessedBatchData
 from .qq_media import _patch_file_to_dict
 from .qq_types import SendMessageFn
+
+PROBABLE_DELIVERY_ERROR_TYPES = {"sendmsg_confirmation_timeout"}
 
 
 class SendProcessedBatchFn(Protocol):
@@ -56,11 +58,15 @@ class DispatchResult:
     deferred_batch_indexes: set[int]
 
 
+def _is_probably_delivered(error_type: str) -> bool:
+    return error_type in PROBABLE_DELIVERY_ERROR_TYPES
+
+
 async def dispatch_processed_batches_to_targets(
     *,
-    context_target_sessions: list[str],
-    real_batches: list[list[object]],
-    processed_batches: list[ProcessedBatchData],
+    context_target_sessions: Sequence[str],
+    real_batch_count: int,
+    processed_batches: Sequence[ProcessedBatchData],
     target_successes: dict[int, set[str]],
     target_failures: dict[int, str],
     deferred_batch_indexes: set[int],
@@ -101,7 +107,7 @@ async def dispatch_processed_batches_to_targets(
                 logger.warning(
                     f"[QQSender] 目标 {target_session} 熔断冷却中，跳过本轮发送"
                 )
-                deferred_batch_indexes.update(range(len(real_batches)))
+                deferred_batch_indexes.update(range(real_batch_count))
                 continue
 
             unified_msg_origin = target_session
@@ -145,9 +151,11 @@ async def dispatch_processed_batches_to_targets(
                         for batch_data in chunk_batches
                     )
                     send_each_batch = len(chunk_batches) == 1 or chunk_has_special_media
-                    try:
-                        if send_each_batch:
-                            for batch_data in chunk_batches:
+                    if send_each_batch:
+                        chunk_failed = False
+                        for batch_data in chunk_batches:
+                            batch_index = batch_data["batch_index"]
+                            try:
                                 await send_processed_batch_fn(
                                     batch_data=batch_data,
                                     unified_msg_origin=unified_msg_origin,
@@ -156,11 +164,71 @@ async def dispatch_processed_batches_to_targets(
                                     target_session=target_session,
                                     allow_forward_nodes=False,
                                 )
-                                target_successes[batch_data["batch_index"]].add(
-                                    target_session
+                                target_successes[batch_index].add(target_session)
+                                record_target_success(target_session)
+                            except Exception as e:
+                                error_type = classify_send_error(e)
+                                if _is_probably_delivered(error_type):
+                                    target_successes[batch_index].add(target_session)
+                                    record_target_success(target_session)
+                                    logger.warning(
+                                        f"[QQSender] 批次发送确认超时但 EventRet.result=0，"
+                                        f"按已送达处理: batch_index={batch_index}, "
+                                        f"target={target_session}, error={e!r}"
+                                    )
+                                    continue
+                                chunk_failed = True
+                                target_failures.setdefault(
+                                    batch_index,
+                                    error_type,
                                 )
-                            record_target_success(target_session)
-                        elif len(chunk_nodes) > 1:
+                                record_target_failure(
+                                    target_session,
+                                    threshold=target_circuit_fail_threshold,
+                                    cooldown_sec=target_circuit_cooldown_sec,
+                                    now_ts=time.time(),
+                                )
+                                logger.error(
+                                    f"[QQSender] 批次发送失败: batch_index={batch_index}, "
+                                    f"error_type={type(e).__name__}, error={e!r}"
+                                )
+                        if chunk_failed:
+                            consecutive_failures += 1
+                            if consecutive_failures >= fail_fast_limit:
+                                remaining = sum(
+                                    len(batch_data["nodes_data"])
+                                    for chunk in batch_chunks[chunk_idx:]
+                                    for batch_data in chunk
+                                )
+                                logger.warning(
+                                    f"[QQSender] 连续 {consecutive_failures} 块失败，"
+                                    f"停止本目标剩余 {remaining} 个节点"
+                                )
+                                break
+                            await asyncio.sleep(5)
+                            continue
+                        consecutive_failures = 0
+                        if log_policy is not None:
+                            log_policy.log_merge_send(
+                                node_name=node_name,
+                                target=target_session,
+                                label=f"{'混合' if is_mixed_big_merge else ''}大合并转发",
+                                chunk_idx=chunk_idx,
+                                total_chunks=total_chunks,
+                                node_count=len(chunk_nodes),
+                                batch_count=len(chunk_batches),
+                            )
+                        else:
+                            logger.info(
+                                f"[QQSender] {node_name} -> {target_session}: "
+                                f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
+                                f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
+                            )
+                        if chunk_idx < total_chunks:
+                            await asyncio.sleep(chunk_delay)
+                        continue
+                    try:
+                        if len(chunk_nodes) > 1:
                             nodes_list = [
                                 Node(uin=self_id, name=node_name, content=nc)
                                 for nc in chunk_nodes
@@ -181,10 +249,9 @@ async def dispatch_processed_batches_to_targets(
                                 target_session=target_session,
                                 allow_forward_nodes=False,
                             )
-                        if not send_each_batch:
-                            for batch_index in chunk_batch_indexes:
-                                target_successes[batch_index].add(target_session)
-                            record_target_success(target_session)
+                        for batch_index in chunk_batch_indexes:
+                            target_successes[batch_index].add(target_session)
+                        record_target_success(target_session)
                         consecutive_failures = 0
                         if log_policy is not None:
                             log_policy.log_merge_send(
@@ -205,16 +272,37 @@ async def dispatch_processed_batches_to_targets(
                         if chunk_idx < total_chunks:
                             await asyncio.sleep(chunk_delay)
                     except Exception as e:
+                        error_type = classify_send_error(e)
+                        if _is_probably_delivered(error_type):
+                            for batch_index in chunk_batch_indexes:
+                                target_successes[batch_index].add(target_session)
+                            record_target_success(target_session)
+                            consecutive_failures = 0
+                            logger.warning(
+                                f"[QQSender] 大合并发送确认超时但 EventRet.result=0，"
+                                f"按已送达处理: target={target_session}, "
+                                f"chunk={chunk_idx}/{total_chunks}, "
+                                f"batch_indexes={chunk_batch_indexes}, error={e!r}"
+                            )
+                            if chunk_idx < total_chunks:
+                                await asyncio.sleep(chunk_delay)
+                            continue
                         logger.warning(
                             f"[QQSender] 大合并转发到 {target_session} 失败 "
-                            f"(块 {chunk_idx}): {e}，降级为按批次保守发送"
+                            f"(块 {chunk_idx}): error_type={type(e).__name__}, "
+                            f"error={e!r}，降级为按批次保守发送"
                         )
                         # 降级的目标是“尽可能保住可发送内容”，而不是维持原始的大合并形态。
                         # 因此后续会按批次逐个尝试，把失败影响限制在当前块内部。
                         chunk_failed = False
-                        for batch_data in chunk_batches:
+                        for fallback_pos, batch_data in enumerate(chunk_batches):
                             batch_index = batch_data["batch_index"]
-                            if target_session in target_successes.get(batch_index, set()):
+                            has_more_fallback_batches = (
+                                fallback_pos < len(chunk_batches) - 1
+                            )
+                            if target_session in target_successes.get(
+                                batch_index, set()
+                            ):
                                 continue
                             try:
                                 await send_processed_batch_fn(
@@ -227,12 +315,25 @@ async def dispatch_processed_batches_to_targets(
                                 )
                                 target_successes[batch_index].add(target_session)
                                 record_target_success(target_session)
-                                await asyncio.sleep(1)
+                                if has_more_fallback_batches:
+                                    await asyncio.sleep(chunk_delay)
                             except Exception as e2:
+                                error_type = classify_send_error(e2)
+                                if _is_probably_delivered(error_type):
+                                    target_successes[batch_index].add(target_session)
+                                    record_target_success(target_session)
+                                    logger.warning(
+                                        f"[QQSender] 降级批次发送确认超时但 EventRet.result=0，"
+                                        f"按已送达处理: batch_index={batch_index}, "
+                                        f"target={target_session}, error={e2!r}"
+                                    )
+                                    if has_more_fallback_batches:
+                                        await asyncio.sleep(chunk_delay)
+                                    continue
                                 chunk_failed = True
                                 target_failures.setdefault(
                                     batch_index,
-                                    classify_send_error(e2),
+                                    error_type,
                                 )
                                 record_target_failure(
                                     target_session,
@@ -240,7 +341,10 @@ async def dispatch_processed_batches_to_targets(
                                     cooldown_sec=target_circuit_cooldown_sec,
                                     now_ts=time.time(),
                                 )
-                                logger.error(f"[QQSender] 降级批次发送失败: {e2}")
+                                logger.error(
+                                    f"[QQSender] 降级批次发送失败: "
+                                    f"error_type={type(e2).__name__}, error={e2!r}"
+                                )
                         if chunk_failed:
                             consecutive_failures += 1
                         else:
@@ -276,10 +380,22 @@ async def dispatch_processed_batches_to_targets(
                         consecutive_failures = 0
                         await asyncio.sleep(1)
                     except Exception as e:
+                        error_type = classify_send_error(e)
+                        if _is_probably_delivered(error_type):
+                            target_successes[batch_index].add(target_session)
+                            record_target_success(target_session)
+                            consecutive_failures = 0
+                            logger.warning(
+                                f"[QQSender] 发送确认超时但 EventRet.result=0，"
+                                f"按已送达处理: batch_index={batch_index}, "
+                                f"target={target_session}, error={e!r}"
+                            )
+                            await asyncio.sleep(1)
+                            continue
                         consecutive_failures += 1
                         target_failures.setdefault(
                             batch_index,
-                            classify_send_error(e),
+                            error_type,
                         )
                         record_target_failure(
                             target_session,
@@ -325,12 +441,24 @@ async def send_processed_batch(
     以尽量兼顾 QQ 平台兼容性与消息展示完整性。
     """
 
+    def build_file_component(*, name: str | None, file_path: str) -> File:
+        return File(name="" if name is None else str(name), file=file_path, url="")
+
+    def set_source_path(component: File, source_path: str) -> None:
+        try:
+            object.__setattr__(component, "_tgf_source_path", source_path)
+        except Exception:
+            component.__dict__["_tgf_source_path"] = source_path
+
     def normalize_file_payload(component: File) -> File:
         if getattr(component, "file", None):
             return component
         compat_file = getattr(component, "file_", None)
         if compat_file:
-            normalized = File(file=compat_file, name=getattr(component, "name", None))
+            normalized = build_file_component(
+                name=getattr(component, "name", None),
+                file_path=compat_file,
+            )
             if getattr(component, "file_", None) is not None:
                 setattr(normalized, "file_", component.file_)
             for attr_name in ("_tgf_source_path",):
@@ -358,7 +486,7 @@ async def send_processed_batch(
         if not path:
             return None
         try:
-            return os.path.getsize(path)
+            return Path(path).stat().st_size
         except OSError:
             return None
 
@@ -391,6 +519,7 @@ async def send_processed_batch(
         return
 
     if batch_data.get("contains_audio"):
+
         async def send_common_components(components: list) -> None:
             if not components:
                 return
@@ -431,11 +560,11 @@ async def send_processed_batch(
                         )
                     if path:
                         mapped = map_path(path)
-                        file_component = File(
-                            file=mapped,
-                            url="",
-                            name=os.path.basename(path),
+                        file_component = build_file_component(
+                            name=Path(path).name,
+                            file_path=mapped,
                         )
+                        set_source_path(file_component, path)
                         _patch_file_to_dict(file_component)
                         log_file_payload(file_component)
                         file_chain = MessageChain([file_component])
@@ -550,6 +679,14 @@ async def send_processed_batch(
                             path = getattr(
                                 c, "_tgf_source_path", getattr(c, "path", None)
                             )
+                            if isinstance(send_error, asyncio.TimeoutError):
+                                logger.warning(
+                                    f"[QQSender] 视频发送超时，跳过本轮源文件补发以避免重复上传: "
+                                    f"target={target_session}, source_path={path!r}, "
+                                    f"file_size={safe_file_size(path)}, "
+                                    f"error_type={type(send_error).__name__}, error={send_error!r}"
+                                )
+                                raise
                             if path:
                                 mapped = map_path(path)
                                 logger.warning(
@@ -558,11 +695,11 @@ async def send_processed_batch(
                                     f"file_size={safe_file_size(path)}, "
                                     f"error_type={type(send_error).__name__}, error={send_error!r}"
                                 )
-                                file_component = File(
-                                    file=mapped,
-                                    url="",
-                                    name=os.path.basename(path),
+                                file_component = build_file_component(
+                                    name=Path(path).name,
+                                    file_path=mapped,
                                 )
+                                set_source_path(file_component, path)
                                 _patch_file_to_dict(file_component)
                                 log_file_payload(file_component)
                                 try:

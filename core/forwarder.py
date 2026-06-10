@@ -1,10 +1,10 @@
 import asyncio
-import os
 import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from telethon.tl.types import Message
+from telethon.tl.types import Message  # type: ignore
 
 from astrbot.api import AstrBotConfig, logger, star
 
@@ -33,7 +33,7 @@ class Forwarder:
         config: AstrBotConfig,
         storage: Storage,
         client_wrapper: TelegramClientWrapper,
-        plugin_data_dir: str,
+        plugin_data_dir: Path,
     ):
         self.context = context
         self.config = config
@@ -532,7 +532,7 @@ class Forwarder:
                     logger.error(
                         "[Capture] Telethon 数据库文件损坏 (malformed)。可尝试重载插件以恢复..."
                     )
-                    session_path = os.path.join(self.plugin_data_dir, "user_session")
+                    session_path = str(self.plugin_data_dir / "user_session")
                     from .client import TelegramClientWrapper
 
                     TelegramClientWrapper.clear_cache(session_path)
@@ -590,6 +590,16 @@ class Forwarder:
             ),
             error_types={**current.error_types, **incoming.error_types},
         )
+
+    @staticmethod
+    def _qq_batch_message_counts(batches: list) -> list[int]:
+        counts: list[int] = []
+        for batch in batches:
+            if batch and all(isinstance(item, list) for item in batch):
+                counts.extend(len(sub_batch) for sub_batch in batch)
+            else:
+                counts.append(len(batch))
+        return counts
 
     def _remove_dispatched_batches(
         self, batch_meta: list[dict], send_summary: QQSendSummary
@@ -768,7 +778,7 @@ class Forwarder:
                 needed_units = batch_limit - logical_sent_count
 
                 # 记录本轮尝试提取的逻辑单元对应的 ID，用于后续分组
-                current_try_logical_map = {}  # {logical_id: [meta_items]}
+                current_try_logical_map = {}  # {逻辑 ID: [meta_items]}
 
                 while current_try_logical_units < needed_units and pending_idx < len(
                     valid_pending
@@ -828,7 +838,7 @@ class Forwarder:
                     channel_to_ids[c].append(mid)
 
                 raw_fetched_messages = []
-                skipped_grouped_ids = set()  # (channel, grouped_id)
+                skipped_grouped_ids = set()  # (频道, grouped_id)
                 individually_skipped_keys = set()
 
                 # 发送周期 re-fetch 前确保 Telegram 客户端可用
@@ -844,7 +854,10 @@ class Forwarder:
                         msgs = await self.client.get_messages(
                             to_telethon_entity(channel), ids=ids
                         )
-                        for m in msgs:
+                        msg_iterable = []
+                        if msgs is not None:
+                            msg_iterable = msgs if isinstance(msgs, list) else [msgs]
+                        for m in msg_iterable:
                             if not m or not isinstance(m, Message):
                                 continue
                             raw_fetched_messages.append((channel, m))
@@ -950,8 +963,8 @@ class Forwarder:
                             logger.error(
                                 "[Send] Telethon 数据库文件损坏 (malformed)。可尝试重载插件以恢复..."
                             )
-                            session_path = os.path.join(
-                                self.plugin_data_dir, "user_session"
+                            session_path = str(
+                                self.plugin_data_dir / "user_session"
                             )
                             from .client import TelegramClientWrapper
 
@@ -1102,7 +1115,7 @@ class Forwarder:
                     )
                 return
 
-            actual_sent_count = 0
+            attempted_send_count = sum(len(msgs) for msgs, _ in final_batches)
             send_summary = None
             batch_meta = []
             for msgs, channel in final_batches:
@@ -1135,8 +1148,6 @@ class Forwarder:
                 send_summary = await self._send_sorted_messages_in_batches(
                     final_batches
                 )
-                for msgs, _ in final_batches:
-                    actual_sent_count += len(msgs)
             except Exception as e:
                 logger.error(f"[Send] 转发过程出现错误: {e}")
                 if global_cfg.get("send_result_strict_ack", False):
@@ -1298,8 +1309,11 @@ class Forwarder:
 
                 if all_processed_meta:
                     processed_count = len(all_processed_meta)
-                    skipped_count = processed_count - actual_sent_count
-                    msg = f"[Send] 处理完成: 成功 {actual_sent_count}"
+                    skipped_count = processed_count - attempted_send_count
+                    if global_cfg.get("send_result_strict_ack", False):
+                        msg = f"[Send] 处理完成: 尝试 {attempted_send_count}"
+                    else:
+                        msg = f"[Send] 处理完成: 成功 {attempted_send_count}"
                     if skipped_count > 0:
                         msg += f" | 跳过 {skipped_count}"
                     new_all_pending = self.storage.get_all_pending()
@@ -1416,7 +1430,9 @@ class Forwarder:
                     for (batch_indexes, _), result in zip(
                         exclusive_tasks, exclusive_results
                     ):
-                        if isinstance(result, Exception):
+                        if isinstance(result, BaseException):
+                            if not isinstance(result, Exception):
+                                raise result
                             qq_summary = self._merge_send_summaries(
                                 qq_summary,
                                 QQSendSummary(
@@ -1581,6 +1597,7 @@ class Forwarder:
         is_mixed: bool = False,
         involved_channels: list[str] | None = None,
     ):
+        batch_message_counts = self._qq_batch_message_counts(batches)
         try:
             qq_summary = await self.qq_sender.send(
                 batches=batches,
@@ -1592,9 +1609,9 @@ class Forwarder:
             if qq_summary is None:
                 return QQSendSummary()
             success_count = sum(
-                len(batches[index])
+                batch_message_counts[index]
                 for index in qq_summary.acked_batch_indexes
-                if 0 <= index < len(batches)
+                if 0 <= index < len(batch_message_counts)
             )
             self.stats["forward_success"] += success_count
             logger.debug(f"[Stats] QQ 转发成功 {success_count} 条  @{src_channel}")
@@ -1621,7 +1638,7 @@ class Forwarder:
                 },
             )
         except Exception as e:
-            failed_count = sum(len(b) for b in batches)
+            failed_count = sum(batch_message_counts)
             self.stats["forward_failed"] += failed_count
             logger.error(f"[Stats] QQ 转发失败 {failed_count} 条  @{src_channel} : {e}")
             return QQSendSummary(
@@ -1639,7 +1656,7 @@ class Forwarder:
         self._stopping = True
 
     async def shutdown(self, timeout: float = 10.0) -> None:
-        """Wait for running tasks to finish; cancel them if they overrun."""
+        """等待运行中的任务结束；超时后取消剩余任务。"""
         self._stopping = True
 
         pending_tasks = [task for task in self._active_tasks if not task.done()]
@@ -1745,7 +1762,7 @@ class Forwarder:
 
                 # --- 转发查重逻辑 ---
                 if enable_dedup and message.fwd_from and message.fwd_from.from_id:
-                    from telethon.tl.types import PeerChannel
+                    from telethon.tl.types import PeerChannel  # type: ignore
 
                     if isinstance(message.fwd_from.from_id, PeerChannel):
                         src_channel_id = message.fwd_from.from_id.channel_id
@@ -1765,7 +1782,7 @@ class Forwarder:
                                     f"[Fetch] 频道 {channel_name} 的消息 {message.id} 是转发自监控频道 {src_channel_name} 的旧消息 (原 ID: {orig_msg_id} <= 已处理 ID: {src_last_id})，自动跳过。"
                                 )
                                 continue
-                # ------------------
+                # --- 转发查重逻辑结束 ---
 
                 new_messages.append(message)
 
@@ -1794,7 +1811,8 @@ class Forwarder:
         """
         启动时清理插件数据目录中的孤儿文件
         """
-        if not os.path.exists(self.plugin_data_dir):
+        plugin_data_dir = self.plugin_data_dir
+        if not plugin_data_dir.exists():
             return
 
         logger.debug(f"[Cleanup] 正在清理临时文件: {self.plugin_data_dir}")
@@ -1808,15 +1826,13 @@ class Forwarder:
         deleted_count = 0
 
         try:
-            for filename in os.listdir(self.plugin_data_dir):
-                if filename in allowlist:
+            for file_path in plugin_data_dir.iterdir():
+                if file_path.name in allowlist:
                     continue
 
-                file_path = os.path.join(self.plugin_data_dir, filename)
-
-                if os.path.isfile(file_path):
+                if file_path.is_file():
                     try:
-                        os.remove(file_path)
+                        file_path.unlink()
                         deleted_count += 1
                     except Exception:
                         pass

@@ -1,4 +1,4 @@
-"""Tests for Forwarder pending removal behavior."""
+"""Forwarder 待发送队列移除行为测试。"""
 
 import asyncio
 import importlib.util
@@ -861,6 +861,43 @@ async def test_send_to_qq_and_count_counts_only_acked_batches_as_success():
 
 
 @pytest.mark.asyncio
+async def test_send_to_qq_and_count_counts_grouped_big_merge_acked_batches_as_success():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage([])
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.qq_sender = MagicMock()
+    forwarder.qq_sender.send = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(1, 2),
+            failed_batch_indexes=(0,),
+            deferred_batch_indexes=(),
+            error_types={0: "send_failed"},
+        )
+    )
+
+    batch_a = [type("Msg", (), {"id": 711})()]
+    batch_b = [type("Msg", (), {"id": 712})(), type("Msg", (), {"id": 713})()]
+    batch_c = [
+        type("Msg", (), {"id": 714})(),
+        type("Msg", (), {"id": 715})(),
+        type("Msg", (), {"id": 716})(),
+    ]
+
+    summary = await forwarder._send_to_qq_and_count(
+        src_channel="demo",
+        batches=[[batch_a, batch_b, batch_c]],
+        batch_indexes=[10, 11, 12],
+        display_name="demo",
+        effective_cfg={},
+    )
+
+    assert forwarder.stats["forward_success"] == 5
+    assert forwarder.stats["forward_failed"] == 0
+    assert summary.acked_batch_indexes == (11, 12)
+    assert summary.failed_batch_indexes == (10,)
+
+
+@pytest.mark.asyncio
 async def test_send_pending_removes_filtered_fetched_items_alongside_acked_batches():
     forwarder_module = load_forwarder_module()
     storage = FakeStorage(
@@ -1127,6 +1164,46 @@ async def test_send_pending_logs_round_summary():
         and "剩余队列" in message
         for message in info_calls
     )
+
+
+@pytest.mark.asyncio
+async def test_send_pending_strict_ack_logs_attempted_instead_of_success_for_failures():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 851,
+                "time": 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 852,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(1,),
+            deferred_batch_indexes=(),
+            error_types={1: "timeout"},
+        )
+    )
+
+    await forwarder.send_pending_messages()
+
+    info_calls = [call.args[0] for call in forwarder_module.logger.info.call_args_list]
+    assert any("处理完成: 尝试 2" in message for message in info_calls)
+    assert not any("处理完成: 成功 2" in message for message in info_calls)
 
 
 @pytest.mark.asyncio

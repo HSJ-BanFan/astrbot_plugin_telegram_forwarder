@@ -9,6 +9,7 @@ import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from telethon.tl.types import Message
 
@@ -33,6 +34,7 @@ from .qq_file_fallback import (
     handle_apk_file_send_failure,
     resolve_apk_fallback_policy,
 )
+from .qq_log_policy import QQLogPolicy
 from .qq_media import (
     File,
     Image,
@@ -51,6 +53,7 @@ from .qq_reply_preview import (
 )
 from .qq_runtime import get_platform_bot, get_platform_instances, select_qq_platform
 from .qq_send_prep import (
+    FlattenableBatches,
     flatten_batches,
     normalize_qq_targets,
     positive_int,
@@ -68,10 +71,24 @@ from .qq_targets import (
     session_platform_ids,
     split_qq_targets,
 )
-from .qq_log_policy import QQLogPolicy
 from .qq_types import SendKind
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
+
+DEFAULT_QQ_SEND_TIMEOUT_SEC = 30.0
+QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES = 10 * 1024 * 1024
+QQ_LARGE_FILE_GRACE_STEP_BYTES = 10 * 1024 * 1024
+QQ_LARGE_FILE_GRACE_STEP_SEC = 5.0
+QQ_MAX_INITIAL_SEND_TIMEOUT_SEC = 300.0
+MEDIA_SEND_KINDS = {
+    "audio_record",
+    "audio_file",
+    "video_file",
+    "special_media",
+    "fallback_zip",
+}
+
+
 @dataclass(frozen=True)
 class QQSendSummary:
     """面向上层调用方法的 QQ 批次发送结果。
@@ -163,13 +180,65 @@ class QQSender:
             log_policy=self._log_policy,
         )
 
+    @staticmethod
+    def _component_local_paths(component: object) -> list[str]:
+        paths: list[str] = []
+        for attr_name in ("_tgf_source_path", "path", "file", "file_"):
+            value = getattr(component, attr_name, None)
+            if not value:
+                continue
+            path = str(value)
+            if "://" in path:
+                continue
+            paths.append(path)
+        return paths
+
+    @classmethod
+    def _message_chain_local_file_size(cls, components: list[object]) -> int:
+        total_size = 0
+        seen_paths: set[str] = set()
+        for component in components:
+            for path in cls._component_local_paths(component):
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                try:
+                    total_size += Path(path).stat().st_size
+                except OSError:
+                    continue
+        return total_size
+
+    @staticmethod
+    def _timeout_for_payload_size(file_size: int) -> float:
+        if file_size <= QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES:
+            return DEFAULT_QQ_SEND_TIMEOUT_SEC
+        extra_bytes = file_size - QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES
+        steps = (
+            extra_bytes + QQ_LARGE_FILE_GRACE_STEP_BYTES - 1
+        ) // QQ_LARGE_FILE_GRACE_STEP_BYTES
+        timeout = DEFAULT_QQ_SEND_TIMEOUT_SEC + steps * QQ_LARGE_FILE_GRACE_STEP_SEC
+        return min(float(timeout), QQ_MAX_INITIAL_SEND_TIMEOUT_SEC)
+
+    def _resolve_send_timeout_sec(
+        self,
+        send_kind: SendKind,
+        components: list[object] | None = None,
+    ) -> float:
+        if components is None:
+            components = []
+        if send_kind not in MEDIA_SEND_KINDS:
+            return DEFAULT_QQ_SEND_TIMEOUT_SEC
+        return self._timeout_for_payload_size(
+            self._message_chain_local_file_size(components)
+        )
+
     async def _send_with_timeout(
         self,
         unified_msg_origin: str,
         message_chain: MessageChain,
         *,
         send_kind: SendKind,
-        timeout_sec: float = 30.0,
+        timeout_sec: float | None = None,
     ) -> None:
         started_at = time.monotonic()
         components = list(getattr(message_chain, "chain", []))
@@ -181,6 +250,8 @@ class QQSender:
             getattr(primary_component, "path", None),
         )
         payload_file = getattr(primary_component, "file", None)
+        if timeout_sec is None:
+            timeout_sec = self._resolve_send_timeout_sec(send_kind, components)
         try:
             await asyncio.wait_for(
                 self.context.send_message(unified_msg_origin, message_chain),
@@ -191,7 +262,8 @@ class QQSender:
             logger.warning(
                 f"[QQSender] send kind={send_kind} target={unified_msg_origin} "
                 f"component_types={component_types} payload_file={payload_file!r} "
-                f"source_path={source_path!r} timeout after {duration:.3f}s"
+                f"source_path={source_path!r} timeout after {duration:.3f}s "
+                f"(timeout={timeout_sec:.3f}s)"
             )
             raise
         duration = time.monotonic() - started_at
@@ -213,9 +285,7 @@ class QQSender:
         target_session: str,
     ) -> bool:
         return await handle_apk_file_send_failure(
-            policy=resolve_apk_fallback_policy(
-                self.config.get("forward_config", {})
-            ),
+            policy=resolve_apk_fallback_policy(self.config.get("forward_config", {})),
             component=component,
             error=error,
             batch_data=batch_data,
@@ -424,7 +494,9 @@ class QQSender:
         return resolve_send_limits(forward_cfg)
 
     @staticmethod
-    def _flatten_batches(batches: list[list[Message]]) -> list[list[Message]]:
+    def _flatten_batches(
+        batches: FlattenableBatches[Message],
+    ) -> list[list[Message]]:
         return flatten_batches(batches)
 
     async def _resolve_bot_send_identity(self) -> tuple[int, str]:
@@ -445,7 +517,7 @@ class QQSender:
         self_id = 0
         node_name = (
             await self._ensure_node_name(bot, cache_fallback=True) if bot else "AstrBot"
-        )
+        ) or "AstrBot"
         if bot:
             try:
                 info = await bot.get_login_info()
@@ -478,7 +550,7 @@ class QQSender:
 
     async def send(
         self,
-        batches: list[list[Message]],
+        batches: FlattenableBatches[Message],
         src_channel: str,
         display_name: str | None = None,
         effective_cfg: dict[str, object] | None = None,
@@ -532,10 +604,9 @@ class QQSender:
             failed_batch_indexes = tuple(range(len(real_batches)))
             return QQSendSummary(
                 failed_batch_indexes=failed_batch_indexes,
-                error_types={
-                    batch_index: "unresolved_target_session"
-                    for batch_index in failed_batch_indexes
-                },
+                error_types=dict.fromkeys(
+                    failed_batch_indexes, "unresolved_target_session"
+                ),
             )
 
         forward_cfg = self.config.get("forward_config", {})
@@ -581,7 +652,7 @@ class QQSender:
         try:
             dispatch_result = await dispatch_processed_batches_to_targets(
                 context_target_sessions=context_target_sessions,
-                real_batches=real_batches,
+                real_batch_count=len(real_batches),
                 processed_batches=processed_batches,
                 target_successes=target_successes,
                 target_failures=target_failures,
@@ -616,23 +687,39 @@ class QQSender:
             deferred_batch_indexes=deferred_batch_indexes,
         )
 
+    @staticmethod
+    def _absolute_lexical_path(path: str | Path) -> Path:
+        path_obj = Path(path)
+        if not path_obj.is_absolute():
+            path_obj = Path.cwd() / path_obj
+
+        anchor = path_obj.anchor
+        parts: list[str] = []
+        for part in path_obj.parts:
+            if part in {"", ".", anchor}:
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part)
+        return Path(anchor, *parts) if anchor else Path(*parts)
+
     def _is_plugin_data_file(self, path: str) -> bool:
         plugin_data_dir = getattr(self, "plugin_data_dir", None) or getattr(
             self.downloader, "plugin_data_dir", None
         )
         if not plugin_data_dir:
             return False
-        plugin_entry_dir = os.path.abspath(plugin_data_dir)
-        plugin_real_dir = os.path.realpath(plugin_data_dir)
-        entry_path = os.path.abspath(path)
-        real_path = os.path.realpath(path)
         try:
-            return (
-                os.path.commonpath([plugin_entry_dir, entry_path]) == plugin_entry_dir
-                and os.path.commonpath([plugin_real_dir, real_path]) == plugin_real_dir
-                and os.path.isfile(entry_path)
-            )
-        except ValueError:
+            plugin_entry_dir = self._absolute_lexical_path(plugin_data_dir)
+            entry_path = self._absolute_lexical_path(path)
+            plugin_real_dir = plugin_entry_dir.resolve()
+            real_path = entry_path.resolve()
+            entry_path.relative_to(plugin_entry_dir)
+            real_path.relative_to(plugin_real_dir)
+            return entry_path.is_file()
+        except (OSError, RuntimeError, ValueError):
             return False
 
     def _cleanup_files(self, files: list[str]):

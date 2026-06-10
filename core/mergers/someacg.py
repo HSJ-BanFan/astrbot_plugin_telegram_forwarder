@@ -90,6 +90,12 @@ class SomeACGPreviewPlusOriginal(MergeRule):
                 return False
 
         # 检查时间差
+        if message1.date is None or message2.date is None:
+            logger.debug(
+                f"[SomeACG] 消息时间戳缺失: msg1.date={message1.date}, msg2.date={message2.date}"
+            )
+            return False
+
         time_window = self.config.get("time_window_seconds", 10)
         time_diff = (message2.date - message1.date).total_seconds()
 

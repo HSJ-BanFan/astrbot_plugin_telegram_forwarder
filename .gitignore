@@ -1,16 +1,38 @@
+# Local runtime data / session / cache
 config.json
 config.json.bak
 *.bak
 data.json
-__pycache__/
-*.pyc
 user_session.session*
 *.session-journal
-.omc
-.omx
+data/
+docs/
+
+# Python / Tests
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.pytest-tmp/
+.pytest_tmp/
+.mypy_cache/
+.venv/
+venv/
+ENV/
+
+# IDEs / Configuration
+.DS_Store
+.vscode/
+.idea/
+pyrightconfig.json
+
+# AI tooling local state
 .claude
+.understand-anything
+.omo/
 .worktrees/
 CLAUDE.md
-docs
-data
-pyrightconfig.json
+# Developer scripts
+condense.js
+condensed.json

@@ -1,5 +1,22 @@
 # 📝 更新日志
 
+## v0.8 (2026-06-08)
+* 修复 **Telethon session schema 不兼容** 问题：约束依赖为 `telethon>=1.42.0,<1.43.0`，并在启动时对不兼容版本给出明确提示
+* 优化 **历史 session 兼容处理**：检测到 6 列 session schema 时会备份并转换为当前兼容格式
+* 修复 **QQ 文件发送组件构造** 的类型兼容问题，避免缺失文件名时被序列化为 `"None"`
+* 修复 **清空队列命令** 在异常频道配置下使用 `assert` 的问题，改为显式错误提示
+* 更新提醒：老用户更新到本版本后，如果 AstrBot 没有自动重装插件依赖，请进入 AstrBot 使用的 Python 环境，在插件目录执行：
+
+```bash
+python -m pip install --upgrade --force-reinstall -r requirements.txt
+```
+
+也可以只重装 Telethon：
+
+```bash
+python -m pip install --upgrade --force-reinstall "telethon>=1.42.0,<1.43.0"
+```
+
 ## v0.7 (2026-03-25)
 * 新增 **QQ 大合并** 能力，支持按阈值进行大合并转发
 * 新增 **Markdown 链接剥离**（`strip_markdown_links`），可仅保留显示文本

@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 from astrbot.api import logger
 
@@ -26,20 +27,20 @@ class Storage:
             "last_tg_target": msg.get("last_tg_target", ""),
         }
 
-    def __init__(self, data_file: str):
+    def __init__(self, data_file: str | Path):
         """
         初始化存储管理器
         """
-        self.data_file = data_file
+        self.data_file = Path(data_file)
         self.persistence = self._load()
 
     def _load(self) -> dict:
         """从文件加载持久化数据"""
         default_data = {"channels": {}}
 
-        if os.path.exists(self.data_file):
+        if self.data_file.exists():
             try:
-                with open(self.data_file, encoding="utf-8") as f:
+                with self.data_file.open(encoding="utf-8") as f:
                     return json.load(f)
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"[Storage] 无法加载数据文件: {e}，将使用默认配置")
@@ -49,18 +50,18 @@ class Storage:
 
     def save(self):
         """保存当前数据到文件"""
-        tmp_file = f"{self.data_file}.tmp"
+        tmp_file = self.data_file.with_name(f"{self.data_file.name}.tmp")
         try:
-            with open(tmp_file, "w", encoding="utf-8") as f:
+            with tmp_file.open("w", encoding="utf-8") as f:
                 json.dump(self.persistence, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_file, self.data_file)
+            tmp_file.replace(self.data_file)
         except OSError as e:
             logger.error(f"[Storage] 保存数据失败: {e}")
             try:
-                if os.path.exists(tmp_file):
-                    os.remove(tmp_file)
+                if tmp_file.exists():
+                    tmp_file.unlink()
             except Exception:
                 pass
 
@@ -89,7 +90,7 @@ class Storage:
             self.save()
             logger.debug(f"[Storage] 更新频道 {channel_name} 的数字 ID 为 {channel_id}")
 
-    def get_channel_name_by_id(self, channel_id: int) -> str:
+    def get_channel_name_by_id(self, channel_id: int) -> str | None:
         """根据数字 ID 获取频道名"""
         for name, info in self.persistence.get("channels", {}).items():
             if info.get("channel_id") == channel_id:
@@ -101,7 +102,7 @@ class Storage:
         channel_name: str,
         msg_id: int,
         timestamp: float,
-        grouped_id: int = None,
+        grouped_id: int | None = None,
         is_cold_start: bool = False,
         is_monitored: bool = False,
     ):

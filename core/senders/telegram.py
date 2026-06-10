@@ -13,7 +13,10 @@ class TelegramSender:
         self.config = config
 
     async def send(
-        self, batches: list[list[Message]], src_channel: str, effective_cfg: dict | None = None
+        self,
+        batches: list[list[Message]],
+        src_channel: str,
+        effective_cfg: dict | None = None,
     ):
         """
         转发消息到 Telegram 目标频道

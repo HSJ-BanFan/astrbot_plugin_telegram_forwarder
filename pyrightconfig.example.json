@@ -1,0 +1,7 @@
+{
+  "include": ["main.py", "core", "common"],
+  "exclude": ["**/node_modules"],
+  "extraPaths": ["../../.."],
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false
+}
