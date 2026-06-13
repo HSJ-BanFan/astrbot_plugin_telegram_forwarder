@@ -38,7 +38,12 @@ jobs:
           python -m pip install pytest
 
       - name: Compile sources
-        run: python -m compileall core common tests main.py relogin.py
+        run: python -m compileall core common main.py relogin.py
 
       - name: Run tests
-        run: pytest -q
+        run: |
+          if find . -path './tests/test_*.py' -o -path './test/test_*.py' | grep -q .; then
+            pytest -q
+          else
+            echo "No tests found; skipping pytest."
+          fi

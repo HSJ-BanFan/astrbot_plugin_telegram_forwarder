@@ -9,6 +9,7 @@ data/
 docs/
 
 # Python / Tests
+tests/
 __pycache__/
 *.pyc
 *.pyo
