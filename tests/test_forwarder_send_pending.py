@@ -818,6 +818,7 @@ async def test_send_sorted_messages_in_batches_sends_mixable_channels_in_sorted_
         effective_cfg,
         is_mixed,
         involved_channels=None,
+        completed_qq_targets_by_batch=None,
     ):
         seen_channels.append(src_channel)
         return QQSendSummary(
