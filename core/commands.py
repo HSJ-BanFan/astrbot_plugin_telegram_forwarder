@@ -11,6 +11,11 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 
+try:
+    from telethon.errors import SendCodeUnavailableError
+except ImportError:  # pragma: no cover - 兼容旧版 Telethon
+    SendCodeUnavailableError = None
+
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
@@ -99,6 +104,13 @@ class PluginCommands:
         return "".join(result)
 
     @staticmethod
+    def _login_code_hint() -> str:
+        return (
+            "收到几位验证码，就提交几位“每位数字加 1 后”的验证码，9 变 0。\n"
+            "例如 Telegram 原码 89625，应发送：/tg login code 90736"
+        )
+
+    @staticmethod
     def _normalize_phone(phone: str) -> str:
         # 允许用户输入含空格-短横线的手机号，提交前统一清洗
         return (phone or "").replace(" ", "").replace("-", "").strip()
@@ -109,11 +121,11 @@ class PluginCommands:
             yield event.plain_result(
                 "用法：\n"
                 "/tg login start [手机号]\n"
-                "/tg login code <验证码>\n"
+                "/tg login code <加密验证码>\n"
                 "/tg login password <两步验证密码>\n"
                 "/tg login status\n"
                 "/tg login cancel\n"
-                "/tg login reset"
+                "/tg login reset\n\n" + self._login_code_hint()
             )
             return
 
@@ -179,6 +191,23 @@ class PluginCommands:
             yield event.plain_result(f"连接 Telegram 失败：{e}")
             return
 
+        existing_login = self._get_login_data(event)
+        if existing_login:
+            existing_phone = existing_login.get("phone", "-")
+            requested_phone = self._normalize_phone(phone_arg)
+            if requested_phone and requested_phone != existing_phone:
+                yield event.plain_result(
+                    f"已有进行中的登录流程，手机号：{existing_phone}。\n"
+                    "如需切换手机号，请先执行 /tg login reset，再重新 /tg login start。"
+                )
+                return
+            yield event.plain_result(
+                f"已有进行中的登录流程，手机号：{existing_phone}。\n"
+                "请不要重复执行 /tg login start，否则 Telegram 可能限制重发验证码。\n"
+                "下一步：/tg login code <加密验证码>\n" + self._login_code_hint()
+            )
+            return
+
         phone = self._normalize_phone(phone_arg or (self.config.get("phone") or ""))
         if not phone:
             yield event.plain_result(
@@ -197,26 +226,42 @@ class PluginCommands:
             }
             yield event.plain_result(
                 "验证码已发送。\n"
-                "下一步：/tg login code <验证码>\n"
-                "注意：请输入每位加 1 后的验证码。\n"
+                "下一步：/tg login code <加密验证码>\n" + self._login_code_hint() + "\n"
+                "不要重复执行 /tg login start；如需重新开始，请先 /tg login reset。\n"
                 "若开启两步验证：/tg login password <两步验证密码>"
             )
         except FloodWaitError as e:
             wait_seconds = getattr(e, "seconds", 0) or 0
             yield event.plain_result(f"请求过于频繁，请等待 {wait_seconds} 秒后重试。")
         except Exception as e:
+            if SendCodeUnavailableError and isinstance(e, SendCodeUnavailableError):
+                yield event.plain_result(
+                    "Telegram 暂时拒绝继续发送验证码：这个手机号的可用验证码发送方式已经用完。\n"
+                    "请停止重复执行 /tg login start，等待一段时间后再执行 /tg login reset 和 /tg login start。"
+                )
+                return
+            if "all available options" in str(e).lower():
+                yield event.plain_result(
+                    "Telegram 暂时拒绝继续发送验证码：这个手机号的可用验证码发送方式已经用完。\n"
+                    "请停止重复执行 /tg login start，等待一段时间后再执行 /tg login reset 和 /tg login start。"
+                )
+                return
             logger.error(f"[Login] send code failed: {e}")
-            yield event.plain_result(f"发送验证码失败：{e}")
+            yield event.plain_result(
+                f"发送验证码失败：{e}\n"
+                "请不要连续重复执行 /tg login start；如果已收到验证码，请直接提交 /tg login code <加密验证码>。"
+            )
 
     async def _login_code(self, event: AstrMessageEvent, code: str):
         if not code:
-            yield event.plain_result("请提供验证码，例如：/tg login code 12345")
+            yield event.plain_result("请提供加密验证码。\n" + self._login_code_hint())
             return
 
         login_data = self._get_login_data(event)
         if not login_data:
             yield event.plain_result(
-                "当前没有进行中的登录流程，请先执行 /tg login start。"
+                "当前没有进行中的登录流程，请先执行 /tg login start。\n"
+                "如果刚才 /tg login start 提示发送验证码失败，请等待 Telegram 冷却后再重新开始。"
             )
             return
 
@@ -557,17 +602,20 @@ class PluginCommands:
             )
             return
 
-        all_pending = self.forwarder.storage.get_all_pending()
-        if not all_pending:
-            yield event.plain_result("📭 队列已经是空的。")
-            return
-
         target = target.strip().lower()
         if target == "all":
-            for ch_data in self.forwarder.storage.persistence["channels"].values():
-                ch_data["pending_queue"] = []
-            self.forwarder.storage.save()
-            yield event.plain_result("🗑️ 已清空**所有**频道的待发送队列。")
+            result = await self.forwarder.clear_pending_queue("all")
+            message = f"🗑️ 已清空**所有**频道的待发送队列（{result['cleared']} 条）。"
+            if result.get("cancelled_sends", 0):
+                message += f"\n已请求取消 {result['cancelled_sends']} 个在途发送任务。"
+            if result.get("fast_forwarded", 0):
+                message += f"\n已同步 {result['fast_forwarded']} 个频道到最新消息。"
+            if result.get("fast_forward_failed"):
+                message += (
+                    "\n以下频道最新消息同步失败，后续可能仍会拉取旧积压："
+                    + ", ".join(result["fast_forward_failed"])
+                )
+            yield event.plain_result(message)
         else:
             channel_name = target.lstrip("@#")
             cfg = self._find_channel_cfg(channel_name)
@@ -581,26 +629,20 @@ class PluginCommands:
                     f"❌ 频道 @{channel_name} 的配置缺少 channel_username，无法清空队列。"
                 )
                 return
-            data = self.forwarder.storage.get_channel_data(original_name)
-            old_len = len(data["pending_queue"])
-            if old_len == 0:
-                disp = (
-                    original_name
-                    if is_numeric_channel_id(original_name)
-                    else f"@{original_name}"
-                )
-                yield event.plain_result(f"{disp} 的队列已经是空的。")
-            else:
-                data["pending_queue"] = []
-                self.forwarder.storage.save()
-                disp = (
-                    original_name
-                    if is_numeric_channel_id(original_name)
-                    else f"@{original_name}"
-                )
-                yield event.plain_result(
-                    f"🗑️ 已清空 {disp} 的待发送队列（{old_len} 条）。"
-                )
+            result = await self.forwarder.clear_pending_queue(original_name)
+            disp = (
+                original_name
+                if is_numeric_channel_id(original_name)
+                else f"@{original_name}"
+            )
+            message = f"🗑️ 已清空 {disp} 的待发送队列（{result['cleared']} 条）。"
+            if result.get("cancelled_sends", 0):
+                message += f"\n已请求取消 {result['cancelled_sends']} 个在途发送任务。"
+            if result.get("fast_forwarded", 0):
+                message += "\n已同步该频道到最新消息。"
+            if result.get("fast_forward_failed"):
+                message += "\n该频道最新消息同步失败，后续可能仍会拉取旧积压。"
+            yield event.plain_result(message)
 
     def mask_sensitive(self, value, field_name: str, mask_ratio: float = 0.5) -> str:
         """
@@ -1543,7 +1585,7 @@ class PluginCommands:
             "/tg set <目标> <字段> <值>  修改配置\n"
             "/tg debug [on|off|status]  QQ 诊断日志开关\n"
             "/tg login start [手机号]\n"
-            "/tg login code <验证码>（输入每位加 1 后的验证码）\n"
+            "/tg login code <加密验证码>（收到几位就提交几位，9 变 0，如 89625 填 90736）\n"
             "/tg login password <两步验证密码>\n"
             "/tg login status\n"
             "/tg login cancel\n"

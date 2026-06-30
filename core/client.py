@@ -395,7 +395,7 @@ class TelegramClientWrapper:
         2. 如果已连接，跳过初始化直接返回
         3. 否则，连接到 Telegram 服务器
         4. 检查授权状态
-        5. 如未授权，尝试登录（发送验证码）
+        5. 如未授权，提示用户使用命令登录
         6. 同步对话框列表，确保能解析频道ID
 
         异常处理：
@@ -404,8 +404,8 @@ class TelegramClientWrapper:
             - 其他错误：记录日志并返回
 
         Note:
-            在非交互式环境中无法完成验证码输入
-            用户需要在交互式终端手动登录一次，生成会话文件
+            验证码登录必须通过 /tg login start 命令发起。
+            该命令会保存 phone_code_hash，避免验证码和登录流程不匹配。
         """
         # 客户端未初始化时直接返回
         if not self.client:
@@ -444,25 +444,10 @@ class TelegramClientWrapper:
                 logger.warning(
                     f"[Client] 客户端未授权。会话路径: {self.plugin_data_dir / 'user_session.session'}"
                 )
-
-                phone = self.config.get("phone")
-                if phone:
-                    logger.info(f"[Client] 正在尝试使用手机号 {phone} 登录...")
-                    try:
-                        await asyncio.wait_for(
-                            self.client.send_code_request(phone), timeout=30.0
-                        )
-                    except asyncio.TimeoutError:
-                        logger.error("[Client] 发送验证码请求超时")
-                        return
-
-                    logger.error(
-                        "[Client] Telegram 客户端需要验证！请在交互式终端运行一次以完成登录。"
-                    )
-                    return
-                else:
-                    logger.error("[Client] 未提供手机号，无法登录。")
-                    return
+                logger.error(
+                    "[Client] Telegram 客户端未授权，请使用 /tg login start <手机号> 发起登录。"
+                )
+                return
 
             # ========== 授权成功 ==========
             logger.info("[Client] Telegram 客户端授权成功！")

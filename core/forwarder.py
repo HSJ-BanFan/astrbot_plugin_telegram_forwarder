@@ -84,6 +84,9 @@ class Forwarder:
         self._global_send_lock = asyncio.Lock()
         # 发送任务锁，避免定时发送与立即发送并发执行导致重复发送
         self._send_dispatch_lock = asyncio.Lock()
+        self._queue_clear_generation = 0
+        self._queue_clear_active = False
+        self._active_send_tasks: set[asyncio.Task] = set()
         self._active_tasks: set[asyncio.Task] = set()
         self._shutdown_complete = asyncio.Event()
         self._shutdown_complete.set()
@@ -121,6 +124,122 @@ class Forwarder:
                 self._shutdown_complete.set()
 
         task.add_done_callback(_cleanup)
+
+    def _queue_clear_stale(self, generation: int) -> bool:
+        return self._queue_clear_active or generation != self._queue_clear_generation
+
+    def _track_active_send_task(self) -> None:
+        task = asyncio.current_task()
+        if task is None or task in self._active_send_tasks:
+            return
+
+        self._active_send_tasks.add(task)
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            self._active_send_tasks.discard(done_task)
+
+        task.add_done_callback(_cleanup)
+
+    def _request_queue_clear(self) -> int:
+        self._queue_clear_generation += 1
+        current_task = asyncio.current_task()
+        cancelled_count = 0
+        for task in list(self._active_send_tasks):
+            if task is current_task or task.done():
+                continue
+            task.cancel()
+            cancelled_count += 1
+        if cancelled_count:
+            logger.info(f"[Queue] 已请求取消 {cancelled_count} 个在途发送任务。")
+        return cancelled_count
+
+    def _configured_channel_names(self) -> list[str]:
+        channels: list[str] = []
+        seen: set[str] = set()
+        for cfg in self.config.get("source_channels", []):
+            if not isinstance(cfg, dict):
+                continue
+            channel_name = normalize_telegram_channel_name(
+                str(cfg.get("channel_username", ""))
+            )
+            if not channel_name or channel_name in seen:
+                continue
+            channels.append(channel_name)
+            seen.add(channel_name)
+        return channels
+
+    async def _latest_message_id(self, channel_name: str) -> int | None:
+        if not await self._ensure_client_ready():
+            return None
+        try:
+            messages = await self.client.get_messages(
+                to_telethon_entity(channel_name), limit=1
+            )
+        except Exception as e:
+            logger.warning(f"[Queue] 获取 {channel_name} 最新消息 ID 失败: {e}")
+            return None
+        if not messages:
+            return 0
+        latest = messages[0] if isinstance(messages, list) else messages
+        return getattr(latest, "id", None)
+
+    async def _fast_forward_channels(self, channels: list[str]) -> dict:
+        result = {"updated": 0, "failed": []}
+        changed = False
+        for channel_name in channels:
+            latest_id = await self._latest_message_id(channel_name)
+            if latest_id is None:
+                result["failed"].append(channel_name)
+                continue
+            channel_data = self.storage.get_channel_data(channel_name)
+            if channel_data.get("last_post_id", 0) != latest_id:
+                channel_data["last_post_id"] = latest_id
+                changed = True
+            result["updated"] += 1
+        if changed:
+            self.storage.save()
+        return result
+
+    async def clear_pending_queue(self, target: str | None = "all") -> dict:
+        """清空待发送队列，并让在途抓取/发送批次失效。"""
+        raw_target = (target or "all").strip()
+        clear_all = raw_target.lower() in ("", "all")
+
+        self._queue_clear_active = True
+        try:
+            cancelled = self._request_queue_clear()
+            if clear_all:
+                old_len = len(self.storage.get_all_pending())
+                for channel_data in self.storage.persistence.get(
+                    "channels", {}
+                ).values():
+                    channel_data["pending_queue"] = []
+                fast_forward_channels = self._configured_channel_names()
+            else:
+                channel_name = normalize_telegram_channel_name(raw_target)
+                channel_data = self.storage.get_channel_data(channel_name)
+                old_len = len(channel_data.get("pending_queue", []))
+                channel_data["pending_queue"] = []
+                fast_forward_channels = [channel_name]
+
+            self.storage.save()
+            fast_forward = await self._fast_forward_channels(fast_forward_channels)
+            failed_count = len(fast_forward["failed"])
+            logger.info(
+                f"[Queue] 已清空{'所有频道' if clear_all else raw_target}待发送队列 "
+                f"({old_len} 条)，取消在途发送 {cancelled} 个，"
+                f"更新最新 ID {fast_forward['updated']} 个"
+                f"{f'，失败 {failed_count} 个' if failed_count else ''}。"
+            )
+            return {
+                "target": "all" if clear_all else fast_forward_channels[0],
+                "cleared": old_len,
+                "cancelled_sends": cancelled,
+                "fast_forwarded": fast_forward["updated"],
+                "fast_forward_failed": fast_forward["failed"],
+            }
+        finally:
+            self._queue_clear_active = False
 
     async def _ensure_client_ready(self) -> bool:
         """确保 client 可用且已连接。"""
@@ -410,7 +529,7 @@ class Forwarder:
         检查所有配置的频道更新并加入待发送队列
         """
         self._track_current_task()
-        if self._stopping:
+        if self._stopping or self._queue_clear_active:
             return
 
         if not await self._ensure_client_ready():
@@ -432,6 +551,7 @@ class Forwarder:
                 )
                 if not channel_name:
                     return []
+                clear_generation = self._queue_clear_generation
 
                 effective_cfg = self._get_effective_config(channel_name)
 
@@ -476,13 +596,18 @@ class Forwarder:
                     return []
 
                 async with lock:
-                    if self._stopping:
+                    if self._stopping or self._queue_clear_stale(clear_generation):
                         return []
                     self._channel_last_check[channel_name] = now
                     logger.debug(f"[Capture] 正在拉取: {channel_name}")
                     messages = await self._fetch_channel_messages(
                         channel_name, start_date, msg_limit
                     )
+                    if self._queue_clear_stale(clear_generation):
+                        logger.info(
+                            f"[Capture] 频道 {channel_name} 在队列清空期间跳过本轮入队。"
+                        )
+                        return []
                     monitor_hit_count = 0
                     monitor_hit_targets = []
 
@@ -490,7 +615,9 @@ class Forwarder:
                         # 先加入队列，再更新 last_id
                         pending_items = []
                         for m in messages:
-                            if self._stopping:
+                            if self._stopping or self._queue_clear_stale(
+                                clear_generation
+                            ):
                                 return []
                             is_monitored = self._is_monitor_matched(m, effective_cfg)
                             if is_monitored:
@@ -547,8 +674,9 @@ class Forwarder:
 
         tasks = [fetch_one(cfg) for cfg in channels_config]
         if tasks:
+            clear_generation = self._queue_clear_generation
             monitor_hits = await asyncio.gather(*tasks)
-            if self._stopping:
+            if self._stopping or self._queue_clear_stale(clear_generation):
                 return
             monitor_targets = set()
             for hits in monitor_hits:
@@ -637,7 +765,7 @@ class Forwarder:
         """
         从待发送队列中提取消息并执行转发
         """
-        if self._stopping:
+        if self._stopping or self._queue_clear_active:
             return
 
         if self._is_curfew():
@@ -645,8 +773,10 @@ class Forwarder:
             return
 
         self._track_current_task()
+        self._track_active_send_task()
+        clear_generation = self._queue_clear_generation
         async with self._send_dispatch_lock:
-            if self._stopping:
+            if self._stopping or self._queue_clear_stale(clear_generation):
                 return
             if force_immediate:
                 logger.debug("[Send] 监听命中触发立即转发，跳过发送周期等待。")
@@ -732,6 +862,9 @@ class Forwarder:
             valid_pending = retryable_pending
 
             if not valid_pending:
+                return
+            if self._queue_clear_stale(clear_generation):
+                logger.info("[Send] 队列清空期间跳过本轮发送。")
                 return
 
             # 优先级排序逻辑
@@ -824,6 +957,9 @@ class Forwarder:
                     break
 
                 all_processed_meta.extend(current_try_meta)
+                if self._queue_clear_stale(clear_generation):
+                    logger.info("[Send] 队列清空期间丢弃本轮内存批次。")
+                    return
 
                 # 2. 抓取与初步过滤
                 channel_to_ids = {}
@@ -847,13 +983,22 @@ class Forwarder:
                         "[Send] Telegram 客户端不可用，跳过本轮 re-fetch，保留队列。"
                     )
                     break
+                if self._queue_clear_stale(clear_generation):
+                    logger.info("[Send] 队列清空期间停止本轮 re-fetch。")
+                    return
 
                 for channel, ids in channel_to_ids.items():
+                    if self._queue_clear_stale(clear_generation):
+                        logger.info("[Send] 队列清空期间停止本轮 re-fetch。")
+                        return
                     try:
                         effective_cfg = self._get_effective_config(channel)
                         msgs = await self.client.get_messages(
                             to_telethon_entity(channel), ids=ids
                         )
+                        if self._queue_clear_stale(clear_generation):
+                            logger.info("[Send] 队列清空期间丢弃本轮 re-fetch 结果。")
+                            return
                         msg_iterable = []
                         if msgs is not None:
                             msg_iterable = msgs if isinstance(msgs, list) else [msgs]
@@ -1062,6 +1207,10 @@ class Forwarder:
                         item_id
                     )
 
+            if self._queue_clear_stale(clear_generation):
+                logger.info("[Send] 队列清空期间跳过本轮结果写回。")
+                return
+
             if not final_batches:
                 if all_processed_meta:
                     # 只移除成功拉取到的消息（可能被过滤）；未拉取到的消息按 re-fetch miss 计次，超限后清理。
@@ -1148,6 +1297,11 @@ class Forwarder:
                 send_summary = await self._send_sorted_messages_in_batches(
                     final_batches
                 )
+            except asyncio.CancelledError:
+                if self._queue_clear_stale(clear_generation):
+                    logger.info("[Send] 在途发送已被清队列请求取消。")
+                    return
+                raise
             except Exception as e:
                 logger.error(f"[Send] 转发过程出现错误: {e}")
                 if global_cfg.get("send_result_strict_ack", False):
@@ -1173,6 +1327,9 @@ class Forwarder:
                         error_types={},
                     )
             finally:
+                if self._queue_clear_stale(clear_generation):
+                    logger.info("[Send] 队列清空期间丢弃本轮发送结果。")
+                    return
                 if send_summary is not None:
                     attempted_at = datetime.now().timestamp()
                     strict_ack = global_cfg.get("send_result_strict_ack", False)
@@ -1331,6 +1488,17 @@ class Forwarder:
             batches_with_channel: List[(List[Message], str)]  每个元素是 (一批消息, 源频道名)
         """
         async with self._global_send_lock:
+            clear_generation = self._queue_clear_generation
+
+            def should_abort_send() -> bool:
+                if self._queue_clear_stale(clear_generation):
+                    logger.info("[Send] 队列清空期间停止后续分发。")
+                    return True
+                return False
+
+            if should_abort_send():
+                return QQSendSummary()
+
             forward_cfg = self.config.get("forward_config", {})
             strict_ack = forward_cfg.get("send_result_strict_ack", False)
             default_qq_summary = QQSendSummary(
@@ -1394,7 +1562,15 @@ class Forwarder:
                 mixable_channels = set()
                 exclusive_tasks = []
 
+                def close_exclusive_tasks() -> None:
+                    for _, task_coro in exclusive_tasks:
+                        with suppress(Exception):
+                            task_coro.close()
+
                 for src_channel, msg_groups in qq_send_groups.items():
+                    if should_abort_send():
+                        close_exclusive_tasks()
+                        return qq_summary or QQSendSummary()
                     effective_cfg = self._get_effective_config(src_channel)
                     target_sessions = effective_cfg["effective_target_qq_sessions"]
                     if not target_sessions:
@@ -1424,9 +1600,14 @@ class Forwarder:
 
                 # 先并发执行所有专属群发送
                 if exclusive_tasks:
+                    if should_abort_send():
+                        close_exclusive_tasks()
+                        return qq_summary or QQSendSummary()
                     exclusive_results = await asyncio.gather(
                         *(task for _, task in exclusive_tasks), return_exceptions=True
                     )
+                    if should_abort_send():
+                        return qq_summary or QQSendSummary()
                     for (batch_indexes, _), result in zip(
                         exclusive_tasks, exclusive_results
                     ):
@@ -1457,10 +1638,14 @@ class Forwarder:
                         f"[QQ 大合并] 混合模式触发 | "
                         f"频道数 {len(involved_list)} | 逻辑批次 {len(mixable_batches)} ≥ {merge_threshold}"
                     )
+                    if should_abort_send():
+                        return qq_summary or QQSendSummary()
 
                     first_channel = involved_list[0]
                     display_name = await self._get_display_name(first_channel)
                     effective_cfg = self._get_effective_config(first_channel)
+                    if should_abort_send():
+                        return qq_summary or QQSendSummary()
 
                     mixed_summary = await self._send_to_qq_and_count(
                         src_channel=first_channel,
@@ -1477,12 +1662,16 @@ class Forwarder:
                 else:
                     # 未达混合阈值 → 按频道普通发送
                     for src_channel in sorted(mixable_channels):
+                        if should_abort_send():
+                            return qq_summary or QQSendSummary()
                         groups = qq_send_groups.get(src_channel, [])
                         if not groups:
                             continue
 
                         display_name = await self._get_display_name(src_channel)
                         effective_cfg = self._get_effective_config(src_channel)
+                        if should_abort_send():
+                            return qq_summary or QQSendSummary()
                         channel_summary = await self._send_to_qq_and_count(
                             src_channel=src_channel,
                             batches=[msgs for _, msgs in groups],
@@ -1498,12 +1687,16 @@ class Forwarder:
             else:
                 # 非混合模式 → 逐频道发送
                 for src_channel, msg_groups in qq_send_groups.items():
+                    if should_abort_send():
+                        return qq_summary or QQSendSummary()
                     effective_cfg = self._get_effective_config(src_channel)
                     target_sessions = effective_cfg["effective_target_qq_sessions"]
                     if not target_sessions:
                         continue
 
                     display_name = await self._get_display_name(src_channel)
+                    if should_abort_send():
+                        return qq_summary or QQSendSummary()
 
                     if merge_mode == "关闭":
                         channel_summary = await self._send_to_qq_and_count(
@@ -1551,11 +1744,15 @@ class Forwarder:
             # ─── Telegram 转发部分 ───
             tg_target = self.config.get("target_channel", "").strip()
             if tg_target:
+                if should_abort_send():
+                    return qq_summary or default_qq_summary
                 pending_by_key = {
                     (item["channel"], item["id"]): item
                     for item in self.storage.get_all_pending()
                 }
                 for msgs, src_channel in batches_with_channel:
+                    if should_abort_send():
+                        return qq_summary or default_qq_summary
                     batch_ids = [msg.id for msg in msgs]
                     if batch_ids and all(
                         pending_by_key.get((src_channel, msg_id), {}).get(
@@ -1572,6 +1769,8 @@ class Forwarder:
                             src_channel=src_channel,
                             effective_cfg=effective_cfg,
                         )
+                        if should_abort_send():
+                            return qq_summary or default_qq_summary
                         self.stats["forward_success"] += len(msgs)
                         self.storage.mark_pending_tg_forwarded(
                             src_channel, batch_ids, tg_target
@@ -1579,6 +1778,8 @@ class Forwarder:
                         logger.debug(
                             f"[Stats] TG 转发成功 {len(msgs)} 条  {src_channel} → {tg_target}"
                         )
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as e:
                         self.stats["forward_failed"] += len(msgs)
                         logger.error(
@@ -1637,6 +1838,8 @@ class Forwarder:
                     if 0 <= index < len(batch_indexes)
                 },
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             failed_count = sum(batch_message_counts)
             self.stats["forward_failed"] += failed_count
