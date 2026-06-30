@@ -30,6 +30,15 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           NOTES_FOUND: ${{ steps.notes.outputs.found }}
         run: |
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            if [ "${NOTES_FOUND}" = "true" ]; then
+              gh release edit "${TAG_NAME}" --title "${TAG_NAME}" --notes-file notes.md
+            else
+              gh release edit "${TAG_NAME}" --title "${TAG_NAME}"
+            fi
+            exit 0
+          fi
+
           if [ "${NOTES_FOUND}" = "true" ]; then
             gh release create "${TAG_NAME}" --title "${TAG_NAME}" --notes-file notes.md
           else

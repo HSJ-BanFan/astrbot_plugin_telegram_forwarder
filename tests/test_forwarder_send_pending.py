@@ -204,6 +204,9 @@ def make_forwarder(forwarder_module, storage: FakeStorage, *, strict_ack: bool):
     forwarder._stopping = False
     forwarder._send_dispatch_lock = asyncio.Lock()
     forwarder._global_send_lock = asyncio.Lock()
+    forwarder._queue_clear_generation = 0
+    forwarder._queue_clear_active = False
+    forwarder._active_send_tasks = set()
     forwarder._active_tasks = set()
     forwarder._shutdown_complete = asyncio.Event()
     forwarder._track_current_task = lambda: None
