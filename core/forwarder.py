@@ -95,6 +95,13 @@ class Forwarder:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
+        source_channels = self.config.get("source_channels", [])
+        active_channels = [
+            c.get("channel_username")
+            for c in source_channels
+            if c.get("channel_username")
+        ]
+        self.storage.reset_inactive_channels(active_channels)
         logger.info("[Forwarder] 运行时配置组件已刷新。")
 
     def _get_channel_lock(self, channel_name: str) -> asyncio.Lock:

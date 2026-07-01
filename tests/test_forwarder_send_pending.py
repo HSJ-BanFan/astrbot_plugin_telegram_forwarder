@@ -276,6 +276,28 @@ def make_forwarder(forwarder_module, storage: FakeStorage, *, strict_ack: bool):
     return forwarder
 
 
+def test_reload_runtime_config_resets_inactive_channels():
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    forwarder.config = {
+        "source_channels": [
+            {"channel_username": "demo"},
+            {"channel_username": ""},
+            {"channel_username": "other"},
+            {},
+        ]
+    }
+    forwarder.storage = MagicMock()
+
+    with patch.object(forwarder_module, "MessageFilter", MagicMock()) as filter_cls:
+        with patch.object(forwarder_module, "MessageMerger", MagicMock()) as merger_cls:
+            forwarder.reload_runtime_config()
+
+    filter_cls.assert_called_once_with(forwarder.config)
+    merger_cls.assert_called_once_with(forwarder.config)
+    forwarder.storage.reset_inactive_channels.assert_called_once_with(["demo", "other"])
+
+
 @pytest.mark.asyncio
 async def test_send_pending_qq_budget_does_not_throttle_batch_extraction():
     forwarder_module = load_forwarder_module()
