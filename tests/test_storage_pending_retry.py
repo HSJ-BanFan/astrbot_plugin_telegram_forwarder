@@ -146,6 +146,57 @@ def test_get_all_pending_normalizes_legacy_items():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def test_get_all_pending_normalizes_malformed_completed_qq_targets():
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    try:
+        data_path = tmp_dir / "data.json"
+        data_path.write_text(
+            json.dumps(
+                {
+                    "channels": {
+                        "demo": {
+                            "pending_queue": [
+                                {
+                                    "id": 3,
+                                    "time": 300.0,
+                                    "completed_qq_targets": None,
+                                },
+                                {
+                                    "id": 4,
+                                    "time": 400.0,
+                                    "completed_qq_targets": "target-a",
+                                },
+                                {
+                                    "id": 5,
+                                    "time": 500.0,
+                                    "completed_qq_targets": [
+                                        "target-a",
+                                        None,
+                                        "",
+                                        "  ",
+                                        123,
+                                    ],
+                                },
+                            ]
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        storage = storage_module.Storage(str(data_path))
+        items = {item["id"]: item for item in storage.get_all_pending()}
+
+        assert items[3]["completed_qq_targets"] == []
+        assert items[4]["completed_qq_targets"] == []
+        assert items[5]["completed_qq_targets"] == ["target-a", "123"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def test_mark_pending_retry_updates_targeted_items_only():
     storage_module = load_storage_module()
     tmp_dir = make_test_dir()
@@ -329,5 +380,37 @@ def test_mark_pending_qq_targets_completed_persists_deduped_targets():
             "test:GroupMessage:2",
         ]
         assert items[42]["completed_qq_targets"] == []
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_mark_pending_qq_targets_completed_ignores_blank_or_none_targets():
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    try:
+        data_path = tmp_dir / "data.json"
+        storage = storage_module.Storage(str(data_path))
+        storage.add_batch_to_pending_queue(
+            "demo",
+            [
+                {
+                    "id": 43,
+                    "time": 100.0,
+                    "grouped_id": None,
+                    "is_cold_start": False,
+                    "is_monitored": False,
+                }
+            ],
+        )
+
+        storage.mark_pending_qq_targets_completed(
+            "demo",
+            [43],
+            [None, "", "  ", "target-a"],
+        )
+
+        reloaded = storage_module.Storage(str(data_path))
+        item = reloaded.get_all_pending()[0]
+        assert item["completed_qq_targets"] == ["target-a"]
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
