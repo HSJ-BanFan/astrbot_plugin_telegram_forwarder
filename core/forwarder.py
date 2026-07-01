@@ -546,7 +546,7 @@ class Forwarder:
             logger.error(f"[Forwarder] 宵禁时间格式解析错误: {curfew_time}. 错误: {e}")
             return False
 
-    async def check_updates(self):
+    async def check_updates(self, force: bool = False):
         """
         检查所有配置的频道更新并加入待发送队列
         """
@@ -582,7 +582,7 @@ class Forwarder:
                 # 1. 优先检查抓取间隔，没到时间直接退出，避免无效开销
                 now = datetime.now().timestamp()
                 last_check = self._channel_last_check.get(channel_name, 0)
-                if now - last_check < interval:
+                if not force and now - last_check < interval:
                     return []
 
                 # 2. 到时间了，再获取该频道上次拉取的最后一条消息 ID

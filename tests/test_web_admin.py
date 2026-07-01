@@ -205,3 +205,33 @@ def test_save_config_rejects_malformed_merge_rules(web_admin):
 
     assert response.status_code == 400
     web_admin.plugin.config.save_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runtime_check_forces_fetch_then_sends(web_admin):
+    calls = []
+
+    async def check_updates(*, force=False):
+        calls.append(("check", force))
+
+    async def send_pending_messages(*, force_immediate=False):
+        calls.append(("send", force_immediate))
+
+    captured = []
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=True,
+        check_updates=AsyncMock(side_effect=check_updates),
+        send_pending_messages=AsyncMock(side_effect=send_pending_messages),
+    )
+    web_admin.server._track_runtime_task = captured.append
+
+    result = await web_admin.server.runtime_check()
+    await captured[0]
+
+    assert result["message"] == "已触发一次抓取与发送。"
+    assert web_admin.plugin.forwarder._stopping is False
+    web_admin.plugin.forwarder.check_updates.assert_awaited_once_with(force=True)
+    web_admin.plugin.forwarder.send_pending_messages.assert_awaited_once_with(
+        force_immediate=True
+    )
+    assert calls == [("check", True), ("send", True)]

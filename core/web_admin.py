@@ -1064,8 +1064,12 @@ class WebAdminServer:
 
     async def runtime_check(self) -> dict[str, Any]:
         self.plugin.forwarder._stopping = False
-        self._track_runtime_task(self.plugin.forwarder.check_updates())
-        self._track_runtime_task(self.plugin.forwarder.send_pending_messages())
+
+        async def run_once():
+            await self.plugin.forwarder.check_updates(force=True)
+            await self.plugin.forwarder.send_pending_messages(force_immediate=True)
+
+        self._track_runtime_task(run_once())
         return {"message": "已触发一次抓取与发送。"}
 
     def _track_runtime_task(self, coro) -> None:

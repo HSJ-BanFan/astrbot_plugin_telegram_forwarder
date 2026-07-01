@@ -13,12 +13,28 @@ import pytest
 class FakeStorage:
     def __init__(self, pending: list[dict]):
         self.pending = list(pending)
+        self.channel_data: dict[str, dict] = {}
         self.removed: list[tuple[str, list[int]]] = []
         self.retry_updates: list[tuple[str, list[int], dict]] = []
         self.cleared: list[tuple[str, list[int]]] = []
 
     def get_all_pending(self) -> list[dict]:
         return list(self.pending)
+
+    def get_channel_data(self, channel_name: str) -> dict:
+        data = self.channel_data.setdefault(channel_name, {"last_post_id": 0})
+        data["pending_queue"] = [
+            item for item in self.pending if item.get("channel") == channel_name
+        ]
+        return data
+
+    def add_batch_to_pending_queue(self, channel_name: str, messages: list[dict]) -> int:
+        for message in messages:
+            self.pending.append({"channel": channel_name, **message})
+        return len(messages)
+
+    def update_last_id(self, channel_name: str, last_id: int) -> None:
+        self.get_channel_data(channel_name)["last_post_id"] = last_id
 
     def cleanup_expired_pending(self, retention: int) -> int:
         return 0
@@ -296,6 +312,45 @@ def test_reload_runtime_config_resets_inactive_channels():
     filter_cls.assert_called_once_with(forwarder.config)
     merger_cls.assert_called_once_with(forwarder.config)
     forwarder.storage.reset_inactive_channels.assert_called_once_with(["demo", "other"])
+
+
+@pytest.mark.asyncio
+async def test_check_updates_force_bypasses_channel_interval():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage([])
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._channel_locks = {}
+    forwarder._channel_last_check = {"demo": forwarder_module.datetime.now().timestamp()}
+    forwarder._get_effective_config = lambda channel: {
+        "check_interval": 3600,
+        "msg_limit": 1,
+    }
+    forwarder.message_merger = SimpleNamespace(
+        find_defer_from_index=MagicMock(return_value=None),
+        merge_messages=MagicMock(side_effect=lambda pairs: pairs),
+    )
+    forwarder._fetch_channel_messages = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=901,
+                text="forced",
+                date=forwarder_module.datetime.now(),
+                grouped_id=None,
+                reply_markup=None,
+            )
+        ]
+    )
+    forwarder._prepare_album_boundaries = AsyncMock(side_effect=lambda channel, msgs, limit: msgs)
+    forwarder._is_monitor_matched = MagicMock(return_value=False)
+
+    await forwarder.check_updates()
+    forwarder._fetch_channel_messages.assert_not_awaited()
+
+    await forwarder.check_updates(force=True)
+
+    forwarder._fetch_channel_messages.assert_awaited_once()
+    assert storage.pending[0]["id"] == 901
+    assert storage.get_channel_data("demo")["last_post_id"] == 901
 
 
 @pytest.mark.asyncio
