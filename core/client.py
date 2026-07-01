@@ -231,8 +231,7 @@ class TelegramClientWrapper:
             rows = sanitized_rows
 
         backup_file = Path(f"{session_file}.bak")
-        if not backup_file.exists():
-            shutil.copy2(session_file, backup_file)
+        shutil.copy2(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)
         backup_table = "sessions_schema_migration_backup"
