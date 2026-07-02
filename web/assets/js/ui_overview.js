@@ -1,7 +1,7 @@
 import { store } from './store.js';
 import { apiRequest } from './api.js';
 import { escapeHtml } from './utils.js';
-import { els, showToast, withAction, loadStatusOnly } from '../app.js';
+import { els, showToast, withAction, loadStatusOnly } from './context.js';
 
 function runtimeStatusLabel(status) {
   if (status === "running") return "运行中";

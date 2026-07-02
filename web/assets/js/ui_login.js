@@ -1,7 +1,7 @@
 import { store } from './store.js';
 import { apiRequest } from './api.js';
 import { escapeHtml } from './utils.js';
-import { els, showToast, withAction, withButtonLoading, loadAll, saveConfig, enterApp } from '../app.js';
+import { els, showToast, withAction, withButtonLoading, loadAll, saveConfig, enterApp } from './context.js';
 
 export async function checkToken(token) {
   const response = await fetch("/api/auth/check", {

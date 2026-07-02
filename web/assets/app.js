@@ -1,7 +1,25 @@
+import { store } from './js/store.js';
+import {
+  els,
+  showToast,
+  saveConfig,
+  loadAll,
+  loadStatusOnly,
+  enterApp,
+  withAction,
+  withButtonLoading,
+  setCollectFormsCallback
+} from './js/context.js';
+import { initLogin, checkToken } from './js/ui_login.js';
+import { initOverview, renderStatus } from './js/ui_overview.js';
+import { initChannels, collectChannels, collectMergeRules, renderChannels, renderMergeRules } from './js/ui_channels.js';
+import { renderQQTargetSelector, splitList, joinList } from './js/ui_selector.js';
+import { escapeHtml } from './js/utils.js';
+
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
 export const TRI_STATE = ["继承全局", "开启", "关闭"];
 
-const FORWARD_GROUPS = [
+export const FORWARD_GROUPS = [
   {
     id: "schedule",
     label: "调度",
@@ -76,7 +94,7 @@ const FORWARD_GROUPS = [
   },
 ];
 
-const FORWARD_FIELDS = FORWARD_GROUPS.flatMap((group) => group.fields);
+export const FORWARD_FIELDS = FORWARD_GROUPS.flatMap((group) => group.fields);
 export const CHANNEL_GROUPS = [
   { id: "base", label: "基础" },
   { id: "content", label: "内容" },
@@ -88,26 +106,6 @@ export const MERGE_RULE_CLASSES = [
   { value: "SomeACGPreviewPlusOriginal", label: "SomeACG 预览图+原图" },
 ];
 const DEFAULT_WEB_CONFIG = { enabled: true, host: "127.0.0.1", port: 8180, token: "" };
-
-export const els = {};
-const state = {
-  token: localStorage.getItem("telegram_forwarder_token") || "",
-  config: null,
-  status: null,
-  section: "overview",
-  forwardGroup: "schedule",
-  expandedChannels: new Set(),
-  channelGroups: {},
-  expandedMergeRules: new Set(),
-  qqGroups: [],
-  qqGroupsAvailable: false,
-  qqGroupsMessage: "",
-  tgChannels: [],
-  tgChannelsAvailable: false,
-  tgChannelsMessage: "",
-  runtimeRefreshTimer: null,
-  runtimeRefreshInFlight: false,
-};
 
 function $(id) {
   return document.getElementById(id);
@@ -182,360 +180,48 @@ function cacheElements() {
   });
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-export function showToast(message) {
-  els.toast.textContent = message;
-  els.toast.classList.add("show");
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => els.toast.classList.remove("show"), 2800);
-}
-
-async function api(path, options = {}) {
-  const headers = { "X-Admin-Token": state.token, ...(options.headers || {}) };
-  if (options.body && !(options.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-  }
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    body: options.body && !(options.body instanceof FormData) ? JSON.stringify(options.body) : options.body,
-  });
-  const payload = await response.json().catch(() => ({ ok: false, message: "响应不是 JSON。" }));
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.message || `请求失败：${response.status}`);
-  }
-  return payload.data || {};
-}
-
-async function checkToken(token) {
-  const response = await fetch("/api/auth/check", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  const payload = await response.json();
-  return Boolean(payload?.data?.authorized);
-}
-
-export async function loadQQGroups({ force = false } = {}) {
-  try {
-    const data = await api(force ? "/api/qq/groups/refresh" : "/api/qq/groups", {
-      method: force ? "POST" : "GET",
-    });
-    state.qqGroups = Array.isArray(data.groups) ? data.groups : [];
-    state.qqGroupsAvailable = Boolean(data.available);
-    state.qqGroupsMessage = data.message || "";
-    return data;
-  } catch (error) {
-    state.qqGroups = [];
-    state.qqGroupsAvailable = false;
-    state.qqGroupsMessage = error.message;
-    return { groups: [], available: false, message: error.message };
-  }
-}
-
-export async function loadTGChannels({ force = false } = {}) {
-  try {
-    const data = await api(force ? "/api/tg/channels/refresh" : "/api/tg/channels", {
-      method: force ? "POST" : "GET",
-    });
-    state.tgChannels = Array.isArray(data.channels) ? data.channels : [];
-    state.tgChannelsAvailable = Boolean(data.available);
-    state.tgChannelsMessage = data.message || "";
-    return data;
-  } catch (error) {
-    state.tgChannels = [];
-    state.tgChannelsAvailable = false;
-    state.tgChannelsMessage = error.message;
-    return { channels: [], available: false, message: error.message };
-  }
-}
-
-function splitList(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean);
-  return String(value).split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
-}
-
-function joinList(value) {
-  return Array.isArray(value) ? value.join("\n") : "";
-}
-
-function uniqueList(items) {
-  const seen = new Set();
-  return items.filter((item) => {
-    const value = String(item || "").trim();
-    if (!value || seen.has(value)) return false;
-    seen.add(value);
-    return true;
-  });
-}
-
-function isNumericGroupTarget(target) {
-  return /^\d+$/.test(String(target || "").trim());
-}
-
-function groupIdFromTarget(target) {
-  const value = String(target || "").trim();
-  if (isNumericGroupTarget(value)) return value;
-  const parts = value.split(":");
-  if (parts.length >= 3 && parts[1] === "GroupMessage" && /^\d+$/.test(parts[2])) {
-    return parts[2];
-  }
-  return "";
-}
-
-function groupByTarget(target) {
-  const groupId = groupIdFromTarget(target);
-  if (!groupId) return null;
-  return state.qqGroups.find((group) => String(group.group_id) === groupId) || null;
-}
-
-function targetForGroup(targets, groupId) {
-  return targets.find((target) => groupIdFromTarget(target) === String(groupId));
-}
-
-function channelByRef(ref) {
-  const value = String(ref || "").trim().replace(/^@/, "");
-  if (!value) return null;
-  return state.tgChannels.find((channel) => String(channel.channel_ref) === value) || null;
-}
-
-function channelTitle(ref) {
-  const channel = channelByRef(ref);
-  if (channel) return channel.title || channel.channel_ref;
-  const value = String(ref || "").trim();
-  if (!value) return "新频道";
-  return value.startsWith("-") ? value : `@${value.replace(/^@/, "")}`;
-}
-
-function intValue(id, fallback = 0) {
-  const parsed = Number.parseInt(els[id].value, 10);
+export function intValue(id, fallback = 0) {
+  const parsed = Number.parseInt(els[id]?.value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function currentWebConfig() {
-  return { ...DEFAULT_WEB_CONFIG, ...(state.config?.web_config || {}) };
+  return { ...DEFAULT_WEB_CONFIG, ...(store.state.config?.web_config || {}) };
 }
 
-function runtimeStatusLabel(status) {
-  if (status === "running") return "运行中";
-  if (status === "success") return "完成";
-  if (status === "failed") return "失败";
-  if (status === "cancelled") return "已取消";
-  return "未知";
-}
-
-function formatRuntimeTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleTimeString("zh-CN", { hour12: false });
-  }
-  return String(value).replace("T", " ");
-}
-
-function renderRuntimeOperations(runtime) {
-  const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
-  const active = operations.find((operation) => operation.status === "running");
-  const busyNotes = [];
-  if (runtime.capture_busy) busyNotes.push("有频道正在抓取");
-  if (runtime.send_busy || runtime.global_send_busy) busyNotes.push("发送任务正在执行，定时发送会自动跳过本轮");
-  if (runtime.active_web_operations) busyNotes.push(`${runtime.active_web_operations} 个 Web 操作运行中`);
-
-  if (active) {
-    els.runtimeMessage.textContent = `${active.label}：${active.message || "正在执行。"}`;
-  } else if (busyNotes.length) {
-    els.runtimeMessage.textContent = busyNotes.join("，");
-  } else {
-    els.runtimeMessage.textContent = "手动触发、暂停或恢复转发任务。";
-  }
-
-  els.runtimeState.innerHTML = busyNotes.length
-    ? busyNotes.map((note) => `<span class="runtime-chip active">${escapeHtml(note)}</span>`).join("")
-    : '<span class="runtime-chip">当前没有 Web 运行任务</span>';
-
-  els.runtimeLog.innerHTML = operations.length
-    ? operations
-        .map((operation) => {
-          const duration = Number.isFinite(operation.duration_ms)
-            ? `${Math.max(1, Math.round(operation.duration_ms / 1000))}s`
-            : "";
-          const meta = [
-            runtimeStatusLabel(operation.status),
-            formatRuntimeTime(operation.finished_at || operation.started_at),
-            duration,
-          ].filter(Boolean).join(" · ");
-          return `
-            <div class="runtime-log-item ${escapeHtml(operation.status || "")}">
-              <div>
-                <strong>${escapeHtml(operation.label || "运行任务")}</strong>
-                <span>${escapeHtml(operation.message || "")}</span>
-              </div>
-              <small>${escapeHtml(meta)}</small>
-            </div>
-          `;
-        })
-        .join("")
-    : '<div class="runtime-log-item"><div><strong>暂无运行记录</strong><span>Web 操作会显示在这里。</span></div><small>-</small></div>';
-}
-
-function renderStatus() {
-  const status = state.status || {};
-  const telegram = status.telegram || {};
-  const runtime = status.runtime || {};
-  const queue = status.queue || {};
-  const me = telegram.me;
-
-  els.telegramStatus.textContent = telegram.authorized
-    ? `已授权${me?.username ? ` @${me.username}` : ""}`
-    : telegram.connected
-      ? "已连接，未授权"
-      : "未连接";
-  els.schedulerStatus.textContent = runtime.scheduler_running
-    ? runtime.paused
-      ? "已暂停"
-      : "运行中"
-    : "未启动";
-  els.channelCount.textContent = String(status.channels?.count ?? 0);
-  els.queueCount.textContent = String(queue.total ?? 0);
-  renderRuntimeOperations(runtime);
-  els.loginBadge.textContent = telegram.authorized
-    ? telegram.replace_existing
-      ? "准备重新登录"
-      : "已登录"
-    : telegram.login_in_progress
-      ? "登录中"
-      : "未登录";
-
-  const accountTitle = telegram.authorized
-    ? me?.username
-      ? `@${me.username}`
-      : me?.phone || "已授权账号"
-    : "尚未登录 Telegram";
-  const accountDetail = telegram.authorized
-    ? [me?.first_name, me?.last_name].filter(Boolean).join(" ") || me?.phone || "Session 可用"
-    : telegram.login_in_progress
-      ? telegram.replace_existing && !telegram.phone
-        ? "准备重新登录，当前账号仍然保留"
-        : `验证码流程进行中：${telegram.phone || "-"}`
-      : "完成登录后将自动启动转发任务";
-  const loginRows = telegram.authorized
-    ? [
-        ["账号", accountTitle],
-        ["姓名", [me?.first_name, me?.last_name].filter(Boolean).join(" ") || "-"],
-        ["手机号", me?.phone || telegram.phone || "-"],
-        ["用户 ID", me?.id || "-"],
-        ["连接状态", telegram.connected ? "已连接" : "未连接"],
-      ]
-    : [
-        ["状态", telegram.login_in_progress ? "登录流程中" : "未登录"],
-        ["手机号", telegram.phone || "-"],
-      ];
-  els.loginAccountInfo.innerHTML = `
-    <span class="account-pill">${escapeHtml(accountTitle)}</span>
-    <span>${escapeHtml(accountDetail)}</span>
-    <div class="account-detail-grid">
-      ${loginRows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
-    </div>
-  `;
-  els.loginAccountCard.hidden = Boolean(telegram.replace_existing);
-
-  updateLoginSteps();
-
-  const entries = Object.entries(queue.by_channel || {});
-  els.queueList.innerHTML = entries.length
-    ? entries
-        .map(([channel, count]) => `<div class="queue-item"><span>${escapeHtml(channel)}</span><strong>${count}</strong></div>`)
-        .join("")
-    : '<div class="queue-item"><span>无待发送消息</span><strong>0</strong></div>';
-}
-
-function updateLoginSteps() {
-  const telegram = state.status?.telegram || {};
-  const steps = document.querySelectorAll("[data-login-step]");
-  steps.forEach((step) => {
-    step.classList.remove("active", "done");
-    step.hidden = true;
-  });
-
-  if (telegram.authorized && !telegram.replace_existing) {
-    els.loginMessage.textContent = "Telegram 已登录。需要切换账号时点击重新登录，新账号成功前不会清除当前登录。";
-    els.resetLoginBtn.hidden = false;
-    return;
-  }
-
-  els.resetLoginBtn.hidden = !telegram.authorized && !telegram.login_in_progress;
-  const connectStep = document.querySelector('[data-login-step="connect"]');
-  const codeStep = document.querySelector('[data-login-step="code"]');
-  const passwordStep = document.querySelector('[data-login-step="password"]');
-  connectStep.hidden = false;
-  connectStep.classList.add(telegram.code_sent ? "done" : "active");
-
-  if (telegram.login_in_progress) {
-    if (telegram.replace_existing) {
-      connectStep.hidden = false;
-      if (!telegram.code_sent) {
-        connectStep.classList.remove("done");
-        connectStep.classList.add("active");
-        els.loginMessage.textContent = "当前账号仍然保留。填写新账号手机号并发送验证码，新账号成功后才会替换当前登录。";
-        return;
-      }
-    }
-    if (!telegram.code_sent) {
-      els.loginMessage.textContent = "填写连接信息并发送验证码。";
-      return;
-    }
-    codeStep.hidden = false;
-    codeStep.classList.add(telegram.need_password ? "done" : "active");
-    els.loginMessage.textContent = telegram.need_password ? "验证码已通过，请继续提交两步验证密码。" : "验证码已发送，请输入 Telegram 收到的验证码。";
-    if (telegram.need_password) {
-      passwordStep.hidden = false;
-      passwordStep.classList.add("active");
-    }
-  } else {
-    els.loginMessage.textContent = "按顺序配置连接信息、发送验证码、提交验证码。";
-  }
-}
-
-function renderRootConfig() {
-  const cfg = state.config || {};
-  els.apiIdInput.value = cfg.api_id || "";
-  els.apiHashInput.value = cfg.api_hash || "";
-  els.phoneInput.value = cfg.phone || "";
-  els.proxyInput.value = cfg.proxy || "";
-  els.targetChannelInput.value = cfg.target_channel || "";
-  els.targetQQInput.value = joinList(cfg.target_qq_session || []);
+export function renderRootConfig() {
+  const cfg = store.state.config || {};
+  if (els.apiIdInput) els.apiIdInput.value = cfg.api_id || "";
+  if (els.apiHashInput) els.apiHashInput.value = cfg.api_hash || "";
+  if (els.phoneInput) els.phoneInput.value = cfg.phone || "";
+  if (els.proxyInput) els.proxyInput.value = cfg.proxy || "";
+  if (els.targetChannelInput) els.targetChannelInput.value = cfg.target_channel || "";
+  if (els.targetQQInput) els.targetQQInput.value = joinList(cfg.target_qq_session || []);
+  
   renderQQTargetSelector({
     root: els.defaultQQSelector,
     manualInput: els.targetQQInput,
     inheritLabel: "未配置默认 QQ 目标",
   });
-  els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
+  if (els.debugDefaultInput) els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
 
   const web = currentWebConfig();
-  els.webEnabledInput.checked = Boolean(web.enabled);
-  els.webHostInput.value = web.host;
-  els.webPortInput.value = web.port;
-  els.webTokenInput.value = web.token;
+  if (els.webEnabledInput) els.webEnabledInput.checked = Boolean(web.enabled);
+  if (els.webHostInput) els.webHostInput.value = web.host;
+  if (els.webPortInput) els.webPortInput.value = web.port;
+  if (els.webTokenInput) els.webTokenInput.value = web.token;
 }
 
-function renderForwardTabs() {
+export function renderForwardTabs() {
+  if (!els.forwardTabs) return;
   els.forwardTabs.innerHTML = FORWARD_GROUPS.map(
     (group) =>
-      `<button type="button" data-forward-tab="${group.id}" class="${state.forwardGroup === group.id ? "active" : ""}">${escapeHtml(group.label)}</button>`,
+      `<button type="button" data-forward-tab="${group.id}" class="${store.state.forwardGroup === group.id ? "active" : ""}">${escapeHtml(group.label)}</button>`,
   ).join("");
   document.querySelectorAll("[data-forward-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       collectForwardConfig();
-      state.forwardGroup = button.dataset.forwardTab;
+      store.updateState({ forwardGroup: button.dataset.forwardTab });
       renderForwardTabs();
       renderForwardConfig();
     });
@@ -605,520 +291,41 @@ function renderField(field, value, attrName) {
   `;
 }
 
-function renderForwardConfig() {
-  const cfg = state.config?.forward_config || {};
-  const group = FORWARD_GROUPS.find((item) => item.id === state.forwardGroup) || FORWARD_GROUPS[0];
+export function renderForwardConfig() {
+  if (!els.forwardConfigForm) return;
+  const cfg = store.state.config?.forward_config || {};
+  const group = FORWARD_GROUPS.find((item) => item.id === store.state.forwardGroup) || FORWARD_GROUPS[0];
   els.forwardConfigForm.innerHTML = group.fields
     .map((field) => renderField(field, cfg[field.key] ?? field.defaultValue, "data-forward"))
     .join("");
 }
 
-function renderQQTargetSelector({ root, manualInput, inheritLabel = "继承默认目标" }) {
-  if (!root || !manualInput) return;
-  const targets = uniqueList(splitList(manualInput.value));
-  const keyword = String(root.dataset.search || "").trim().toLowerCase();
-  const groups = state.qqGroups.filter((group) => {
-    if (!keyword) return true;
-    return (
-      String(group.group_id || "").toLowerCase().includes(keyword) ||
-      String(group.group_name || "").toLowerCase().includes(keyword)
-    );
-  });
-  const statusText = state.qqGroupsAvailable
-    ? `${state.qqGroups.length} 个 QQ 群`
-    : state.qqGroupsMessage || "QQ 平台未就绪";
-  const selectedHtml = targets.length
-    ? targets
-        .map((target) => {
-          const group = groupByTarget(target);
-          const label = group
-            ? `${group.group_name || `群 ${group.group_id}`} (${group.group_id})`
-            : target;
-          const badge = group ? group.source || "live" : "manual";
-          return `
-            <button type="button" class="selector-pill" data-remove-target="${escapeHtml(target)}">
-              <span>${escapeHtml(label)}</span>
-              <small>${escapeHtml(badge)}</small>
-            </button>
-          `;
-        })
-        .join("")
-    : `<div class="selector-empty">${escapeHtml(inheritLabel)}</div>`;
-
-  root.innerHTML = `
-    <div class="selector-toolbar">
-      <input data-selector-search type="search" placeholder="搜索 QQ 群名或群号" value="${escapeHtml(root.dataset.search || "")}" />
-      <button class="btn btn-soft" data-selector-refresh type="button">刷新群列表</button>
-    </div>
-    <div class="selector-status">${escapeHtml(statusText)}</div>
-    <div class="selector-layout">
-      <div class="selector-list">
-        ${
-          groups.length
-            ? groups
-                .map((group) => {
-                  const selected = Boolean(targetForGroup(targets, group.group_id));
-                  return `
-                    <button type="button" class="selector-row ${selected ? "selected" : ""}" data-qq-group="${escapeHtml(group.group_id)}">
-                      <span>
-                        <strong>${escapeHtml(group.group_name || `群 ${group.group_id}`)}</strong>
-                        <small>${escapeHtml(group.group_id)} · ${escapeHtml(group.member_count ?? 0)} 人</small>
-                      </span>
-                      <em>${selected ? "已选" : escapeHtml(group.source || "live")}</em>
-                    </button>
-                  `;
-                })
-                .join("")
-            : '<div class="selector-empty">没有可显示的 QQ 群。</div>'
-        }
-      </div>
-      <div class="selector-selected">
-        ${selectedHtml}
-      </div>
-    </div>
-  `;
-
-  root.querySelector("[data-selector-search]")?.addEventListener("input", (event) => {
-    root.dataset.search = event.target.value;
-    renderQQTargetSelector({ root, manualInput, inheritLabel });
-  });
-  root.querySelector("[data-selector-refresh]")?.addEventListener("click", async () => {
-    collectForms();
-    await loadQQGroups({ force: true });
-    renderAll();
-    showToast("QQ 群列表已刷新。");
-  });
-  root.querySelectorAll("[data-qq-group]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const groupId = button.dataset.qqGroup;
-      const current = uniqueList(splitList(manualInput.value));
-      const existing = targetForGroup(current, groupId);
-      const next = existing
-        ? current.filter((target) => target !== existing)
-        : [...current, groupId];
-      manualInput.value = joinList(next);
-      renderQQTargetSelector({ root, manualInput, inheritLabel });
-    });
-  });
-  root.querySelectorAll("[data-remove-target]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const target = button.dataset.removeTarget;
-      manualInput.value = joinList(
-        uniqueList(splitList(manualInput.value)).filter((item) => item !== target),
-      );
-      renderQQTargetSelector({ root, manualInput, inheritLabel });
-    });
-  });
-  manualInput.onchange = () => {
-    renderQQTargetSelector({ root, manualInput, inheritLabel });
-  };
-}
-
-function renderTGChannelSelector({ root, manualInput }) {
-  if (!root || !manualInput) return;
-  const currentRef = String(manualInput.value || "").trim().replace(/^@/, "");
-  const keyword = String(root.dataset.search || "").trim().toLowerCase();
-  const channels = state.tgChannels.filter((channel) => {
-    if (!keyword) return true;
-    return (
-      String(channel.title || "").toLowerCase().includes(keyword) ||
-      String(channel.username || "").toLowerCase().includes(keyword) ||
-      String(channel.channel_ref || "").toLowerCase().includes(keyword)
-    );
-  });
-  const statusText = state.tgChannelsAvailable
-    ? `${state.tgChannels.length} 个 Telegram 频道`
-    : state.tgChannelsMessage || "Telegram 未登录或未授权";
-  root.innerHTML = `
-    <div class="selector-toolbar">
-      <input data-selector-search type="search" placeholder="搜索频道标题、用户名或 ID" value="${escapeHtml(root.dataset.search || "")}" />
-      <button class="btn btn-soft" data-selector-refresh type="button">刷新频道</button>
-    </div>
-    <div class="selector-status">${escapeHtml(statusText)}</div>
-    <div class="selector-list">
-      ${
-        channels.length
-          ? channels
-              .map((channel) => {
-                const selected = String(channel.channel_ref) === currentRef;
-                const ref = channel.channel_ref || "";
-                const handle = channel.username ? `@${channel.username}` : ref;
-                return `
-                  <button type="button" class="selector-row ${selected ? "selected" : ""}" data-tg-channel="${escapeHtml(ref)}">
-                    <span>
-                      <strong>${escapeHtml(channel.title || handle)}</strong>
-                      <small>${escapeHtml(handle)} · ${escapeHtml(channel.kind || "channel")}</small>
-                    </span>
-                    <em>${selected ? "已选" : escapeHtml(channel.source || "live")}</em>
-                  </button>
-                `;
-              })
-              .join("")
-          : '<div class="selector-empty">没有可显示的 Telegram 频道。</div>'
-      }
-    </div>
-  `;
-
-  root.querySelector("[data-selector-search]")?.addEventListener("input", (event) => {
-    root.dataset.search = event.target.value;
-    renderTGChannelSelector({ root, manualInput });
-  });
-  root.querySelector("[data-selector-refresh]")?.addEventListener("click", async () => {
-    collectForms();
-    await loadTGChannels({ force: true });
-    renderAll();
-    showToast("Telegram 频道列表已刷新。");
-  });
-  root.querySelectorAll("[data-tg-channel]").forEach((button) => {
-    button.addEventListener("click", () => {
-      manualInput.value = button.dataset.tgChannel || "";
-      renderTGChannelSelector({ root, manualInput });
-    });
-  });
-  manualInput.onchange = () => {
-    manualInput.value = String(manualInput.value || "").trim();
-    renderTGChannelSelector({ root, manualInput });
-  };
-}
-
-function defaultMergeRule() {
-  return {
-    __template_key: "default",
-    name: "",
-    channel: "",
-    rule_class: "KeywordNextNMerge",
-    params: {
-      trigger_keywords: [],
-      trigger_regex: "",
-      next_count: 2,
-      time_window_seconds: 60,
-    },
-  };
-}
-
-function normalizeMergeRule(rule = {}) {
-  const defaults = defaultMergeRule();
-  return {
-    ...defaults,
-    ...rule,
-    params: {
-      ...defaults.params,
-      ...(rule.params || {}),
-    },
-  };
-}
-
-function mergeRuleKey(rule, index) {
-  const normalized = normalizeMergeRule(rule);
-  return normalized.name || normalized.channel || normalized.rule_class
-    ? `rule:${normalized.name}:${normalized.channel}:${normalized.rule_class}:${index}`
-    : `idx:${index}`;
-}
-
-function mergeRuleTitle(rule) {
-  const normalized = normalizeMergeRule(rule);
-  if (normalized.name) {
-    return normalized.name;
+export function renderRawConfig() {
+  if (els.rawConfigInput) {
+    els.rawConfigInput.value = JSON.stringify(store.state.config || {}, null, 2);
   }
-  const classLabel = MERGE_RULE_CLASSES.find((item) => item.value === normalized.rule_class)?.label || normalized.rule_class || "未选择规则";
-  return normalized.channel ? `@${normalized.channel} · ${classLabel}` : `新规则 · ${classLabel}`;
 }
 
-function renderMergeRules() {
-  const rules = Array.isArray(state.config?.merge_rules) ? state.config.merge_rules : [];
-  els.mergeRuleList.innerHTML = rules.length
-    ? rules
-        .map((rule, index) => {
-          const cfg = normalizeMergeRule(rule);
-          const params = cfg.params || {};
-          const key = mergeRuleKey(cfg, index);
-          const collapsed = !state.expandedMergeRules.has(key);
-          return `
-            <article class="channel-card merge-card ${collapsed ? "collapsed" : ""}" data-merge-index="${index}" data-merge-key="${escapeHtml(key)}">
-              <button class="channel-summary" type="button" data-toggle-merge="${index}">
-                <div>
-                  <div class="channel-title-text">${escapeHtml(mergeRuleTitle(cfg))}</div>
-                  <div class="channel-meta">
-                    <span>后续 ${escapeHtml(params.next_count ?? params.merge_count ?? 2)} 条</span>
-                    <span>超时 ${escapeHtml(params.time_window_seconds ?? 60)} 秒</span>
-                  </div>
-                </div>
-                <span class="chevron">⌄</span>
-              </button>
-              <div class="channel-body">
-                <section class="channel-section active">
-                  <div class="form-grid">
-                    <label class="field">规则名称<input data-merge-field="name" value="${escapeHtml(cfg.name)}" placeholder="例如：主频道预览图合并" /></label>
-                    <label class="field">频道用户名<input data-merge-field="channel" value="${escapeHtml(cfg.channel)}" /></label>
-                    <label class="field">规则类型
-                      <select data-merge-field="rule_class">
-                        ${MERGE_RULE_CLASSES.map((item) => `<option value="${escapeHtml(item.value)}" ${cfg.rule_class === item.value ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
-                      </select>
-                    </label>
-                  </div>
-                  <div class="form-grid">
-                    <label class="field">触发关键词<textarea data-merge-param="trigger_keywords" rows="4">${escapeHtml(joinList(params.trigger_keywords || params.keywords || []))}</textarea></label>
-                    <label class="field">触发正则<input data-merge-param="trigger_regex" value="${escapeHtml(params.trigger_regex || "")}" /></label>
-                    <label class="field">后续消息数<input data-merge-param="next_count" type="number" min="1" value="${escapeHtml(params.next_count ?? params.merge_count ?? 2)}" /></label>
-                    <label class="field">合并超时(秒)<input data-merge-param="time_window_seconds" type="number" min="1" value="${escapeHtml(params.time_window_seconds ?? 60)}" /></label>
-                  </div>
-                  <p class="field-hint">命中过滤词时，整个合并组会一起过滤；超时未凑够后续消息时，会按已经抓到的消息继续处理。</p>
-                </section>
-                <div class="channel-actions">
-                  <button class="btn btn-soft danger" data-remove-merge="${index}" type="button">删除规则</button>
-                </div>
-              </div>
-            </article>
-          `;
-        })
-        .join("")
-    : '<div class="queue-item"><span>暂无合并规则</span><strong>0</strong></div>';
-
-  document.querySelectorAll("[data-toggle-merge]").forEach((button) => {
-    button.addEventListener("click", () => {
-      collectMergeRules();
-      const card = button.closest(".merge-card");
-      const key = card.dataset.mergeKey;
-      if (state.expandedMergeRules.has(key)) {
-        state.expandedMergeRules.delete(key);
-      } else {
-        state.expandedMergeRules.add(key);
-      }
-      renderMergeRules();
-    });
-  });
-  document.querySelectorAll("[data-remove-merge]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const index = Number.parseInt(button.dataset.removeMerge, 10);
-      collectMergeRules();
-      state.config.merge_rules.splice(index, 1);
-      renderMergeRules();
-    });
-  });
-}
-
-function defaultChannel() {
-  return {
-    __template_key: "default",
-    channel_username: "",
-    start_time: "",
-    check_interval: 0,
-    msg_limit: 10,
-    priority: 0,
-    exclude_text_on_media: "继承全局",
-    forward_types: MSG_TYPES.slice(),
-    max_file_size: 0,
-    ignore_global_filters: false,
-    filter_keywords: [],
-    filter_regex: "",
-    filter_spoiler_messages: "继承全局",
-    strip_markdown_links: "继承全局",
-    monitor_keywords: [],
-    monitor_regex: "",
-    target_qq_sessions: [],
-  };
-}
-
-function triStateSelect(name, value) {
-  return `
-    <select data-channel-field="${name}">
-      ${TRI_STATE.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-    </select>
-  `;
-}
-
-function channelKey(channel, index) {
-  return channel.channel_username ? `name:${channel.channel_username}` : `idx:${index}`;
-}
-
-function activeChannelGroup(key) {
-  return state.channelGroups[key] || CHANNEL_GROUPS[0].id;
-}
-
-function renderChannels() {
-  const channels = Array.isArray(state.config?.source_channels) ? state.config.source_channels : [];
-  els.channelList.innerHTML = channels.length
-    ? channels
-        .map((channel, index) => {
-          const cfg = { ...defaultChannel(), ...channel };
-          const key = channelKey(cfg, index);
-          const collapsed = !state.expandedChannels.has(key);
-          const selectedTypes = Array.isArray(cfg.forward_types) ? cfg.forward_types : [];
-          const title = cfg.channel_username ? channelTitle(cfg.channel_username) : "新频道";
-          const group = activeChannelGroup(key);
-          const targetSummary = cfg.target_qq_sessions?.length
-            ? `专属 ${cfg.target_qq_sessions.length} 个 QQ 目标`
-            : state.config?.target_qq_session?.length
-              ? "继承默认 QQ 目标"
-              : "未配置 QQ 目标";
-          return `
-            <article class="channel-card ${collapsed ? "collapsed" : ""}" data-channel-index="${index}" data-channel-key="${escapeHtml(key)}">
-              <button class="channel-summary" type="button" data-toggle-channel="${index}">
-                <div>
-                  <div class="channel-title-text">${escapeHtml(title)}</div>
-                  <div class="channel-meta">
-                    <span>抓取 ${escapeHtml(cfg.msg_limit)} 条</span>
-                    <span>间隔 ${escapeHtml(cfg.check_interval || "全局")} 秒</span>
-                    <span>优先级 ${escapeHtml(cfg.priority || 0)}</span>
-                    <span>${escapeHtml(targetSummary)}</span>
-                  </div>
-                </div>
-                <span class="chevron">⌄</span>
-              </button>
-              <div class="channel-body">
-                <div class="segmented channel-tabs">
-                  ${CHANNEL_GROUPS.map(
-                    (item) =>
-                      `<button type="button" data-channel-tab="${index}" data-channel-tab-id="${item.id}" class="${group === item.id ? "active" : ""}">${escapeHtml(item.label)}</button>`,
-                  ).join("")}
-                </div>
-                <section class="channel-section ${group === "base" ? "active" : ""}" data-channel-section="base">
-                  <div class="selector-host" data-channel-tg-selector="${index}"></div>
-                  <div class="form-grid">
-                    <label class="field">频道用户名<input data-channel-field="channel_username" value="${escapeHtml(cfg.channel_username)}" /></label>
-                    <label class="field">起始日期<input data-channel-field="start_time" value="${escapeHtml(cfg.start_time)}" placeholder="YYYY-MM-DD" /></label>
-                    <label class="field">检测间隔<input data-channel-field="check_interval" type="number" value="${escapeHtml(cfg.check_interval)}" /></label>
-                    <label class="field">单次抓取上限<input data-channel-field="msg_limit" type="number" value="${escapeHtml(cfg.msg_limit)}" /></label>
-                    <label class="field">优先级<input data-channel-field="priority" type="number" value="${escapeHtml(cfg.priority)}" /></label>
-                  </div>
-                </section>
-                <section class="channel-section ${group === "content" ? "active" : ""}" data-channel-section="content">
-                  <div class="form-grid">
-                    <label class="field">文件大小限制(MB)<input data-channel-field="max_file_size" type="number" step="0.1" value="${escapeHtml(cfg.max_file_size)}" /></label>
-                    <label class="field">媒体文本${triStateSelect("exclude_text_on_media", cfg.exclude_text_on_media)}</label>
-                    <label class="field">剧透过滤${triStateSelect("filter_spoiler_messages", cfg.filter_spoiler_messages)}</label>
-                    <label class="field">Markdown 链接${triStateSelect("strip_markdown_links", cfg.strip_markdown_links)}</label>
-                  </div>
-                  <div class="check-group" data-channel-field="forward_types">
-                    ${MSG_TYPES.map(
-                      (type) => `
-                        <label class="check-pill">
-                          <input type="checkbox" value="${escapeHtml(type)}" ${selectedTypes.includes(type) ? "checked" : ""} />
-                          ${escapeHtml(type)}
-                        </label>
-                      `,
-                    ).join("")}
-                  </div>
-                </section>
-                <section class="channel-section ${group === "filters" ? "active" : ""}" data-channel-section="filters">
-                  <label class="toggle-row">
-                    <input data-channel-field="ignore_global_filters" type="checkbox" ${cfg.ignore_global_filters ? "checked" : ""} />
-                    <span>忽略全局文本过滤</span>
-                  </label>
-                  <div class="form-grid">
-                    <label class="field">过滤关键词<textarea data-channel-field="filter_keywords" rows="4">${escapeHtml(joinList(cfg.filter_keywords))}</textarea></label>
-                    <label class="field">监听关键词<textarea data-channel-field="monitor_keywords" rows="4">${escapeHtml(joinList(cfg.monitor_keywords))}</textarea></label>
-                    <label class="field">过滤正则<input data-channel-field="filter_regex" value="${escapeHtml(cfg.filter_regex)}" /></label>
-                    <label class="field">监听正则<input data-channel-field="monitor_regex" value="${escapeHtml(cfg.monitor_regex)}" /></label>
-                  </div>
-                </section>
-                <section class="channel-section ${group === "targets" ? "active" : ""}" data-channel-section="targets">
-                  <div class="selector-host" data-channel-qq-selector="${index}"></div>
-                  <label class="field">手写专属目标<textarea data-channel-field="target_qq_sessions" rows="4">${escapeHtml(joinList(cfg.target_qq_sessions))}</textarea></label>
-                  <button class="btn btn-soft" data-inherit-qq-targets="${index}" type="button">恢复继承默认 QQ 目标</button>
-                </section>
-                <div class="channel-actions">
-                  <button class="btn btn-soft danger" data-remove-channel="${index}" type="button">删除频道</button>
-                </div>
-              </div>
-            </article>
-          `;
-        })
-        .join("")
-    : '<div class="queue-item"><span>暂无源频道</span><strong>0</strong></div>';
-
-  document.querySelectorAll(".channel-card[data-channel-index]").forEach((card) => {
-    const tgRoot = card.querySelector("[data-channel-tg-selector]");
-    const tgInput = channelField(card, "channel_username");
-    renderTGChannelSelector({ root: tgRoot, manualInput: tgInput });
-
-    const qqRoot = card.querySelector("[data-channel-qq-selector]");
-    const qqInput = channelField(card, "target_qq_sessions");
-    renderQQTargetSelector({
-      root: qqRoot,
-      manualInput: qqInput,
-      inheritLabel: "继承默认 QQ 目标",
-    });
-  });
-
-  document.querySelectorAll("[data-toggle-channel]").forEach((button) => {
-    button.addEventListener("click", () => {
-      collectChannels();
-      const card = button.closest(".channel-card");
-      const key = card.dataset.channelKey;
-      if (state.expandedChannels.has(key)) {
-        state.expandedChannels.delete(key);
-      } else {
-        state.expandedChannels.add(key);
-      }
-      renderChannels();
-    });
-  });
-  document.querySelectorAll("[data-channel-tab]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      collectChannels();
-      const card = button.closest(".channel-card");
-      const key = card.dataset.channelKey;
-      state.channelGroups[key] = button.dataset.channelTabId;
-      state.expandedChannels.add(key);
-      renderChannels();
-    });
-  });
-  document.querySelectorAll("[data-remove-channel]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const index = Number.parseInt(button.dataset.removeChannel, 10);
-      collectChannels();
-      state.config.source_channels.splice(index, 1);
-      renderChannels();
-    });
-  });
-  document.querySelectorAll("[data-inherit-qq-targets]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const card = button.closest(".channel-card");
-      const textarea = channelField(card, "target_qq_sessions");
-      if (textarea) textarea.value = "";
-      collectChannels();
-      renderChannels();
-    });
-  });
-}
-
-function renderRawConfig() {
-  els.rawConfigInput.value = JSON.stringify(state.config || {}, null, 2);
-}
-
-export function renderAll() {
-  renderStatus();
-  renderRootConfig();
-  renderForwardTabs();
-  renderForwardConfig();
-  renderChannels();
-  renderMergeRules();
-  renderRawConfig();
-  updateTopbarActions();
-}
-
-function collectRootConfig() {
-  state.config.api_id = intValue("apiIdInput", 0);
-  state.config.api_hash = els.apiHashInput.value.trim();
-  state.config.phone = els.phoneInput.value.trim();
-  state.config.proxy = els.proxyInput.value.trim();
-  state.config.target_channel = els.targetChannelInput.value.trim();
-  state.config.target_qq_session = splitList(els.targetQQInput.value);
-  state.config.debug_enabled_default = els.debugDefaultInput.checked;
-  state.config.web_config = {
-    enabled: els.webEnabledInput.checked,
-    host: els.webHostInput.value.trim() || DEFAULT_WEB_CONFIG.host,
+export function collectRootConfig() {
+  if (!store.state.config) store.state.config = {};
+  store.state.config.api_id = intValue("apiIdInput", 0);
+  store.state.config.api_hash = els.apiHashInput?.value.trim() || "";
+  store.state.config.phone = els.phoneInput?.value.trim() || "";
+  store.state.config.proxy = els.proxyInput?.value.trim() || "";
+  store.state.config.target_channel = els.targetChannelInput?.value.trim() || "";
+  store.state.config.target_qq_session = splitList(els.targetQQInput?.value || "");
+  store.state.config.debug_enabled_default = els.debugDefaultInput ? els.debugDefaultInput.checked : false;
+  store.state.config.web_config = {
+    enabled: els.webEnabledInput ? els.webEnabledInput.checked : true,
+    host: els.webHostInput?.value.trim() || DEFAULT_WEB_CONFIG.host,
     port: intValue("webPortInput", DEFAULT_WEB_CONFIG.port),
-    token: els.webTokenInput.value.trim(),
+    token: els.webTokenInput?.value.trim() || "",
   };
 }
 
-function collectForwardConfig() {
-  const cfg = { ...(state.config.forward_config || {}) };
+export function collectForwardConfig() {
+  if (!store.state.config) store.state.config = {};
+  const cfg = { ...(store.state.config.forward_config || {}) };
   FORWARD_FIELDS.forEach((field) => {
     const el = document.querySelector(`[data-forward="${field.key}"]`);
     if (!el) return;
@@ -1138,125 +345,7 @@ function collectForwardConfig() {
       cfg[field.key] = el.value.trim();
     }
   });
-  state.config.forward_config = cfg;
-}
-
-function channelField(card, name) {
-  return card.querySelector(`[data-channel-field="${name}"]`);
-}
-
-function collectChannels({ keepEmpty = true } = {}) {
-  state.config.source_channels = Array.from(document.querySelectorAll(".channel-card[data-channel-index]"))
-    .map((card) => {
-      const index = Number.parseInt(card.dataset.channelIndex, 10);
-      const current = { ...defaultChannel(), ...(state.config.source_channels?.[index] || {}) };
-      const getText = (name) => channelField(card, name)?.value?.trim() || "";
-      const getInt = (name, fallback) => {
-        const raw = channelField(card, name)?.value;
-        if (raw == null) return fallback;
-        const parsed = Number.parseInt(String(raw).trim(), 10);
-        return Number.isFinite(parsed) ? parsed : fallback;
-      };
-      const getFloat = (name, fallback) => {
-        const raw = channelField(card, name)?.value;
-        if (raw == null) return fallback;
-        const parsed = Number.parseFloat(String(raw).trim());
-        return Number.isFinite(parsed) ? parsed : fallback;
-      };
-      const getList = (name, fallback) => {
-        const field = channelField(card, name);
-        if (!field) return fallback;
-        return splitList(field.value);
-      };
-      const getChecks = (name, fallback) => {
-        const field = channelField(card, name);
-        if (!field) return fallback;
-        return Array.from(field.querySelectorAll("input:checked")).map((item) => item.value);
-      };
-      const getBool = (name, fallback) => {
-        const field = channelField(card, name);
-        return field ? Boolean(field.checked) : fallback;
-      };
-      const getTri = (name, fallback) => getText(name) || fallback;
-      const oldKey = card.dataset.channelKey;
-      const collected = {
-        __template_key: "default",
-        channel_username: (getText("channel_username") || current.channel_username).replace(/^[@#]/, ""),
-        start_time: channelField(card, "start_time") ? getText("start_time") : current.start_time,
-        check_interval: getInt("check_interval", current.check_interval),
-        msg_limit: getInt("msg_limit", current.msg_limit),
-        priority: getInt("priority", current.priority),
-        exclude_text_on_media: getTri("exclude_text_on_media", current.exclude_text_on_media),
-        forward_types: getChecks("forward_types", current.forward_types),
-        max_file_size: getFloat("max_file_size", current.max_file_size),
-        ignore_global_filters: getBool("ignore_global_filters", current.ignore_global_filters),
-        filter_keywords: getList("filter_keywords", current.filter_keywords),
-        filter_regex: channelField(card, "filter_regex") ? getText("filter_regex") : current.filter_regex,
-        filter_spoiler_messages: getTri("filter_spoiler_messages", current.filter_spoiler_messages),
-        strip_markdown_links: getTri("strip_markdown_links", current.strip_markdown_links),
-        monitor_keywords: getList("monitor_keywords", current.monitor_keywords),
-        monitor_regex: channelField(card, "monitor_regex") ? getText("monitor_regex") : current.monitor_regex,
-        target_qq_sessions: getList("target_qq_sessions", current.target_qq_sessions),
-      };
-      const newKey = channelKey(collected, index);
-      if (oldKey && newKey !== oldKey) {
-        if (state.expandedChannels.has(oldKey)) {
-          state.expandedChannels.delete(oldKey);
-          state.expandedChannels.add(newKey);
-        }
-        if (state.channelGroups[oldKey]) {
-          state.channelGroups[newKey] = state.channelGroups[oldKey];
-          delete state.channelGroups[oldKey];
-        }
-      }
-      return collected;
-    })
-    .filter((channel) => keepEmpty || channel.channel_username);
-}
-
-function collectMergeRules({ keepEmpty = true } = {}) {
-  const cards = Array.from(document.querySelectorAll(".merge-card[data-merge-index]"));
-  if (!cards.length) {
-    if (!Array.isArray(state.config.merge_rules)) {
-      state.config.merge_rules = [];
-    }
-    return;
-  }
-
-  state.config.merge_rules = cards
-    .map((card) => {
-      const index = Number.parseInt(card.dataset.mergeIndex, 10);
-      const current = normalizeMergeRule(state.config.merge_rules?.[index] || {});
-      const field = (name) => card.querySelector(`[data-merge-field="${name}"]`);
-      const param = (name) => card.querySelector(`[data-merge-param="${name}"]`);
-      const getText = (node, fallback = "") => (node ? node.value.trim() : fallback);
-      const getInt = (node, fallback) => {
-        if (!node) return fallback;
-        const parsed = Number.parseInt(String(node.value).trim(), 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-      };
-      const collected = {
-        __template_key: "default",
-        name: getText(field("name"), current.name),
-        channel: getText(field("channel"), current.channel).replace(/^[@#]/, ""),
-        rule_class: getText(field("rule_class"), current.rule_class),
-        params: {
-          ...current.params,
-          trigger_keywords: splitList(param("trigger_keywords")?.value || ""),
-          trigger_regex: getText(param("trigger_regex"), current.params.trigger_regex || ""),
-          next_count: getInt(param("next_count"), current.params.next_count || 2),
-          time_window_seconds: getInt(param("time_window_seconds"), current.params.time_window_seconds || 60),
-        },
-      };
-      const oldKey = card.dataset.mergeKey;
-      const newKey = mergeRuleKey(collected, index);
-      if (oldKey && newKey !== oldKey && state.expandedMergeRules.has(oldKey)) {
-        state.expandedMergeRules.delete(oldKey);
-        state.expandedMergeRules.add(newKey);
-      }
-      return collected;
-    })
-    .filter((rule) => keepEmpty || (rule.channel && rule.rule_class));
+  store.state.config.forward_config = cfg;
 }
 
 export function collectForms() {
@@ -1266,22 +355,19 @@ export function collectForms() {
   collectMergeRules({ keepEmpty: false });
 }
 
-export async function saveConfig({ quiet = false } = {}) {
-  collectForms();
-  const result = await api("/api/config", { method: "POST", body: { config: state.config } });
-  state.config = result.config;
-  const newToken = state.config?.web_config?.token;
-  if (newToken) {
-    state.token = newToken;
-    localStorage.setItem("telegram_forwarder_token", state.token);
-  }
-  renderAll();
-  if (!quiet) {
-    showToast(result.web_restart_required ? "配置已保存，Web host/port 需重载插件生效。" : "配置已保存。");
-  }
+export function renderAll() {
+  renderStatus();
+  renderRootConfig();
+  renderForwardTabs();
+  renderForwardConfig();
+  renderChannels();
+  renderMergeRules();
+  renderRawConfig();
+  updateTopbarActions();
 }
 
 async function saveRawConfig() {
+  if (!els.rawConfigInput) return;
   let parsed;
   try {
     parsed = JSON.parse(els.rawConfigInput.value);
@@ -1289,12 +375,12 @@ async function saveRawConfig() {
     showToast(`JSON 格式错误：${error.message}`);
     return;
   }
-  const result = await api("/api/config", { method: "POST", body: { config: parsed } });
-  state.config = result.config;
-  const newToken = state.config?.web_config?.token;
+  const result = await apiRequest("/api/config", "POST", { config: parsed });
+  store.updateState({ config: result.config });
+  const newToken = result.config?.web_config?.token;
   if (newToken) {
-    state.token = newToken;
-    localStorage.setItem("telegram_forwarder_token", state.token);
+    store.updateState({ token: newToken });
+    localStorage.setItem("telegram_forwarder_token", newToken);
   }
   renderAll();
   showToast(result.web_restart_required ? "JSON 配置已保存，Web host/port 需重载插件生效。" : "JSON 配置已保存。");
@@ -1312,24 +398,18 @@ function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
-function parseTransferJson(input, label) {
-  try {
-    return JSON.parse(input.value);
-  } catch (error) {
-    throw new Error(`${label} JSON 格式错误：${error.message}`);
-  }
-}
-
 async function exportConfig() {
-  const data = await api("/api/export/config");
-  els.rawConfigInput.value = JSON.stringify(data.config || data, null, 2);
+  const data = await apiRequest("/api/export/config");
+  if (els.rawConfigInput) {
+    els.rawConfigInput.value = JSON.stringify(data.config || data, null, 2);
+  }
   downloadJson("telegram-forwarder-config.json", data);
   return { message: "配置已导出。" };
 }
 
 async function importConfigPayload(payload) {
-  const result = await api("/api/import/config", { method: "POST", body: payload });
-  state.config = result.config || state.config;
+  const result = await apiRequest("/api/import/config", "POST", payload);
+  store.updateState({ config: result.config || store.state.config });
   await loadAll();
   return result;
 }
@@ -1354,293 +434,128 @@ async function importConfigFromFile(file) {
   return importConfigPayload(payload);
 }
 
-async function exportSession() {
-  const data = await api("/api/export/session");
-  downloadJson("telegram-forwarder-session.json", data);
-  return { message: "登录信息已导出。" };
-}
-
-async function importSessionFromFile(file) {
-  const payload = await readJsonFile(file, "登录信息");
-  const result = await api("/api/import/session", { method: "POST", body: payload });
-  await loadAll();
-  return result;
-}
-
-export async function loadAll() {
-  const [status, configData] = await Promise.all([
-    api("/api/status"),
-    api("/api/config"),
-    loadQQGroups(),
-    loadTGChannels(),
-  ]);
-  state.status = status;
-  state.config = configData.config;
-  renderAll();
-  syncRuntimeStatusRefresh();
-}
-
-export async function loadStatusOnly() {
-  if (state.runtimeRefreshInFlight) return;
-  state.runtimeRefreshInFlight = true;
-  try {
-    state.status = await api("/api/status");
-    renderStatus();
-  } finally {
-    state.runtimeRefreshInFlight = false;
-    syncRuntimeStatusRefresh();
-  }
-}
-
-function runtimeNeedsStatusRefresh() {
-  const runtime = state.status?.runtime || {};
-  const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
-  return Boolean(
-    runtime.active_web_operations ||
-      runtime.capture_busy ||
-      runtime.send_busy ||
-      runtime.global_send_busy ||
-      operations.some((operation) => operation.status === "running"),
-  );
-}
-
-function syncRuntimeStatusRefresh() {
-  if (!runtimeNeedsStatusRefresh()) {
-    if (state.runtimeRefreshTimer) {
-      window.clearTimeout(state.runtimeRefreshTimer);
-      state.runtimeRefreshTimer = null;
-    }
-    return;
-  }
-  if (state.runtimeRefreshTimer || !state.token || els.appShell.hidden) return;
-  state.runtimeRefreshTimer = window.setTimeout(async () => {
-    state.runtimeRefreshTimer = null;
-    if (!state.token || els.appShell.hidden) return;
-    try {
-      await loadStatusOnly();
-    } catch (error) {
-      console.warn("Runtime status refresh failed:", error);
-    }
-  }, 2000);
-}
-
-function setSection(section) {
-  state.section = section;
+export function setSection(section) {
+  store.updateState({ section });
   document.querySelectorAll(".section").forEach((node) => node.classList.toggle("active", node.id === `section-${section}`));
   document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.section === section));
   const active = document.querySelector(`.nav-item[data-section="${section}"]`);
-  els.sectionTitle.textContent = active?.textContent || "总览";
+  if (els.sectionTitle) {
+    els.sectionTitle.textContent = active?.textContent || "总览";
+  }
   updateTopbarActions();
   closeSidebar();
 }
 
-function updateTopbarActions() {
+export function updateTopbarActions() {
   const configSections = new Set(["targets", "channels", "merge", "global", "web"]);
   const refreshOnlySections = new Set(["overview"]);
-  const showRefresh = configSections.has(state.section) || refreshOnlySections.has(state.section);
-  const showSave = configSections.has(state.section);
-  els.refreshBtn.hidden = !showRefresh;
-  els.saveBtn.hidden = !showSave;
-  els.refreshBtn.parentElement.hidden = !showRefresh && !showSave;
+  const showRefresh = configSections.has(store.state.section) || refreshOnlySections.has(store.state.section);
+  const showSave = configSections.has(store.state.section);
+  if (els.refreshBtn) els.refreshBtn.hidden = !showRefresh;
+  if (els.saveBtn) els.saveBtn.hidden = !showSave;
+  if (els.refreshBtn?.parentElement) {
+    els.refreshBtn.parentElement.hidden = !showRefresh && !showSave;
+  }
 }
 
-function openSidebar() {
+export function openSidebar() {
   document.body.classList.add("sidebar-open");
-  els.sidebar.classList.add("open");
-  els.sidebarScrim.classList.add("show");
-  els.mobileMenu.classList.add("hidden");
+  if (els.sidebar) els.sidebar.classList.add("open");
+  if (els.sidebarScrim) els.sidebarScrim.classList.add("show");
+  if (els.mobileMenu) els.mobileMenu.classList.add("hidden");
 }
 
-function closeSidebar() {
+export function closeSidebar() {
   document.body.classList.remove("sidebar-open");
-  els.sidebar.classList.remove("open");
-  els.sidebarScrim.classList.remove("show");
-  els.mobileMenu.classList.remove("hidden");
+  if (els.sidebar) els.sidebar.classList.remove("open");
+  if (els.sidebarScrim) els.sidebarScrim.classList.add("show");
+  if (els.mobileMenu) els.mobileMenu.classList.add("hidden");
 }
 
-export async function enterApp() {
-  els.authScreen.hidden = true;
-  els.appShell.hidden = false;
-  await loadAll();
-}
-
-async function loginWithToken(event) {
-  event.preventDefault();
-  els.authError.textContent = "";
-  const token = els.tokenInput.value.trim();
-  if (!token) {
-    els.authError.textContent = "请输入 Web Token。";
-    return;
+function bindMainEvents() {
+  if (els.refreshBtn) {
+    els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
   }
-  try {
-    if (!(await checkToken(token))) {
-      els.authError.textContent = "Token 不正确。";
-      return;
-    }
-    state.token = token;
-    localStorage.setItem("telegram_forwarder_token", token);
-    await enterApp();
-  } catch (error) {
-    els.authError.textContent = error.message;
+  if (els.saveBtn) {
+    els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));
   }
-}
-
-export async function withAction(action, doneMessage, options = {}) {
-  try {
-    const result = await action();
-    const refresh = options.refresh ?? "all";
-    if (refresh === "status") {
-      await loadStatusOnly();
-    } else if (refresh !== false && refresh !== "none") {
-      await loadAll();
-    }
-    showToast(result?.message || doneMessage);
-  } catch (error) {
-    showToast(error.message);
+  if (els.saveRawBtn) {
+    els.saveRawBtn.addEventListener("click", () => withAction(saveRawConfig, "JSON 配置已保存。"));
   }
-}
-
-export async function withButtonLoading(button, label, action, doneMessage) {
-  const originalText = button.textContent;
-  button.disabled = true;
-  button.textContent = label;
-  try {
-    return await withAction(action, doneMessage);
-  } finally {
-    button.disabled = false;
-    button.textContent = originalText;
+  if (els.resetDefaultQQBtn) {
+    els.resetDefaultQQBtn.addEventListener("click", () => {
+      collectRootConfig();
+      if (els.targetQQInput) els.targetQQInput.value = "";
+      store.state.config.target_qq_session = [];
+      renderRootConfig();
+      showToast("默认 QQ 目标已清空，保存后生效。");
+    });
   }
-}
-
-function bindEvents() {
-  els.authForm.addEventListener("submit", loginWithToken);
-  els.logoutBtn.addEventListener("click", () => {
-    localStorage.removeItem("telegram_forwarder_token");
-    window.location.reload();
-  });
-  els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
-  els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));
-  els.saveRawBtn.addEventListener("click", () => withAction(saveRawConfig, "JSON 配置已保存。"));
-  els.resetDefaultQQBtn.addEventListener("click", () => {
-    collectRootConfig();
-    els.targetQQInput.value = "";
-    state.config.target_qq_session = [];
-    renderRootConfig();
-    showToast("默认 QQ 目标已清空，保存后生效。");
-  });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section));
   });
-  els.mobileMenu.addEventListener("click", openSidebar);
-  els.sidebarScrim.addEventListener("click", closeSidebar);
+  
+  if (els.mobileMenu) {
+    els.mobileMenu.addEventListener("click", openSidebar);
+  }
+  if (els.sidebarScrim) {
+    els.sidebarScrim.addEventListener("click", closeSidebar);
+  }
 
-  els.addChannelBtn.addEventListener("click", () => {
-    collectChannels();
-    const channel = defaultChannel();
-    state.config.source_channels.push(channel);
-    state.expandedChannels.add(channelKey(channel, state.config.source_channels.length - 1));
-    renderChannels();
-  });
-  els.addMergeRuleBtn.addEventListener("click", () => {
-    collectMergeRules();
-    if (!Array.isArray(state.config.merge_rules)) {
-      state.config.merge_rules = [];
-    }
-    const rule = defaultMergeRule();
-    state.config.merge_rules.push(rule);
-    state.expandedMergeRules.add(mergeRuleKey(rule, state.config.merge_rules.length - 1));
-    renderMergeRules();
-  });
-
-  els.sendCodeBtn.addEventListener("click", () =>
-    withButtonLoading(els.sendCodeBtn, "正在发送验证码...", async () => {
-      await saveConfig({ quiet: true });
-      const result = await api("/api/login/start", {
-        method: "POST",
-        body: {
-          phone: els.phoneInput.value.trim(),
-          replace_existing: Boolean(state.status?.telegram?.replace_existing),
-        },
-      });
-      els.loginMessage.textContent = result.message || "";
-      return result;
-    }, "验证码已发送。"),
-  );
-  els.submitCodeBtn.addEventListener("click", () =>
-    withButtonLoading(els.submitCodeBtn, "正在验证验证码...", async () => {
-      const result = await api("/api/login/code", { method: "POST", body: { code: els.codeInput.value.trim() } });
-      els.loginMessage.textContent = result.message || "";
-      return result;
-    }, "验证码已提交。"),
-  );
-  els.submitPasswordBtn.addEventListener("click", () =>
-    withButtonLoading(els.submitPasswordBtn, "正在登录...", async () => {
-      const result = await api("/api/login/password", { method: "POST", body: { password: els.passwordInput.value } });
-      els.loginMessage.textContent = result.message || "";
-      return result;
-    }, "密码已提交。"),
-  );
-  els.resetLoginBtn.addEventListener("click", () => {
-    withButtonLoading(els.resetLoginBtn, "正在准备...", () => api("/api/login/reset", { method: "POST" }), "已进入重新登录流程。");
-  });
-
-  els.exportConfigBtn.addEventListener("click", () => withAction(exportConfig, "配置已导出。"));
-  els.importConfigBtn.addEventListener("click", () => {
-    els.configImportFile.value = "";
-    els.configImportFile.click();
-  });
-  els.configImportFile.addEventListener("change", () => {
-    const file = els.configImportFile.files?.[0];
-    if (!file) return;
-    withAction(() => importConfigFromFile(file), "配置已导入。");
-  });
-  els.exportSessionBtn.addEventListener("click", () =>
-    withButtonLoading(els.exportSessionBtn, "正在导出...", exportSession, "登录信息已导出。"),
-  );
-  els.importSessionBtn.addEventListener("click", () => {
-    els.sessionImportFile.value = "";
-    els.sessionImportFile.click();
-  });
-  els.sessionImportFile.addEventListener("change", () => {
-    const file = els.sessionImportFile.files?.[0];
-    if (!file) return;
-    withButtonLoading(els.importSessionBtn, "正在导入...", () => importSessionFromFile(file), "登录信息已导入。");
-  });
-
-  els.runCheckBtn.addEventListener("click", () =>
-    withAction(() => api("/api/runtime/check", { method: "POST" }), "已开始后台执行。", { refresh: "status" }),
-  );
-  els.pauseBtn.addEventListener("click", () =>
-    withAction(() => api("/api/runtime/pause", { method: "POST" }), "已暂停。", { refresh: "status" }),
-  );
-  els.resumeBtn.addEventListener("click", () =>
-    withAction(() => api("/api/runtime/resume", { method: "POST" }), "已恢复。", { refresh: "status" }),
-  );
-  els.clearQueueBtn.addEventListener("click", () => {
-    if (!window.confirm("确认清空全部待发送队列？")) return;
-    withAction(() => api("/api/runtime/clear-queue", { method: "POST", body: { target: "all" } }), "队列已清空。", {
-      refresh: "status",
+  if (els.exportConfigBtn) {
+    els.exportConfigBtn.addEventListener("click", () => withAction(exportConfig, "配置已导出。"));
+  }
+  if (els.importConfigBtn && els.configImportFile) {
+    els.importConfigBtn.addEventListener("click", () => {
+      els.configImportFile.value = "";
+      els.configImportFile.click();
     });
-  });
+    els.configImportFile.addEventListener("change", () => {
+      const file = els.configImportFile.files?.[0];
+      if (!file) return;
+      withAction(() => importConfigFromFile(file), "配置已导入。");
+    });
+  }
 }
 
 async function boot() {
   cacheElements();
-  bindEvents();
-  els.tokenInput.value = state.token || "";
-  if (!state.token) return;
+  setCollectFormsCallback(collectForms);
+  
+  // Register main router to subscribe to store updates
+  store.subscribe((state) => {
+    // Whenever status or config updates in store, re-run selectors rendering
+    if (state.config && els.defaultQQSelector && els.targetQQInput) {
+      renderQQTargetSelector({
+        root: els.defaultQQSelector,
+        manualInput: els.targetQQInput,
+        inheritLabel: "未配置默认 QQ 目标",
+      });
+    }
+  });
+
+  // Init UI modules
+  initLogin();
+  initOverview();
+  initChannels();
+  
+  // Bind events for entrypoint page
+  bindMainEvents();
+
+  if (els.tokenInput) els.tokenInput.value = store.state.token || "";
+  if (!store.state.token) return;
   try {
-    if (await checkToken(state.token)) {
+    if (await checkToken(store.state.token)) {
       await enterApp();
     } else {
       localStorage.removeItem("telegram_forwarder_token");
-      state.token = "";
+      store.updateState({ token: "" });
     }
   } catch (error) {
     console.warn("Token validation failed:", error);
     localStorage.removeItem("telegram_forwarder_token");
-    state.token = "";
+    store.updateState({ token: "" });
   }
 }
 

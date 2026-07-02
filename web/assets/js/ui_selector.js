@@ -1,6 +1,7 @@
 import { store } from './store.js';
 import { escapeHtml } from './utils.js';
-import { showToast, collectForms, renderAll, loadQQGroups, loadTGChannels } from '../app.js';
+import { showToast, loadQQGroups, loadTGChannels } from './context.js';
+import { collectForms, renderAll } from '../app.js';
 
 export function splitList(value) {
   if (!value) return [];

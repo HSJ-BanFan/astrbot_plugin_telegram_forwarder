@@ -1,7 +1,8 @@
 import { store } from './store.js';
 import { escapeHtml, channelKey } from './utils.js';
 import { renderQQTargetSelector, renderTGChannelSelector, channelTitleUI, splitList, joinList } from './selector.js';
-import { els, MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from '../app.js';
+import { els } from './context.js';
+import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from '../app.js';
 
 export function defaultChannel() {
   return {
