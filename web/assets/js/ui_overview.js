@@ -79,18 +79,30 @@ export function renderStatus() {
   const me = telegram.me;
 
   if (els.telegramStatus) {
-    els.telegramStatus.textContent = telegram.authorized
-      ? `已授权${me?.username ? ` @${me.username}` : ""}`
-      : telegram.connected
-        ? "已连接，未授权"
-        : "未连接";
+    let dotClass = "danger";
+    let text = "未连接";
+    if (telegram.authorized) {
+      dotClass = "success";
+      text = `已授权${me?.username ? ` @${me.username}` : ""}`;
+    } else if (telegram.connected) {
+      dotClass = "warning";
+      text = "已连接，未授权";
+    }
+    els.telegramStatus.innerHTML = `<span class="status-badge"><span class="status-dot ${dotClass}"></span>${escapeHtml(text)}</span>`;
   }
   if (els.schedulerStatus) {
-    els.schedulerStatus.textContent = runtime.scheduler_running
-      ? runtime.paused
-        ? "已暂停"
-        : "运行中"
-      : "未启动";
+    let dotClass = "danger";
+    let text = "未启动";
+    if (runtime.scheduler_running) {
+      if (runtime.paused) {
+        dotClass = "warning";
+        text = "已暂停";
+      } else {
+        dotClass = "success";
+        text = "运行中";
+      }
+    }
+    els.schedulerStatus.innerHTML = `<span class="status-badge"><span class="status-dot ${dotClass}"></span>${escapeHtml(text)}</span>`;
   }
   if (els.channelCount) {
     els.channelCount.textContent = String(status.channels?.count ?? 0);

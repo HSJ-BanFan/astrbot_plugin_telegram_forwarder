@@ -65,6 +65,7 @@
   background: var(--panel);
   box-shadow: 0 14px 34px rgba(45, 118, 166, 0.07);
   backdrop-filter: blur(14px);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
 }
 
 .metric-card {
@@ -170,6 +171,7 @@ select {
   outline: none;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.84);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
 }
 
 textarea {
@@ -452,4 +454,29 @@ select:focus {
 .mobile-menu,
 .sidebar-scrim {
   display: none;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status-dot.success {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+.status-dot.danger {
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
+}
+.status-dot.warning {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
 }
