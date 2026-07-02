@@ -7,24 +7,32 @@
   padding: 0 16px;
   font-weight: 800;
   white-space: nowrap;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .btn-primary {
-  color: #fff;
-  background: linear-gradient(180deg, #45b8ef, var(--blue));
+  color: #05101f;
+  background: linear-gradient(135deg, var(--lime), #14d4ff);
+  box-shadow: 0 14px 30px rgba(40, 255, 16, 0.2);
 }
 
 .btn-primary:hover {
-  background: var(--blue-strong);
+  background: linear-gradient(135deg, var(--lime-strong), var(--blue-strong));
+  transform: translateY(-1px);
+  box-shadow: 0 18px 38px rgba(40, 255, 16, 0.26);
 }
 
 .btn-soft {
-  color: var(--blue-strong);
-  background: rgba(238, 249, 255, 0.82);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: rgba(248, 250, 252, 0.055);
 }
 
 .btn-soft:hover {
-  background: var(--blue-tint);
+  color: var(--blue-strong);
+  border-color: var(--border-glow-active);
+  background: rgba(56, 189, 248, 0.1);
+  transform: translateY(-1px);
 }
 
 .btn:disabled {
@@ -46,6 +54,7 @@
 
 .section.active {
   display: block;
+  animation: section-in 0.22s ease both;
 }
 
 .bento-grid {
@@ -79,20 +88,23 @@
 .settings-card,
 .channel-card,
 .step-card {
-  background: var(--panel);
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.055), rgba(248, 250, 252, 0.02)),
+    var(--panel);
   border: 1px solid var(--border-glow);
   border-radius: 8px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
-  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .metric-card:hover,
-.panel:hover,
-.settings-card:hover,
-.channel-card:hover {
+.channel-card:hover,
+.step-card:hover {
   border-color: var(--border-glow-active);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(40, 255, 16, 0.06);
 }
 
 .metric-card {
@@ -101,8 +113,10 @@
 }
 
 .metric-blue {
-  border-color: rgba(49, 168, 232, 0.24);
-  background: linear-gradient(180deg, #fbfeff, #eef9ff);
+  border-color: rgba(40, 255, 16, 0.28);
+  background:
+    linear-gradient(135deg, rgba(40, 255, 16, 0.12), rgba(14, 165, 233, 0.05)),
+    var(--panel-raised);
 }
 
 .metric-card span {
@@ -117,6 +131,7 @@
   color: var(--ink);
   font-size: 22px;
   line-height: 1.18;
+  font-family: "Space Grotesk", "DM Sans", Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 .panel {
@@ -197,8 +212,13 @@ select {
   border-radius: 8px;
   outline: none;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--field-bg);
   transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(142, 160, 192, 0.74);
 }
 
 textarea {
@@ -209,8 +229,8 @@ textarea {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(42, 171, 238, 0.14);
+  border-color: var(--lime);
+  box-shadow: var(--focus-ring);
 }
 
 .field-hint {
@@ -259,7 +279,7 @@ select:focus {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
+  background: rgba(7, 11, 26, 0.35);
 }
 
 .account-detail-grid span {
@@ -282,8 +302,8 @@ select:focus {
   gap: 8px;
   padding: 8px 11px;
   border-radius: 999px;
-  color: var(--blue-strong);
-  background: var(--blue-soft);
+  color: var(--lime);
+  background: var(--lime-soft);
   font-weight: 800;
 }
 
@@ -302,8 +322,10 @@ select:focus {
 
 .step-card.active {
   opacity: 1;
-  border-color: rgba(42, 171, 238, 0.38);
-  background: linear-gradient(180deg, #fff, #fbfdff);
+  border-color: rgba(40, 255, 16, 0.38);
+  background:
+    linear-gradient(135deg, rgba(40, 255, 16, 0.08), rgba(14, 165, 233, 0.05)),
+    var(--panel-raised);
 }
 
 .step-card.done .step-index {
@@ -316,8 +338,8 @@ select:focus {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #fff;
-  background: var(--blue);
+  color: #06101f;
+  background: linear-gradient(135deg, var(--blue), var(--lime));
   font-size: 13px;
   font-weight: 900;
 }
@@ -335,7 +357,7 @@ select:focus {
   margin-bottom: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(238, 249, 255, 0.72);
+  background: rgba(7, 11, 26, 0.44);
 }
 
 .segmented button {
@@ -345,12 +367,18 @@ select:focus {
   color: var(--muted);
   background: transparent;
   font-weight: 800;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 
 .segmented button.active {
-  color: var(--blue-strong);
-  background: #fff;
-  box-shadow: 0 6px 16px rgba(30, 103, 151, 0.08);
+  color: #06101f;
+  background: linear-gradient(135deg, var(--lime), var(--blue-strong));
+  box-shadow: 0 10px 24px rgba(40, 255, 16, 0.16);
+}
+
+.segmented button:hover {
+  color: var(--ink);
+  background: rgba(56, 189, 248, 0.09);
 }
 
 .queue-list,
@@ -379,8 +407,8 @@ select:focus {
 }
 
 .runtime-chip.active {
-  color: var(--blue-strong);
-  background: var(--blue-soft);
+  color: var(--lime);
+  background: var(--lime-soft);
 }
 
 .runtime-log {
@@ -398,7 +426,8 @@ select:focus {
   padding: 10px 12px;
   border-radius: 8px;
   color: var(--ink);
-  background: var(--blue-soft);
+  background: rgba(14, 165, 233, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.12);
 }
 
 .runtime-log-item div {
@@ -414,7 +443,7 @@ select:focus {
 }
 
 .runtime-log-item.failed {
-  background: #fff1f2;
+  background: var(--danger-soft);
 }
 
 .runtime-log-item.failed small {
@@ -423,7 +452,7 @@ select:focus {
 }
 
 .runtime-log-item.running {
-  background: #eef7ff;
+  background: var(--blue-soft);
 }
 
 .runtime-log-item.running small {
@@ -432,7 +461,7 @@ select:focus {
 }
 
 .runtime-log-item.success {
-  background: #effaf4;
+  background: var(--success-soft);
 }
 
 .runtime-log-item.success small {
@@ -447,13 +476,15 @@ select:focus {
   padding: 12px 14px;
   border-radius: 8px;
   color: var(--ink);
-  background: var(--blue-soft);
+  border: 1px solid rgba(56, 189, 248, 0.12);
+  background: rgba(14, 165, 233, 0.1);
 }
 
 .json-editor {
   min-height: 520px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
+  background: rgba(3, 7, 18, 0.72);
 }
 
 .toast {
@@ -464,8 +495,10 @@ select:focus {
   max-width: min(420px, calc(100vw - 44px));
   padding: 12px 14px;
   border-radius: 8px;
-  color: #fff;
-  background: var(--ink);
+  color: var(--ink);
+  border: 1px solid var(--border-glow-active);
+  background: rgba(17, 24, 50, 0.95);
+  backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
   opacity: 0;
   transform: translateY(12px);
@@ -497,15 +530,15 @@ select:focus {
 }
 .status-dot.success {
   background: var(--success);
-  box-shadow: 0 0 8px var(--success);
+  box-shadow: 0 0 14px rgba(40, 255, 16, 0.7);
 }
 .status-dot.danger {
   background: var(--danger);
-  box-shadow: 0 0 8px var(--danger);
+  box-shadow: 0 0 14px rgba(255, 95, 109, 0.62);
 }
 .status-dot.warning {
-  background: #f59e0b;
-  box-shadow: 0 0 8px #f59e0b;
+  background: var(--warning);
+  box-shadow: 0 0 14px rgba(255, 189, 46, 0.62);
 }
 
 /* Stepper Styles */
@@ -524,7 +557,7 @@ select:focus {
   left: 15px;
   right: 15px;
   height: 2px;
-  background: var(--line);
+  background: linear-gradient(90deg, var(--blue-soft), var(--lime-soft));
   z-index: 1;
   transition: background 0.3s ease;
 }
@@ -535,7 +568,7 @@ select:focus {
   align-items: center;
   position: relative;
   z-index: 2;
-  background: var(--cream);
+  background: var(--panel-solid);
   padding: 0 12px;
   transition: background 0.3s ease;
 }
@@ -550,7 +583,7 @@ select:focus {
   place-items: center;
   font-weight: 800;
   font-size: 13px;
-  border: 3px solid var(--cream);
+  border: 3px solid var(--panel-solid);
   transition: all 0.3s ease;
 }
 
@@ -563,14 +596,14 @@ select:focus {
 }
 
 .step-node.active .step-circle {
-  background: var(--blue);
-  color: #fff;
-  border-color: var(--cream);
-  box-shadow: 0 0 0 4px var(--blue-soft);
+  background: linear-gradient(135deg, var(--blue), var(--lime));
+  color: #06101f;
+  border-color: var(--panel-solid);
+  box-shadow: 0 0 0 4px var(--lime-soft);
 }
 
 .step-node.active .step-label {
-  color: var(--blue);
+  color: var(--lime);
 }
 
 .step-node.done .step-circle {
@@ -586,10 +619,21 @@ select:focus {
 .skeleton-box {
   display: block;
   height: 20px;
-  background: linear-gradient(90deg, var(--cream-soft) 25%, var(--line) 37%, var(--cream-soft) 63%);
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.12) 25%, rgba(56, 189, 248, 0.18) 37%, rgba(148, 163, 184, 0.12) 63%);
   background-size: 400% 100%;
   animation: skeleton-loading 1.4s ease infinite;
   border-radius: 4px;
+}
+
+@keyframes section-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes skeleton-loading {
@@ -600,4 +644,3 @@ select:focus {
     background-position: 0% 50%;
   }
 }
-
