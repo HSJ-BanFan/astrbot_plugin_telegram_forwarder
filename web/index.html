@@ -66,48 +66,53 @@
         </header>
 
         <section class="section active" id="section-overview">
-          <div class="status-grid">
-            <div class="metric-card metric-blue">
+          <div class="bento-grid">
+            <!-- 4个指标卡片 -->
+            <div class="metric-card metric-blue bento-item" style="grid-column: span 1;">
               <span>Telegram</span>
               <strong id="telegramStatus">-</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card bento-item" style="grid-column: span 1;">
               <span>调度器</span>
               <strong id="schedulerStatus">-</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card bento-item" style="grid-column: span 1;">
               <span>监控频道</span>
               <strong id="channelCount">-</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card bento-item" style="grid-column: span 1;">
               <span>待发送队列</span>
               <strong id="queueCount">-</strong>
             </div>
-          </div>
-          <div class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>运行操作</h2>
-                <p id="runtimeMessage">手动触发、暂停或恢复转发任务。</p>
+
+            <!-- 运行操作面板 -->
+            <div class="panel bento-item" style="grid-column: span 3; grid-row: span 2;">
+              <div class="panel-head">
+                <div>
+                  <h2>运行操作</h2>
+                  <p id="runtimeMessage">手动触发、暂停或恢复转发任务。</p>
+                </div>
               </div>
-            </div>
-            <div class="action-row">
-              <button class="btn btn-primary" id="runCheckBtn" type="button">立即抓取发送</button>
-              <button class="btn btn-soft" id="pauseBtn" type="button">暂停</button>
-              <button class="btn btn-soft" id="resumeBtn" type="button">恢复</button>
-              <button class="btn btn-soft danger" id="clearQueueBtn" type="button">清空队列</button>
-            </div>
-            <div class="runtime-state" id="runtimeState"></div>
-            <div class="runtime-log" id="runtimeLog"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>队列分布</h2>
-                <p>按频道查看待发送消息数量。</p>
+              <div class="action-row">
+                <button class="btn btn-primary" id="runCheckBtn" type="button">立即抓取发送</button>
+                <button class="btn btn-soft" id="pauseBtn" type="button">暂停</button>
+                <button class="btn btn-soft" id="resumeBtn" type="button">恢复</button>
+                <button class="btn btn-soft danger" id="clearQueueBtn" type="button">清空队列</button>
               </div>
+              <div class="runtime-state" id="runtimeState"></div>
+              <div class="runtime-log" id="runtimeLog"></div>
             </div>
-            <div class="queue-list" id="queueList"></div>
+
+            <!-- 队列分布面板 -->
+            <div class="panel bento-item" style="grid-column: span 1; grid-row: span 2;">
+              <div class="panel-head">
+                <div>
+                  <h2>队列分布</h2>
+                  <p>按频道查看待发送消息数量。</p>
+                </div>
+              </div>
+              <div class="queue-list" id="queueList"></div>
+            </div>
           </div>
         </section>
 
