@@ -1,4 +1,5 @@
 import { store } from './js/store.js';
+import { apiRequest } from './js/api.js';
 import {
   els,
   showToast,
@@ -8,7 +9,8 @@ import {
   enterApp,
   withAction,
   withButtonLoading,
-  setCollectFormsCallback
+  setCollectFormsCallback,
+  setRenderAllCallback
 } from './js/context.js';
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
@@ -436,7 +438,16 @@ async function importConfigFromFile(file) {
 
 export function setSection(section) {
   store.updateState({ section });
-  document.querySelectorAll(".section").forEach((node) => node.classList.toggle("active", node.id === `section-${section}`));
+  document.querySelectorAll(".section").forEach((node) => {
+    const isTarget = node.id === `section-${section}`;
+    node.classList.toggle("active", isTarget);
+    if (isTarget && window.gsap) {
+      window.gsap.fromTo(node,
+        { opacity: 0, y: 15 },
+        { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }
+      );
+    }
+  });
   document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.section === section));
   const active = document.querySelector(`.nav-item[data-section="${section}"]`);
   if (els.sectionTitle) {
@@ -468,8 +479,8 @@ export function openSidebar() {
 export function closeSidebar() {
   document.body.classList.remove("sidebar-open");
   if (els.sidebar) els.sidebar.classList.remove("open");
-  if (els.sidebarScrim) els.sidebarScrim.classList.add("show");
-  if (els.mobileMenu) els.mobileMenu.classList.add("hidden");
+  if (els.sidebarScrim) els.sidebarScrim.classList.remove("show");
+  if (els.mobileMenu) els.mobileMenu.classList.remove("hidden");
 }
 
 function bindMainEvents() {
@@ -522,6 +533,7 @@ function bindMainEvents() {
 async function boot() {
   cacheElements();
   setCollectFormsCallback(collectForms);
+  setRenderAllCallback(renderAll);
   
   // Register main router to subscribe to store updates
   store.subscribe((state) => {
