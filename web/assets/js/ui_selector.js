@@ -67,8 +67,36 @@ export function channelTitleUI(ref) {
   return value.startsWith("-") ? value : `@${value.replace(/^@/, "")}`;
 }
 
+function selectorScrollKey(node, index) {
+  if (node.classList.contains("selector-chip-row")) return "chip-row";
+  if (node.classList.contains("selector-list")) return "list";
+  if (node.classList.contains("selector-selected")) return "selected";
+  return `node-${index}`;
+}
+
+function captureSelectorScroll(root) {
+  const scrollState = {};
+  root.querySelectorAll(".selector-chip-row, .selector-list, .selector-selected").forEach((node, index) => {
+    scrollState[selectorScrollKey(node, index)] = {
+      left: node.scrollLeft,
+      top: node.scrollTop,
+    };
+  });
+  return scrollState;
+}
+
+function restoreSelectorScroll(root, scrollState) {
+  root.querySelectorAll(".selector-chip-row, .selector-list, .selector-selected").forEach((node, index) => {
+    const state = scrollState[selectorScrollKey(node, index)];
+    if (!state) return;
+    node.scrollLeft = state.left;
+    node.scrollTop = state.top;
+  });
+}
+
 export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未配置默认 QQ 目标", compact = false }) {
   if (!root || !manualInput) return;
+  const scrollState = captureSelectorScroll(root);
   const targets = uniqueList(splitList(manualInput.value));
   const keyword = String(root.dataset.search || "").trim().toLowerCase();
   const groups = store.state.qqGroups.filter((group) => {
@@ -98,18 +126,23 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
         })
         .join("")
     : `<div class="selector-empty">${escapeHtml(inheritLabel)}</div>`;
-  const compactSelectedHtml = targets
+  const compactManualTargets = targets
     .filter((target) => !groupByTarget(target))
     .map((target) => `
-      <button type="button" class="selector-pill" data-remove-target="${escapeHtml(target)}">
+      <button type="button" class="selector-chip selected" data-remove-target="${escapeHtml(target)}">
         <span>${escapeHtml(target)}</span>
         <small>manual</small>
       </button>
     `)
     .join("");
 
-  const listHtml = groups.length
-    ? groups
+  const visibleGroups = compact
+    ? [...groups].sort((a, b) =>
+        Number(Boolean(targetForGroup(targets, b.group_id))) - Number(Boolean(targetForGroup(targets, a.group_id))),
+      )
+    : groups;
+  const listHtml = visibleGroups.length
+    ? visibleGroups
         .map((group) => {
           const selected = Boolean(targetForGroup(targets, group.group_id));
           return compact
@@ -131,6 +164,7 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
         })
         .join("")
     : '<div class="selector-empty">没有可显示的 QQ 群。</div>';
+  const compactListHtml = compactManualTargets ? `${compactManualTargets}${listHtml}` : listHtml;
 
   root.innerHTML = `
     <div class="selector-toolbar">
@@ -142,9 +176,8 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
       compact
         ? `
           <div class="selector-chip-row">
-            ${listHtml}
+            ${compactListHtml}
           </div>
-          ${compactSelectedHtml ? `<div class="selector-compact-selected">${compactSelectedHtml}</div>` : ""}
         `
         : `
           <div class="selector-layout">
@@ -158,6 +191,7 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
         `
     }
   `;
+  restoreSelectorScroll(root, scrollState);
 
   // Search input
   const searchInput = root.querySelector("[data-selector-search]");
@@ -213,6 +247,7 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
 
 export function renderTGChannelSelector({ root, manualInput, compact = false }) {
   if (!root || !manualInput) return;
+  const scrollState = captureSelectorScroll(root);
   const currentRef = String(manualInput.value || "").trim().replace(/^@/, "");
   const keyword = String(root.dataset.search || "").trim().toLowerCase();
   const channels = store.state.tgChannels.filter((channel) => {
@@ -241,10 +276,22 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
       </button>
     `
     : '<div class="selector-empty">未配置 Telegram 目标</div>';
-  const compactSelectedHtml = currentRef && !selectedChannel ? selectedHtml : "";
+  const compactManualTarget = currentRef && !selectedChannel
+    ? `
+      <button type="button" class="selector-chip selected" data-clear-tg-target>
+        <span>${escapeHtml(selectedLabel)}</span>
+        <small>manual</small>
+      </button>
+    `
+    : "";
   
-  const listHtml = channels.length
-    ? channels
+  const visibleChannels = compact
+    ? [...channels].sort((a, b) =>
+        Number(String(b.channel_ref || "") === currentRef) - Number(String(a.channel_ref || "") === currentRef),
+      )
+    : channels;
+  const listHtml = visibleChannels.length
+    ? visibleChannels
         .map((channel) => {
           const ref = channel.channel_ref || "";
           const selected = String(ref) === currentRef;
@@ -268,6 +315,7 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
         })
         .join("")
     : '<div class="selector-empty">没有可显示的 Telegram 频道。</div>';
+  const compactListHtml = compactManualTarget ? `${compactManualTarget}${listHtml}` : listHtml;
 
   root.innerHTML = `
     <div class="selector-toolbar">
@@ -279,9 +327,8 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
       compact
         ? `
           <div class="selector-chip-row">
-            ${listHtml}
+            ${compactListHtml}
           </div>
-          ${compactSelectedHtml ? `<div class="selector-compact-selected">${compactSelectedHtml}</div>` : ""}
         `
         : `
           <div class="selector-layout">
@@ -295,6 +342,7 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
         `
     }
   `;
+  restoreSelectorScroll(root, scrollState);
 
   // Search input
   const searchInput = root.querySelector("[data-selector-search]");

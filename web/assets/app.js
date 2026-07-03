@@ -158,6 +158,7 @@ function cacheElements() {
     "targetChannelInput",
     "defaultQQSelector",
     "targetQQInput",
+    "resetTargetChannelBtn",
     "targetTopology",
     "resetDefaultQQBtn",
     "debugDefaultInput",
@@ -965,6 +966,19 @@ function bindMainEvents() {
       store.state.config.target_qq_session = [];
       renderRootConfig();
       showToast("默认 QQ 目标已清空，保存后生效。");
+    });
+  }
+  if (els.resetTargetChannelBtn) {
+    els.resetTargetChannelBtn.addEventListener("click", () => {
+      collectRootConfig();
+      if (els.targetChannelInput) els.targetChannelInput.value = "";
+      store.state.config.target_channel = "";
+      renderTGChannelSelector({
+        root: els.targetChannelSelector,
+        manualInput: els.targetChannelInput,
+        compact: true,
+      });
+      showToast("Telegram 目标已清空，保存后生效。");
     });
   }
   if (els.targetQQInput) {

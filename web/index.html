@@ -269,10 +269,8 @@
                   <div class="target-setting-block target-telegram-card">
                     <h3>Telegram 目标</h3>
                     <div id="targetChannelSelector" class="selector-host"></div>
-                    <label class="field target-manual-field">
-                      手动目标频道
-                      <input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." />
-                    </label>
+                    <input id="targetChannelInput" type="hidden" />
+                    <button class="btn btn-soft danger" id="resetTargetChannelBtn" type="button">清空 Telegram 目标</button>
                   </div>
                   <div class="target-setting-block target-qq-card">
                     <h3>默认 QQ 群组</h3>
