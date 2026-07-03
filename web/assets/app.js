@@ -137,6 +137,7 @@ function cacheElements() {
     "runtimeMessage",
     "runtimeState",
     "runtimeLog",
+    "overviewTopology",
     "loginBadge",
     "loginMessage",
     "loginAccountCard",
@@ -259,7 +260,7 @@ function addTopologyChannel(ref) {
   const channel = { ...defaultChannel(), channel_username: channelRef };
   store.state.config.source_channels.push(channel);
   store.state.expandedChannels.add(channelKey(channel, store.state.config.source_channels.length - 1));
-  renderTargetTopology();
+  renderTopologySurfaces();
   showToast("频道已加入转发拓扑，保存后生效。");
 }
 
@@ -276,7 +277,7 @@ function connectTopologyTarget(channelIndex, target) {
     return;
   }
   channels[channelIndex].target_qq_sessions = [...baseTargets, targetValue];
-  renderTargetTopology();
+  renderTopologySurfaces();
   showToast("已为频道添加专属 QQ 目标，保存后生效。");
 }
 
@@ -293,41 +294,47 @@ function openTopologyChannel(channelIndex) {
   });
 }
 
-function bindTargetTopologyInteractions() {
-  if (!els.targetTopology) return;
-  els.targetTopology.querySelectorAll("[data-drag-payload]").forEach((node) => {
-    node.addEventListener("dragstart", (event) => {
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("application/json", node.dataset.dragPayload || "");
+function bindTargetTopologyInteractions(root, { editable = true, allowOpenChannel = true } = {}) {
+  if (!root) return;
+  if (editable) {
+    root.querySelectorAll("[data-drag-payload]").forEach((node) => {
+      node.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("application/json", node.dataset.dragPayload || "");
+      });
     });
-  });
 
-  els.targetTopology.querySelectorAll("[data-topology-add-channel]").forEach((node) => {
-    node.addEventListener("click", () => addTopologyChannel(node.dataset.topologyAddChannel));
-  });
+    root.querySelectorAll("[data-topology-add-channel]").forEach((node) => {
+      node.addEventListener("click", () => addTopologyChannel(node.dataset.topologyAddChannel));
+    });
+  }
 
-  els.targetTopology.querySelectorAll("[data-topology-channel]").forEach((node) => {
+  root.querySelectorAll("[data-topology-channel]").forEach((node) => {
     const index = Number.parseInt(node.dataset.topologyChannel, 10);
-    node.addEventListener("click", () => openTopologyChannel(index));
-    node.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      node.classList.add("drop-ready");
-    });
-    node.addEventListener("dragleave", () => node.classList.remove("drop-ready"));
-    node.addEventListener("drop", (event) => {
-      event.preventDefault();
-      node.classList.remove("drop-ready");
-      try {
-        const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
-        if (payload.type === "qq") connectTopologyTarget(index, payload.value);
-      } catch {
-        showToast("拖拽数据无效。");
-      }
-    });
+    if (allowOpenChannel) {
+      node.addEventListener("click", () => openTopologyChannel(index));
+    }
+    if (editable) {
+      node.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        node.classList.add("drop-ready");
+      });
+      node.addEventListener("dragleave", () => node.classList.remove("drop-ready"));
+      node.addEventListener("drop", (event) => {
+        event.preventDefault();
+        node.classList.remove("drop-ready");
+        try {
+          const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+          if (payload.type === "qq") connectTopologyTarget(index, payload.value);
+        } catch {
+          showToast("拖拽数据无效。");
+        }
+      });
+    }
   });
 
-  const stage = els.targetTopology.querySelector("[data-topology-drop-stage]");
-  if (stage) {
+  const stage = root.querySelector("[data-topology-drop-stage]");
+  if (editable && stage) {
     stage.addEventListener("dragover", (event) => {
       event.preventDefault();
       stage.classList.add("drop-ready");
@@ -346,10 +353,10 @@ function bindTargetTopologyInteractions() {
   }
 }
 
-function captureTopologyScroll() {
-  if (!els.targetTopology) return {};
+function captureTopologyScroll(root) {
+  if (!root) return {};
   const scrollState = {};
-  els.targetTopology.querySelectorAll("[data-topology-scroll]").forEach((node) => {
+  root.querySelectorAll("[data-topology-scroll]").forEach((node) => {
     scrollState[node.dataset.topologyScroll] = {
       left: node.scrollLeft,
       top: node.scrollTop,
@@ -358,9 +365,9 @@ function captureTopologyScroll() {
   return scrollState;
 }
 
-function restoreTopologyScroll(scrollState) {
-  if (!els.targetTopology || !scrollState) return;
-  els.targetTopology.querySelectorAll("[data-topology-scroll]").forEach((node) => {
+function restoreTopologyScroll(root, scrollState) {
+  if (!root || !scrollState) return;
+  root.querySelectorAll("[data-topology-scroll]").forEach((node) => {
     const state = scrollState[node.dataset.topologyScroll];
     if (!state) return;
     node.scrollLeft = state.left;
@@ -368,9 +375,16 @@ function restoreTopologyScroll(scrollState) {
   });
 }
 
-export function renderTargetTopology() {
-  if (!els.targetTopology) return;
-  const scrollState = captureTopologyScroll();
+function renderTopologyInto(root, {
+  showPalette = true,
+  editable = true,
+  allowOpenChannel = true,
+  emptyMessage = "还没有配置源频道。把上方 Telegram 频道拖到这里开始配置。",
+  markerId = "topology-arrow",
+  minStageHeight = 0,
+} = {}) {
+  if (!root) return;
+  const scrollState = captureTopologyScroll(root);
   const cfg = store.state.config || {};
   const channels = Array.isArray(cfg.source_channels) ? cfg.source_channels : [];
   const defaultTargets = uniqueList(splitList(cfg.target_qq_session || []));
@@ -417,7 +431,7 @@ export function renderTargetTopology() {
       return ref && !configuredRefs.has(ref);
     });
   const availableGroups = store.state.qqGroups;
-  const palette = `
+  const palette = showPalette ? `
     <div class="topology-palette">
       <div>
         <strong>可拖入频道 <span>${availableChannels.length}</span></strong>
@@ -448,20 +462,23 @@ export function renderTargetTopology() {
         </div>
       </div>
     </div>
-  `;
+  ` : "";
 
   if (!sourceItems.length) {
-    els.targetTopology.innerHTML = `
+    root.innerHTML = `
       ${palette}
-      <div class="topology-empty" data-topology-drop-stage>还没有配置源频道。把上方 Telegram 频道拖到这里开始配置。</div>
+      <div class="topology-empty" data-topology-drop-stage>${escapeHtml(emptyMessage)}</div>
     `;
-    bindTargetTopologyInteractions();
-    restoreTopologyScroll(scrollState);
+    bindTargetTopologyInteractions(root, { editable, allowOpenChannel });
+    restoreTopologyScroll(root, scrollState);
     return;
   }
 
   const rowCount = Math.max(sourceItems.length, targetItems.length, 2);
-  const stageHeight = TOPOLOGY_TOP_PADDING + (rowCount - 1) * TOPOLOGY_ROW_HEIGHT + TOPOLOGY_BOTTOM_PADDING;
+  const stageHeight = Math.max(
+    TOPOLOGY_TOP_PADDING + (rowCount - 1) * TOPOLOGY_ROW_HEIGHT + TOPOLOGY_BOTTOM_PADDING,
+    minStageHeight,
+  );
   const sourceNodes = sourceItems
     .map((source, index) =>
       topologyNode(
@@ -480,7 +497,7 @@ export function renderTargetTopology() {
         target.meta,
         "target",
         index,
-        `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"`,
+        editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : "",
       ),
     ).join("")
     : '<div class="topology-empty topology-empty-target">未选择 QQ 群目标</div>';
@@ -492,7 +509,7 @@ export function renderTargetTopology() {
         if (targetPosition == null) return "";
         const y1 = topologyY(sourceIndex);
         const y2 = topologyY(targetPosition);
-        return `<path class="${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
+        return `<path class="${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
       }),
     )
     .join("");
@@ -511,13 +528,13 @@ export function renderTargetTopology() {
     })
     .join("");
 
-  els.targetTopology.innerHTML = `
+  root.innerHTML = `
     ${palette}
     <div class="topology-canvas" data-topology-scroll="canvas">
       <div class="topology-stage" data-topology-drop-stage style="--topology-height: ${stageHeight}px">
         <svg class="topology-lines" viewBox="0 0 100 ${stageHeight}" preserveAspectRatio="none" aria-hidden="true">
           <defs>
-            <marker id="topology-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+            <marker id="${markerId}" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
               <path d="M 0 0 L 8 4 L 0 8 z" />
             </marker>
           </defs>
@@ -529,8 +546,33 @@ export function renderTargetTopology() {
     </div>
     <div class="topology-mobile-list">${mobileRows}</div>
   `;
-  bindTargetTopologyInteractions();
-  restoreTopologyScroll(scrollState);
+  bindTargetTopologyInteractions(root, { editable, allowOpenChannel });
+  restoreTopologyScroll(root, scrollState);
+}
+
+export function renderTargetTopology() {
+  renderTopologyInto(els.targetTopology, {
+    showPalette: true,
+    editable: true,
+    allowOpenChannel: true,
+    markerId: "target-topology-arrow",
+    minStageHeight: 520,
+  });
+}
+
+export function renderOverviewTopology() {
+  renderTopologyInto(els.overviewTopology, {
+    showPalette: false,
+    editable: false,
+    allowOpenChannel: true,
+    emptyMessage: "还没有配置源频道。请在目标配置中建立频道到 QQ 群的转发关系。",
+    markerId: "overview-topology-arrow",
+  });
+}
+
+function renderTopologySurfaces() {
+  renderTargetTopology();
+  renderOverviewTopology();
 }
 
 export function renderRootConfig() {
@@ -547,7 +589,7 @@ export function renderRootConfig() {
     manualInput: els.targetQQInput,
     inheritLabel: "未配置默认 QQ 目标",
   });
-  renderTargetTopology();
+  renderTopologySurfaces();
   if (els.debugDefaultInput) els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
 
   const web = currentWebConfig();
@@ -850,7 +892,7 @@ function bindMainEvents() {
   if (els.targetQQInput) {
     els.targetQQInput.addEventListener("change", () => {
       collectRootConfig();
-      renderTargetTopology();
+      renderTopologySurfaces();
     });
   }
 
@@ -895,7 +937,7 @@ async function boot() {
         manualInput: els.targetQQInput,
         inheritLabel: "未配置默认 QQ 目标",
       });
-      renderTargetTopology();
+      renderTopologySurfaces();
     }
   });
 

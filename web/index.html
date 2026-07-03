@@ -114,6 +114,16 @@
                 <div class="queue-list" id="queueList"></div>
               </div>
             </div>
+
+            <div class="panel overview-topology-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>转发拓扑</h2>
+                  <p>只读查看 Telegram 频道到 QQ 群的转发关系与实时队列状态。</p>
+                </div>
+              </div>
+              <div class="target-topology topology-readonly" id="overviewTopology"></div>
+            </div>
           </div>
         </section>
 
@@ -228,32 +238,40 @@
               </div>
             </div>
             <div class="settings-grid target-settings-grid">
-              <div class="settings-card target-telegram-card">
-                <h3>Telegram 目标</h3>
-                <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
-              </div>
-              <div class="settings-card target-qq-card">
-                <h3>默认 QQ 群组</h3>
-                <div id="defaultQQSelector" class="selector-host"></div>
-                <textarea id="targetQQInput" hidden></textarea>
-                <button class="btn btn-soft danger" id="resetDefaultQQBtn" type="button">清空默认 QQ 目标</button>
-              </div>
-              <div class="settings-card target-diagnostics-card">
-                <h3>诊断</h3>
-                <label class="toggle-row">
-                  <input id="debugDefaultInput" type="checkbox" />
-                  <span>默认开启 QQ 发送诊断日志</span>
-                </label>
-              </div>
               <div class="settings-card target-map-card">
                 <div class="panel-head compact">
                   <div>
                     <h3>转发拓扑</h3>
-                    <p>按频道查看实际转发到哪些 QQ 群。</p>
+                    <p>将频道和 QQ 群拖入图中建立关系，点击频道可进入专属目标配置。</p>
                   </div>
                 </div>
                 <div class="target-topology" id="targetTopology"></div>
               </div>
+              <details class="target-settings-disclosure">
+                <summary>
+                  <span>基础目标设置</span>
+                  <small>Telegram 目标、默认 QQ 群组与诊断开关</small>
+                </summary>
+                <div class="target-settings-body">
+                  <div class="target-setting-block target-telegram-card">
+                    <h3>Telegram 目标</h3>
+                    <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
+                  </div>
+                  <div class="target-setting-block target-qq-card">
+                    <h3>默认 QQ 群组</h3>
+                    <div id="defaultQQSelector" class="selector-host"></div>
+                    <textarea id="targetQQInput" hidden></textarea>
+                    <button class="btn btn-soft danger" id="resetDefaultQQBtn" type="button">清空默认 QQ 目标</button>
+                  </div>
+                  <div class="target-setting-block target-diagnostics-card">
+                    <h3>诊断</h3>
+                    <label class="toggle-row">
+                      <input id="debugDefaultInput" type="checkbox" />
+                      <span>默认开启 QQ 发送诊断日志</span>
+                    </label>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </section>

@@ -157,6 +157,10 @@
   margin-bottom: 0;
 }
 
+.overview-topology-panel {
+  margin-bottom: 0;
+}
+
 .runtime-panel,
 .queue-panel {
   min-height: 326px;
@@ -195,29 +199,70 @@
 }
 
 .target-settings-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.72fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-}
-
-.target-telegram-card {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.target-qq-card {
-  grid-column: 1 / -1;
-  grid-row: 2;
-}
-
-.target-diagnostics-card {
-  grid-column: 2;
-  grid-row: 1;
-  min-height: 132px;
 }
 
 .target-map-card {
   grid-column: 1 / -1;
-  grid-row: 3;
+  min-height: 0;
+}
+
+.target-settings-disclosure {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 26, 0.2);
+  overflow: hidden;
+}
+
+.target-settings-disclosure summary {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  padding: 14px 16px;
+  color: var(--ink);
+  font-weight: 900;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.target-settings-disclosure summary::marker {
+  color: var(--lime);
+}
+
+.target-settings-disclosure summary small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.target-settings-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.target-setting-block {
+  min-width: 0;
+  display: grid;
+  gap: 13px;
+  align-content: start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.035);
+}
+
+.target-qq-card {
+  grid-column: 1 / -1;
+}
+
+.target-diagnostics-card {
+  min-height: 132px;
 }
 
 .panel-head.compact {
@@ -228,6 +273,10 @@
   min-width: 0;
   display: grid;
   gap: 12px;
+}
+
+.topology-readonly {
+  margin-top: 12px;
 }
 
 .topology-palette {
@@ -312,6 +361,10 @@
   scrollbar-width: thin;
 }
 
+.overview-topology-panel .topology-canvas {
+  max-height: min(440px, 46vh);
+}
+
 .topology-stage {
   position: relative;
   min-width: 920px;
@@ -346,7 +399,6 @@
   stroke: var(--blue-strong);
   stroke-width: 0.5;
   stroke-dasharray: 2.4 2;
-  marker-end: url(#topology-arrow);
   opacity: 0.76;
   vector-effect: non-scaling-stroke;
 }
@@ -491,6 +543,7 @@
 }
 
 .settings-card h3,
+.target-setting-block h3,
 .step-card h3 {
   margin: 0;
   font-size: 15px;
@@ -970,16 +1023,12 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
-  .target-qq-card {
-    grid-column: auto;
-    grid-row: auto;
+  .target-settings-body {
+    grid-template-columns: 1fr;
   }
 
-  .target-telegram-card,
-  .target-diagnostics-card,
-  .target-map-card {
+  .target-qq-card {
     grid-column: auto;
-    grid-row: auto;
   }
 
   .config-panel,
