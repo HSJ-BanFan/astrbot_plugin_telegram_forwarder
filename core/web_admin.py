@@ -234,7 +234,9 @@ class WebAdminServer:
             from flask import Flask, jsonify, request, send_from_directory
             from werkzeug.serving import WSGIRequestHandler, make_server
         except Exception as exc:  # pragma: no cover - import guard for plugin load
-            raise RuntimeError("Flask 未安装，请安装 requirements.txt 中的 flask") from exc
+            raise RuntimeError(
+                "Flask 未安装，请安装 requirements.txt 中的 flask"
+            ) from exc
 
         root_dir = Path(__file__).resolve().parent.parent
         web_dir = root_dir / "web"
@@ -500,7 +502,12 @@ class WebAdminServer:
     def _session_files(session_path: str) -> list[str]:
         return [
             f"{session_path}{suffix}"
-            for suffix in (".session", ".session-journal", ".session-shm", ".session-wal")
+            for suffix in (
+                ".session",
+                ".session-journal",
+                ".session-shm",
+                ".session-wal",
+            )
         ]
 
     def _temp_login_dir(self) -> str:
@@ -530,12 +537,19 @@ class WebAdminServer:
         with tempfile.TemporaryDirectory(prefix="tg_session_import_") as temp_dir:
             temp_path = os.path.join(temp_dir, "user_session")
             for suffix, encoded in files.items():
-                if suffix not in (".session", ".session-journal", ".session-shm", ".session-wal"):
+                if suffix not in (
+                    ".session",
+                    ".session-journal",
+                    ".session-shm",
+                    ".session-wal",
+                ):
                     continue
                 try:
                     raw = base64.b64decode(str(encoded), validate=True)
                 except Exception as exc:
-                    raise WebAdminError(f"登录信息包中的 {suffix} 不是有效 base64。") from exc
+                    raise WebAdminError(
+                        f"登录信息包中的 {suffix} 不是有效 base64。"
+                    ) from exc
                 with open(f"{temp_path}{suffix}", "wb") as session_file:
                     session_file.write(raw)
 
@@ -546,7 +560,9 @@ class WebAdminServer:
                 finally:
                     conn.close()
             except Exception as exc:
-                raise WebAdminError("导入的 .session 文件不是有效 SQLite session。") from exc
+                raise WebAdminError(
+                    "导入的 .session 文件不是有效 SQLite session。"
+                ) from exc
 
             for path in self._session_files(session_path):
                 if os.path.exists(path):
@@ -601,7 +617,9 @@ class WebAdminServer:
                     try:
                         os.remove(path)
                     except Exception as exc:
-                        logger.debug(f"[WebAdmin] remove temp login session failed {path}: {exc}")
+                        logger.debug(
+                            f"[WebAdmin] remove temp login session failed {path}: {exc}"
+                        )
 
     async def _ensure_login_wrapper_ready(self):
         if self._login_wrapper and self._login_wrapper.client:
@@ -621,7 +639,9 @@ class WebAdminServer:
 
         temp_session_path = login_wrapper._session_path()
         official_wrapper = self.plugin.client_wrapper
-        official_session_path = os.path.join(official_wrapper.plugin_data_dir, "user_session")
+        official_session_path = os.path.join(
+            official_wrapper.plugin_data_dir, "user_session"
+        )
         backup_dir = os.path.join(
             official_wrapper.plugin_data_dir,
             f"user_session_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
@@ -631,7 +651,9 @@ class WebAdminServer:
             if login_wrapper.client.is_connected():
                 await login_wrapper.disconnect(timeout=5.0)
         except Exception as exc:
-            logger.debug(f"[WebAdmin] disconnect temp login before install failed: {exc}")
+            logger.debug(
+                f"[WebAdmin] disconnect temp login before install failed: {exc}"
+            )
         TelegramClientWrapper.clear_cache(temp_session_path)
 
         copied_official_backup = False
@@ -649,7 +671,9 @@ class WebAdminServer:
                 if official_wrapper.client and official_wrapper.client.is_connected():
                     await official_wrapper.disconnect(timeout=5.0)
             except Exception as exc:
-                logger.debug(f"[WebAdmin] disconnect official client before install failed: {exc}")
+                logger.debug(
+                    f"[WebAdmin] disconnect official client before install failed: {exc}"
+                )
             TelegramClientWrapper.clear_cache(official_session_path)
 
             for path in self._session_files(official_session_path):
@@ -676,7 +700,9 @@ class WebAdminServer:
                         except Exception:
                             pass
                 for backup_path in Path(backup_dir).glob("*"):
-                    target = os.path.join(official_wrapper.plugin_data_dir, backup_path.name)
+                    target = os.path.join(
+                        official_wrapper.plugin_data_dir, backup_path.name
+                    )
                     shutil.copy2(str(backup_path), target)
             raise
 
@@ -726,10 +752,13 @@ class WebAdminServer:
                 "jobs": len(scheduler.get_jobs()) if scheduler else 0,
                 "active_web_operations": len(runtime_tasks),
                 "capture_busy": any(
-                    lock.locked() for lock in getattr(channel_locks, "values", lambda: [])()
+                    lock.locked()
+                    for lock in getattr(channel_locks, "values", lambda: [])()
                 ),
                 "send_busy": bool(send_lock and send_lock.locked()),
-                "global_send_busy": bool(global_send_lock and global_send_lock.locked()),
+                "global_send_busy": bool(
+                    global_send_lock and global_send_lock.locked()
+                ),
                 "operations": self._runtime_operation_snapshots(),
             },
             "channels": {
@@ -750,11 +779,7 @@ class WebAdminServer:
 
     def _runtime_operation_snapshots(self) -> list[dict[str, Any]]:
         return [
-            {
-                key: value
-                for key, value in operation.items()
-                if not key.startswith("_")
-            }
+            {key: value for key, value in operation.items() if not key.startswith("_")}
             for operation in self._runtime_operations
         ]
 
@@ -906,7 +931,11 @@ class WebAdminServer:
         return normalized
 
     async def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        incoming = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+        incoming = (
+            payload.get("config")
+            if isinstance(payload.get("config"), dict)
+            else payload
+        )
         if not isinstance(incoming, dict):
             raise WebAdminError("配置内容必须是 JSON 对象。")
 
@@ -915,7 +944,9 @@ class WebAdminServer:
             self.plugin.config.get("api_hash"),
             self.plugin.config.get("proxy"),
         )
-        old_web_config = self.normalize_web_config(self.plugin.config.get("web_config", {}))
+        old_web_config = self.normalize_web_config(
+            self.plugin.config.get("web_config", {})
+        )
 
         root_fields = {
             "target_qq_session",
@@ -991,7 +1022,9 @@ class WebAdminServer:
         except Exception as exc:
             logger.debug(f"[WebAdmin] reschedule after config save failed: {exc}")
 
-        new_web_config = self.normalize_web_config(self.plugin.config.get("web_config", {}))
+        new_web_config = self.normalize_web_config(
+            self.plugin.config.get("web_config", {})
+        )
         restart_required = (
             new_web_config["enabled"] != old_web_config["enabled"]
             or new_web_config["host"] != old_web_config["host"]
@@ -1012,7 +1045,11 @@ class WebAdminServer:
         }
 
     async def import_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        incoming = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+        incoming = (
+            payload.get("config")
+            if isinstance(payload.get("config"), dict)
+            else payload
+        )
         if not isinstance(incoming, dict):
             raise WebAdminError("导入配置必须是 JSON 对象，或包含 config 对象。")
         result = await self.save_config({"config": incoming})
@@ -1039,7 +1076,11 @@ class WebAdminServer:
         }
 
     async def import_session(self, payload: dict[str, Any]) -> dict[str, Any]:
-        bundle = payload.get("session") if isinstance(payload.get("session"), dict) else payload
+        bundle = (
+            payload.get("session")
+            if isinstance(payload.get("session"), dict)
+            else payload
+        )
         if not isinstance(bundle, dict):
             raise WebAdminError("导入登录信息必须是 JSON 对象。")
         has_string_session = bool(str(bundle.get("string_session") or "").strip())
@@ -1061,7 +1102,9 @@ class WebAdminServer:
             if wrapper.client and wrapper.client.is_connected():
                 await wrapper.disconnect(timeout=5.0)
         except Exception as exc:
-            logger.debug(f"[WebAdmin] disconnect official client before import failed: {exc}")
+            logger.debug(
+                f"[WebAdmin] disconnect official client before import failed: {exc}"
+            )
         TelegramClientWrapper.clear_cache(session_path)
 
         try:
@@ -1118,7 +1161,9 @@ class WebAdminServer:
         await self._discard_login_attempt(remove_files=True)
         return {
             "authorized": authorized,
-            "message": "登录信息已导入并验证成功。" if authorized else "登录信息已导入，但 Telegram 未授权，请重新登录。",
+            "message": "登录信息已导入并验证成功。"
+            if authorized
+            else "登录信息已导入，但 Telegram 未授权，请重新登录。",
         }
 
     async def get_login_status(self) -> dict[str, Any]:
@@ -1131,7 +1176,8 @@ class WebAdminServer:
                 "need_password": bool(self._login_data.get("need_password")),
                 "replace_existing": bool(self._login_data.get("replace_existing")),
                 "code_sent": bool(self._login_data.get("phone_code_hash")),
-                "phone": self._login_data.get("phone") or self.plugin.config.get("phone", ""),
+                "phone": self._login_data.get("phone")
+                or self.plugin.config.get("phone", ""),
                 "me": None,
             }
 
@@ -1161,7 +1207,8 @@ class WebAdminServer:
             "need_password": bool(self._login_data.get("need_password")),
             "replace_existing": bool(self._login_data.get("replace_existing")),
             "code_sent": bool(self._login_data.get("phone_code_hash")),
-            "phone": self._login_data.get("phone") or self.plugin.config.get("phone", ""),
+            "phone": self._login_data.get("phone")
+            or self.plugin.config.get("phone", ""),
             "created_at": self._login_data.get("created_at"),
             "me": me_data,
         }
@@ -1317,14 +1364,12 @@ class WebAdminServer:
         async def run_once():
             before_fetch = self._pending_queue_count()
             operation["message"] = (
-                "正在强制抓取频道更新。"
-                f"{self._format_queue_count(before_fetch)}"
+                f"正在强制抓取频道更新。{self._format_queue_count(before_fetch)}"
             )
             await self.plugin.forwarder.check_updates(force=True)
             after_fetch = self._pending_queue_count()
             operation["message"] = (
-                "正在发送待发送队列。"
-                f"{self._format_queue_count(after_fetch)}"
+                f"正在发送待发送队列。{self._format_queue_count(after_fetch)}"
             )
             await self.plugin.forwarder.send_pending_messages(force_immediate=True)
             after_send = self._pending_queue_count()
@@ -1360,7 +1405,9 @@ class WebAdminServer:
             runtime_tasks.discard(done_task)
             if done_task.cancelled():
                 if operation is not None:
-                    self._finish_runtime_operation(operation, "cancelled", "任务已取消。")
+                    self._finish_runtime_operation(
+                        operation, "cancelled", "任务已取消。"
+                    )
                 return
             try:
                 done_task.result()

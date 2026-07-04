@@ -139,7 +139,12 @@ class Main(star.Star):
 
     def _register_dashboard_web_apis(self) -> None:
         legacy_routes = [
-            ("auth/check", self.dashboard_auth_check, ["POST"], "验证 Dashboard Page 访问"),
+            (
+                "auth/check",
+                self.dashboard_auth_check,
+                ["POST"],
+                "验证 Dashboard Page 访问",
+            ),
             ("status", self.dashboard_status, ["GET"], "读取运行状态"),
             ("config", self.dashboard_get_config, ["GET"], "读取配置"),
             ("config", self.dashboard_save_config, ["POST"], "保存配置"),
@@ -150,7 +155,12 @@ class Main(star.Star):
                 ["POST"],
                 "刷新 QQ 群列表",
             ),
-            ("tg/channels", self.dashboard_tg_channels, ["GET"], "加载 Telegram 频道列表"),
+            (
+                "tg/channels",
+                self.dashboard_tg_channels,
+                ["GET"],
+                "加载 Telegram 频道列表",
+            ),
             (
                 "tg/channels/refresh",
                 self.dashboard_tg_channels_refresh,
@@ -159,17 +169,62 @@ class Main(star.Star):
             ),
             ("export/config", self.dashboard_export_config, ["GET"], "导出配置"),
             ("import/config", self.dashboard_import_config, ["POST"], "导入配置"),
-            ("export/session", self.dashboard_export_session, ["GET"], "导出 Telegram 登录信息"),
-            ("import/session", self.dashboard_import_session, ["POST"], "导入 Telegram 登录信息"),
-            ("login/status", self.dashboard_login_status, ["GET"], "检查 Telegram 登录状态"),
-            ("login/start", self.dashboard_login_start, ["POST"], "发送 Telegram 登录验证码"),
-            ("login/code", self.dashboard_login_code, ["POST"], "提交 Telegram 登录验证码"),
-            ("login/password", self.dashboard_login_password, ["POST"], "提交 Telegram 两步验证密码"),
-            ("login/cancel", self.dashboard_login_cancel, ["POST"], "取消 Telegram 登录流程"),
-            ("login/reset", self.dashboard_login_reset, ["POST"], "重置 Telegram 登录流程"),
+            (
+                "export/session",
+                self.dashboard_export_session,
+                ["GET"],
+                "导出 Telegram 登录信息",
+            ),
+            (
+                "import/session",
+                self.dashboard_import_session,
+                ["POST"],
+                "导入 Telegram 登录信息",
+            ),
+            (
+                "login/status",
+                self.dashboard_login_status,
+                ["GET"],
+                "检查 Telegram 登录状态",
+            ),
+            (
+                "login/start",
+                self.dashboard_login_start,
+                ["POST"],
+                "发送 Telegram 登录验证码",
+            ),
+            (
+                "login/code",
+                self.dashboard_login_code,
+                ["POST"],
+                "提交 Telegram 登录验证码",
+            ),
+            (
+                "login/password",
+                self.dashboard_login_password,
+                ["POST"],
+                "提交 Telegram 两步验证密码",
+            ),
+            (
+                "login/cancel",
+                self.dashboard_login_cancel,
+                ["POST"],
+                "取消 Telegram 登录流程",
+            ),
+            (
+                "login/reset",
+                self.dashboard_login_reset,
+                ["POST"],
+                "重置 Telegram 登录流程",
+            ),
             ("runtime/check", self.dashboard_runtime_check, ["POST"], "立即抓取并发送"),
             ("runtime/pause", self.dashboard_runtime_pause, ["POST"], "暂停抓取与发送"),
-            ("runtime/resume", self.dashboard_runtime_resume, ["POST"], "恢复抓取与发送"),
+            (
+                "runtime/resume",
+                self.dashboard_runtime_resume,
+                ["POST"],
+                "恢复抓取与发送",
+            ),
             (
                 "runtime/clear-queue",
                 self.dashboard_runtime_clear_queue,
@@ -178,7 +233,12 @@ class Main(star.Star):
             ),
         ]
         page_routes = [
-            ("dashboard", self.dashboard_page_dashboard, ["GET"], "读取 Dashboard Page 聚合数据"),
+            (
+                "dashboard",
+                self.dashboard_page_dashboard,
+                ["GET"],
+                "读取 Dashboard Page 聚合数据",
+            ),
             *legacy_routes,
         ]
         for route, handler, methods, desc in legacy_routes:
@@ -248,7 +308,9 @@ class Main(star.Star):
         errors = {}
         status, config_data, qq_groups, tg_channels = await asyncio.gather(
             self._dashboard_section("status", server.get_status, {}, errors),
-            self._dashboard_section("config", server.get_config, {"config": {}}, errors),
+            self._dashboard_section(
+                "config", server.get_config, {"config": {}}, errors
+            ),
             self._dashboard_section(
                 "qq_groups",
                 server.list_qq_groups,
@@ -258,7 +320,11 @@ class Main(star.Star):
             self._dashboard_section(
                 "tg_channels",
                 server.list_tg_channels,
-                {"channels": [], "available": False, "message": "Telegram 频道列表加载失败。"},
+                {
+                    "channels": [],
+                    "available": False,
+                    "message": "Telegram 频道列表加载失败。",
+                },
                 errors,
             ),
         )
@@ -292,7 +358,9 @@ class Main(star.Star):
         )
 
     async def dashboard_qq_groups(self):
-        return await self._dashboard_call(self._ensure_web_admin_server().list_qq_groups)
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().list_qq_groups
+        )
 
     async def dashboard_qq_groups_refresh(self):
         return await self._dashboard_call(
@@ -300,7 +368,9 @@ class Main(star.Star):
         )
 
     async def dashboard_tg_channels(self):
-        return await self._dashboard_call(self._ensure_web_admin_server().list_tg_channels)
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().list_tg_channels
+        )
 
     async def dashboard_tg_channels_refresh(self):
         return await self._dashboard_call(
@@ -317,7 +387,9 @@ class Main(star.Star):
         )
 
     async def dashboard_export_session(self):
-        return await self._dashboard_call(self._ensure_web_admin_server().export_session)
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().export_session
+        )
 
     async def dashboard_import_session(self):
         payload = await self._dashboard_payload()
@@ -326,7 +398,9 @@ class Main(star.Star):
         )
 
     async def dashboard_login_status(self):
-        return await self._dashboard_call(self._ensure_web_admin_server().get_login_status)
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().get_login_status
+        )
 
     async def dashboard_login_start(self):
         payload = await self._dashboard_payload()
@@ -359,7 +433,9 @@ class Main(star.Star):
         return await self._dashboard_call(self._ensure_web_admin_server().runtime_pause)
 
     async def dashboard_runtime_resume(self):
-        return await self._dashboard_call(self._ensure_web_admin_server().runtime_resume)
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().runtime_resume
+        )
 
     async def dashboard_runtime_clear_queue(self):
         payload = await self._dashboard_payload()

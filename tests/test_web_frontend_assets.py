@@ -137,7 +137,11 @@ def test_dashboard_page_uses_sandbox_safe_storage_helpers() -> None:
 def test_dashboard_backend_registers_page_api_namespace() -> None:
     text = (ROOT / "main.py").read_text(encoding="utf-8")
 
-    assert '("dashboard", self.dashboard_page_dashboard' in text
+    assert re.search(
+        r"page_routes\s*=\s*\[.*?\"dashboard\"\s*,\s*self\.dashboard_page_dashboard",
+        text,
+        re.S,
+    )
     assert 'f"/{PLUGIN_NAME}/page/{route}"' in text
     assert "async def dashboard_page_dashboard" in text
     assert '"qqGroups": qq_groups' in text
@@ -264,8 +268,13 @@ def test_app_entrypoint_stays_thin_after_module_split() -> None:
 def test_channel_collection_allows_explicit_channel_clear() -> None:
     text = (WEB_ASSETS / "js" / "ui_channels.js").read_text(encoding="utf-8")
 
-    assert 'channel_username: (getText("channel_username") || current.channel_username)' not in text
-    assert 'const channelUsernameField = channelField(card, "channel_username");' in text
+    assert (
+        'channel_username: (getText("channel_username") || current.channel_username)'
+        not in text
+    )
+    assert (
+        'const channelUsernameField = channelField(card, "channel_username");' in text
+    )
     assert "normalizeChannelFieldValue(" in text
 
 

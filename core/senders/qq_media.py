@@ -162,7 +162,9 @@ def _path_mapping_sources(context: Any) -> list[tuple[str, object]]:
     return sources
 
 
-def _log_path_mapping_state_once(*, fpath: str, sources: list[tuple[str, object]]) -> None:
+def _log_path_mapping_state_once(
+    *, fpath: str, sources: list[tuple[str, object]]
+) -> None:
     if sources:
         summary = ", ".join(
             f"{name}={len(_iter_mapping_pairs(mappings))}" for name, mappings in sources
@@ -243,8 +245,7 @@ def map_path_with_config(
                 return mapped
         except Exception as exc:
             logger.warning(
-                f"[QQSender] AstrBot path mapping failed: path={fpath!r}, "
-                f"error={exc!r}"
+                f"[QQSender] AstrBot path mapping failed: path={fpath!r}, error={exc!r}"
             )
     return fpath
 

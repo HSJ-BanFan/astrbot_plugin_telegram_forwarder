@@ -77,7 +77,9 @@ class QQGroupCache:
             if saw_client:
                 self._message = ""
             elif saw_platform:
-                self._message = "QQ platform found, but no callable client is available."
+                self._message = (
+                    "QQ platform found, but no callable client is available."
+                )
             else:
                 self._message = "QQ platform is unavailable."
             self._last_refresh_at = time.time()
@@ -176,9 +178,7 @@ class QQGroupCache:
             [copy.deepcopy(item) for item in groups],
             key=lambda item: (
                 not str(item.get("group_id", "")).isdigit(),
-                int(item["group_id"])
-                if str(item.get("group_id", "")).isdigit()
-                else 0,
+                int(item["group_id"]) if str(item.get("group_id", "")).isdigit() else 0,
                 str(item.get("group_name", "")),
             ),
         )

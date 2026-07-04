@@ -44,7 +44,9 @@ class TGChannelCache:
             if not force and self._is_fresh() and self._channels:
                 return
 
-            client = getattr(getattr(self.plugin, "client_wrapper", None), "client", None)
+            client = getattr(
+                getattr(self.plugin, "client_wrapper", None), "client", None
+            )
             if client is None:
                 self._set_unavailable("Telegram client is unavailable.")
                 return
