@@ -1023,7 +1023,7 @@ function renderTopologyInto(root, {
         const y2 = targetYs[targetPosition];
         const edgeClass = `${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}`;
         const style = source.active ? `style="animation-delay: ${activeDelay}"` : "";
-        return `<path class="${edgeClass}" ${style} data-source="${sourceIndex}" data-target="${targetPosition}" marker-end="url(#${markerId})" d="M 0 ${y1} C 35 ${y1}, 65 ${y2}, 100 ${y2}" />`;
+        return `<path class="${edgeClass}" ${style} data-source="${sourceIndex}" data-target="${targetPosition}" d="M 0 ${y1} C 35 ${y1}, 65 ${y2}, 100 ${y2}" />`;
       }),
     )
     .join("");
@@ -1050,11 +1050,6 @@ function renderTopologyInto(root, {
         <span class="topology-col-label">Telegram 频道</span>
         <span class="topology-col-label topology-col-label-right">QQ 目标</span>
         <svg class="topology-lines" viewBox="0 0 100 ${stageHeight}" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <marker id="${markerId}" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto">
-              <path d="M 0 0 L 8 4 L 0 8 z" />
-            </marker>
-          </defs>
           ${edges}
         </svg>
         ${sourceNodes}

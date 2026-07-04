@@ -193,9 +193,6 @@ def test_topology_edges_align_with_node_cards_at_any_width() -> None:
         # SVG 画布已被 CSS 夹在两列卡片之间，x 轴 0→100 必须画满全幅才能贴合卡片边缘
         assert "d=\"M 0 ${y1} C 35 ${y1}, 65 ${y2}, 100 ${y2}\"" in text
         assert 'd="M 28' not in text
-        # refX=8 让箭头尖端恰好落在路径终点（右侧卡片左边缘），不再刺入卡片
-        assert 'refX="8"' in text
-        assert 'refX="6"' not in text
 
 
 def test_legacy_web_relative_module_imports_resolve() -> None:
