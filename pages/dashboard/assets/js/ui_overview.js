@@ -93,6 +93,90 @@ export function renderRuntimeOperations(runtime) {
   }
 }
 
+/* 队列列表增量更新与动画引擎：增量 Diff 更新 DOM 并驱动 GSAP 平滑动效 */
+function updateQueueList(container, entries) {
+  if (!container) return;
+
+  if (!entries.length) {
+    container.innerHTML = `<div class="list-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg><span>队列已清空，暂无待发送消息</span></div>`;
+    delete container.dataset.hasItems;
+    return;
+  }
+
+  // If container had empty state or empty token, clear it first
+  if (container.querySelector(".list-empty") || !container.dataset.hasItems) {
+    container.innerHTML = "";
+    container.dataset.hasItems = "true";
+  }
+
+  const existingItems = Array.from(container.querySelectorAll(".queue-item"));
+  const existingMap = new Map(existingItems.map(el => [el.dataset.channel, el]));
+  const currentChannels = new Set(entries.map(([ch]) => ch));
+
+  // 1. Remove obsolete items with fade-out animation
+  existingItems.forEach((el) => {
+    const ch = el.dataset.channel;
+    if (!currentChannels.has(ch)) {
+      if (window.gsap && motionEnabled()) {
+        window.gsap.to(el, {
+          opacity: 0,
+          x: 15,
+          duration: 0.3,
+          ease: "power2.in",
+          onComplete: () => el.remove()
+        });
+      } else {
+        el.remove();
+      }
+    }
+  });
+
+  // 2. Add or update items
+  let delay = 0;
+  entries.forEach(([channel, count]) => {
+    let el = existingMap.get(channel);
+    if (el) {
+      // Update existing item's count with rolling number animation
+      const strong = el.querySelector("strong");
+      const prevVal = Number(strong.textContent) || 0;
+      const nextVal = Number(count) || 0;
+      if (prevVal !== nextVal) {
+        if (window.gsap && motionEnabled()) {
+          const state = { value: prevVal };
+          window.gsap.killTweensOf(strong);
+          window.gsap.to(state, {
+            value: nextVal,
+            duration: 0.6,
+            ease: "power2.out",
+            onUpdate: () => {
+              strong.textContent = String(Math.round(state.value));
+            }
+          });
+        } else {
+          strong.textContent = String(nextVal);
+        }
+      }
+    } else {
+      // Create new item
+      el = document.createElement("div");
+      el.className = "queue-item";
+      el.dataset.channel = channel;
+      el.innerHTML = `<span>${escapeHtml(channel)}</span><strong>${count}</strong>`;
+      
+      container.appendChild(el);
+      
+      // Animate new item entry
+      if (window.gsap && motionEnabled()) {
+        window.gsap.fromTo(el,
+          { opacity: 0, x: -12 },
+          { opacity: 1, x: 0, duration: 0.4, delay: delay, ease: "power2.out" }
+        );
+        delay += 0.05; // stagger delay
+      }
+    }
+  });
+}
+
 export function renderStatus() {
   const status = store.state.status || {};
   const telegram = status.telegram || {};
@@ -137,11 +221,7 @@ export function renderStatus() {
 
   if (els.queueList) {
     const entries = Object.entries(queue.by_channel || {});
-    els.queueList.innerHTML = entries.length
-      ? entries
-          .map(([channel, count]) => `<div class="queue-item"><span>${escapeHtml(channel)}</span><strong>${count}</strong></div>`)
-          .join("")
-      : '<div class="list-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg><span>队列已清空，暂无待发送消息</span></div>';
+    updateQueueList(els.queueList, entries);
   }
 
   if (motionEnabled()) {
