@@ -1072,6 +1072,52 @@ function renderTopologyInto(root, {
       } catch (e) {}
     }
   }
+
+  // Staggered entrance animation for nodes and self-drawing lines using GSAP
+  if (window.gsap && motionEnabled()) {
+    const isTyping = document.activeElement && 
+      (document.activeElement === root.querySelector("[data-topology-search-channels]") || 
+       document.activeElement === root.querySelector("[data-topology-search-groups]") || 
+       document.activeElement === els.topologySearchInput);
+
+    if (isTyping) {
+      window.gsap.from(root.querySelectorAll(".topology-node"), {
+        opacity: 0.5,
+        duration: 0.15,
+        ease: "power2.out"
+      });
+    } else {
+      window.gsap.from(root.querySelectorAll(".topology-node-source"), {
+        opacity: 0,
+        x: -15,
+        duration: 0.4,
+        stagger: 0.03,
+        ease: "power2.out"
+      });
+      window.gsap.from(root.querySelectorAll(".topology-node-target"), {
+        opacity: 0,
+        x: 15,
+        duration: 0.4,
+        stagger: 0.03,
+        ease: "power2.out"
+      });
+      root.querySelectorAll(".topology-lines > path").forEach((path) => {
+        const length = path.getTotalLength() || 1000;
+        path.style.strokeDasharray = `${length} ${length}`;
+        path.style.strokeDashoffset = length;
+        window.gsap.to(path, {
+          strokeDashoffset: 0,
+          duration: 0.6,
+          delay: 0.1,
+          ease: "power2.out",
+          onComplete: () => {
+            path.style.strokeDasharray = "";
+            path.style.strokeDashoffset = "";
+          }
+        });
+      });
+    }
+  }
 }
 
 export function renderTargetTopology() {

@@ -778,9 +778,7 @@ class Forwarder:
                             messages = messages[:defer_from_index]
                             message_pairs = message_pairs[:defer_from_index]
 
-                        merged_pairs = self.message_merger.merge_messages(
-                            message_pairs
-                        )
+                        merged_pairs = self.message_merger.merge_messages(message_pairs)
                         messages = [m for _, m in merged_pairs]
 
                         # 先加入队列，再更新 last_id
@@ -798,9 +796,7 @@ class Forwarder:
                                 {
                                     "id": m.id,
                                     "time": m.date.timestamp(),
-                                    "grouped_id": getattr(
-                                        m, "_merge_group_id", None
-                                    )
+                                    "grouped_id": getattr(m, "_merge_group_id", None)
                                     or m.grouped_id,
                                     "is_cold_start": (
                                         last_id == 0 and start_date is not None
@@ -883,9 +879,7 @@ class Forwarder:
         ) -> dict[int, tuple[str, ...]]:
             merged: dict[int, tuple[str, ...]] = dict(first)
             for index, targets in second.items():
-                merged[index] = tuple(
-                    dict.fromkeys((*merged.get(index, ()), *targets))
-                )
+                merged[index] = tuple(dict.fromkeys((*merged.get(index, ()), *targets)))
             return merged
 
         return QQSendSummary(
@@ -973,11 +967,7 @@ class Forwarder:
         completed_sets = []
         for item in items:
             completed_sets.append(
-                set(
-                    cls._normalize_target_list(
-                        item.get("completed_qq_targets", [])
-                    )
-                )
+                set(cls._normalize_target_list(item.get("completed_qq_targets", [])))
             )
         if not completed_sets:
             return []
@@ -1009,7 +999,9 @@ class Forwarder:
             return True
         return any(len(meta.get("target_sessions", [])) > 1 for meta in batch_meta)
 
-    def _completed_qq_targets_for_batch(self, src_channel: str, msgs: list) -> list[str]:
+    def _completed_qq_targets_for_batch(
+        self, src_channel: str, msgs: list
+    ) -> list[str]:
         msg_ids = {msg.id for msg in msgs}
         pending_items = [
             item
@@ -1288,9 +1280,7 @@ class Forwarder:
                                 and self._is_text_filter_matched(m, effective_cfg)
                             ):
                                 individually_skipped_keys.add((channel, m.id))
-                                skipped_grouped_ids.add(
-                                    (channel, meta["grouped_id"])
-                                )
+                                skipped_grouped_ids.add((channel, meta["grouped_id"]))
                                 continue
 
                             # 类型过滤
@@ -1345,9 +1335,7 @@ class Forwarder:
                                 continue
 
                             # 关键词/正则过滤
-                            should_skip = self._is_text_filter_matched(
-                                m, effective_cfg
-                            )
+                            should_skip = self._is_text_filter_matched(m, effective_cfg)
 
                             if should_skip:
                                 individually_skipped_keys.add((channel, m.id))
@@ -1361,9 +1349,7 @@ class Forwarder:
                             logger.error(
                                 "[Send] Telethon 数据库文件损坏 (malformed)。可尝试重载插件以恢复..."
                             )
-                            session_path = str(
-                                self.plugin_data_dir / "user_session"
-                            )
+                            session_path = str(self.plugin_data_dir / "user_session")
                             from .client import TelegramClientWrapper
 
                             TelegramClientWrapper.clear_cache(session_path)
@@ -1560,7 +1546,9 @@ class Forwarder:
                 logger.error(f"[Send] 转发过程出现错误: {e}")
                 should_preserve_failed = global_cfg.get(
                     "send_result_strict_ack", False
-                ) or any(len(meta.get("target_sessions", [])) > 1 for meta in batch_meta)
+                ) or any(
+                    len(meta.get("target_sessions", [])) > 1 for meta in batch_meta
+                )
                 if should_preserve_failed:
                     send_summary = QQSendSummary(
                         acked_batch_indexes=(),

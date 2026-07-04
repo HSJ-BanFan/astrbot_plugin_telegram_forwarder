@@ -79,6 +79,23 @@ http://127.0.0.1:8180/
 
 页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 
+### 前端源码与构建（开发者须知）
+
+两个 Web 入口共用同一份前端源码，采用「单一源目录 + 生成产物」结构：
+
+- `web/`：唯一手工编辑的前端源码目录（可零构建直接由 Flask 服务，改完刷新即可预览）。
+- `scripts/dashboard_overrides/`：Dashboard 插件页的环境适配文件（bridge 版 `api.js`、插件页 `index.html` 模板）。
+- `pages/dashboard/`：**生成产物，禁止手改**。由构建脚本从上述两处生成，`style.css` 会被合并为自包含文件，`index.html` 的 `?v=` 缓存版本号由资产内容哈希自动生成。
+
+修改前端后执行：
+
+```bash
+python scripts/build_frontend.py          # 重新生成 pages/dashboard/
+python scripts/build_frontend.py --check  # 校验产物是否与源同步（pytest 亦会强制校验）
+```
+
+`tests/test_web_frontend_assets.py::test_generated_dashboard_artifacts_in_sync_with_web_source` 会在产物漂移（忘记重跑构建或手改了产物）时使测试失败。
+
 ## ⚙️ 配置说明
 
 ### 1. 账号连接

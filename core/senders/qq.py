@@ -7,7 +7,7 @@
 import asyncio
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -558,7 +558,7 @@ class QQSender:
         display_name: str | None = None,
         effective_cfg: dict[str, object] | None = None,
         involved_channels: list[str] | None = None,
-        completed_target_sessions_by_batch: dict[int, Iterable[str]] | None = None,
+        completed_target_sessions_by_batch: Mapping[int, Iterable[str]] | None = None,
     ):
         """将一个或多个 Telegram 消息批次转发到 QQ 目标。
 
@@ -571,6 +571,8 @@ class QQSender:
             display_name: 展示用频道名；为空时回退到 `src_channel`。
             effective_cfg: 当前发送实际生效的配置。
             involved_channels: 参与本轮合并发送的频道列表。
+            completed_target_sessions_by_batch: 各批次已完成发送的 QQ 目标会话
+                （批次索引 → 目标集合），命中的目标本轮跳过以避免重复发送；只读。
 
         Returns:
             `QQSendSummary`，其中批次索引始终对应展平后的逻辑批次顺序，便于上层做确认与重试决策。
@@ -633,9 +635,9 @@ class QQSender:
         target_successes = {
             batch_index: {
                 str(target_session)
-                for target_session in (
-                    completed_target_sessions_by_batch or {}
-                ).get(batch_index, ())
+                for target_session in (completed_target_sessions_by_batch or {}).get(
+                    batch_index, ()
+                )
                 if str(target_session) in context_target_set
             }
             for batch_index in range(len(real_batches))

@@ -1,5 +1,5 @@
 import { store } from './store.js';
-import { apiRequest } from './api.js';
+import { apiRequest, isDashboardPage } from './api.js';
 import { safeStorageSet } from './utils.js';
 
 export const els = {};
@@ -10,6 +10,52 @@ export function showToast(message) {
     els.toast.classList.add("show");
     clearTimeout(showToast.timer);
     showToast.timer = setTimeout(() => els.toast.classList.remove("show"), 2800);
+  }
+}
+
+export function renderDashboardLoadError(error) {
+  const message = error?.message || "未知错误";
+  const host = els.appShell?.querySelector(".content") || document.body;
+  let panel = document.querySelector("[data-dashboard-load-error]");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "dashboard-load-error";
+    panel.setAttribute("data-dashboard-load-error", "true");
+    const topbar = host.querySelector?.(".topbar");
+    if (topbar?.parentNode) {
+      topbar.insertAdjacentElement("afterend", panel);
+    } else {
+      host.prepend(panel);
+    }
+  }
+  panel.textContent = "";
+  const title = document.createElement("strong");
+  title.textContent = "Dashboard 插件页加载失败";
+  const hint = document.createElement("span");
+  hint.textContent = "请在 AstrBot Dashboard 控制台查看该插件页的网络请求和 Console 错误。";
+  const detail = document.createElement("code");
+  detail.textContent = message;
+  panel.append(title, hint, detail);
+  showToast(`Dashboard 插件页加载失败：${message}`);
+}
+
+function applyDashboardPayload(dashboardPayload) {
+  const qqGroups = dashboardPayload.qqGroups || {};
+  const tgChannels = dashboardPayload.tgChannels || {};
+  store.updateState({
+    status: dashboardPayload.status || {},
+    config: dashboardPayload.config || {},
+    qqGroups: Array.isArray(qqGroups.groups) ? qqGroups.groups : [],
+    qqGroupsAvailable: Boolean(qqGroups.available),
+    qqGroupsMessage: qqGroups.message || "",
+    tgChannels: Array.isArray(tgChannels.channels) ? tgChannels.channels : [],
+    tgChannelsAvailable: Boolean(tgChannels.available),
+    tgChannelsMessage: tgChannels.message || "",
+  });
+  const errors = dashboardPayload.errors || {};
+  const failedSections = Object.keys(errors);
+  if (failedSections.length) {
+    showToast(`部分 Dashboard 数据加载失败：${failedSections.join(", ")}`);
   }
 }
 
@@ -52,6 +98,14 @@ export async function loadTGChannels({ force = false } = {}) {
 }
 
 export async function loadAll() {
+  if (isDashboardPage()) {
+    const dashboardPayload = await apiRequest("/api/dashboard");
+    applyDashboardPayload(dashboardPayload);
+    syncRuntimeStatusRefresh();
+    if (renderAllCallback) renderAllCallback();
+    return;
+  }
+
   const [status, configData] = await Promise.all([
     apiRequest("/api/status"),
     apiRequest("/api/config"),

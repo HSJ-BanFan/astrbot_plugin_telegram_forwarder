@@ -53,7 +53,7 @@ export function safeStorageSet(key, value) {
   try {
     window.localStorage?.setItem(key, value);
   } catch {
-    // Storage can be unavailable in sandboxed plugin page contexts.
+    // AstrBot Plugin Page iframes are sandboxed without allow-same-origin.
   }
 }
 
@@ -61,7 +61,7 @@ export function safeStorageRemove(key) {
   try {
     window.localStorage?.removeItem(key);
   } catch {
-    // Storage can be unavailable in sandboxed plugin page contexts.
+    // AstrBot Plugin Page iframes are sandboxed without allow-same-origin.
   }
 }
 
