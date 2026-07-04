@@ -4,28 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telegram Forwarder</title>
-    <link rel="stylesheet" href="/assets/style.css" />
+    <link rel="stylesheet" href="./assets/style.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   </head>
   <body>
     <div class="bg-aurora" aria-hidden="true"><i></i><i></i></div>
-    <div class="auth-screen" id="authScreen">
-      <form class="auth-panel" id="authForm">
-        <div class="auth-logo">TG</div>
-        <div>
-          <p class="eyebrow">Web Admin</p>
-          <h1>Telegram Forwarder</h1>
-        </div>
-        <label class="field">
-          <span>访问 Token</span>
-          <input id="tokenInput" type="password" autocomplete="current-password" />
-        </label>
-        <button class="btn btn-primary full" type="submit">进入控制台</button>
-        <p class="auth-error" id="authError"></p>
-      </form>
-    </div>
-
-    <div class="app-shell" id="appShell" hidden>
+    <div class="app-shell" id="appShell">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-head">
           <div class="brand-dot">TG</div>
@@ -71,7 +55,6 @@
             <span class="nav-label">高级 JSON</span>
           </button>
         </nav>
-        <button class="btn btn-soft danger sidebar-exit" id="logoutBtn" type="button">退出</button>
       </aside>
 
       <button class="mobile-menu" id="mobileMenu" type="button" aria-label="打开导航">
@@ -418,6 +401,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="/assets/app.js" type="module" defer></script>
+    <script src="./assets/app.js" type="module" defer></script>
   </body>
 </html>
