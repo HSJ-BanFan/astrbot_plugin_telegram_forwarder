@@ -165,6 +165,18 @@ class TelegramClientWrapper:
             return False
 
     @staticmethod
+    def _rotate_existing_backup(backup_file: Path) -> None:
+        if not backup_file.exists():
+            return
+        suffix = 1
+        while True:
+            archived_backup = backup_file.with_name(f"{backup_file.name}.{suffix}")
+            if not archived_backup.exists():
+                backup_file.replace(archived_backup)
+                return
+            suffix += 1
+
+    @staticmethod
     def _ensure_compatible_session_schema(session_path: str) -> None:
         session_file = Path(f"{session_path}.session")
         if not session_file.exists():
@@ -231,6 +243,7 @@ class TelegramClientWrapper:
             rows = sanitized_rows
 
         backup_file = Path(f"{session_file}.bak")
+        TelegramClientWrapper._rotate_existing_backup(backup_file)
         shutil.copy2(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)

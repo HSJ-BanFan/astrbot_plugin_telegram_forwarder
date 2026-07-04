@@ -227,7 +227,9 @@ def test_main_accepts_uploaded_session_path_inside_plugin_data_dir():
 
         main_module.Main(MagicMock(), {"telegram_session": [uploaded_file.name]})
 
-        assert (tmp_dir / "user_session.session").read_text(encoding="utf-8") == "session"
+        assert (tmp_dir / "user_session.session").read_text(
+            encoding="utf-8"
+        ) == "session"
         main_module.TelegramClientWrapper.clear_cache.assert_called_with(
             str(tmp_dir / "user_session")
         )
@@ -468,7 +470,9 @@ def test_main_registers_dashboard_page_web_apis():
 
         main_module.Main(context, {})
 
-        registered_routes = [call.args[0] for call in context.register_web_api.call_args_list]
+        registered_routes = [
+            call.args[0] for call in context.register_web_api.call_args_list
+        ]
         assert f"/{PLUGIN_NAME}/status" in registered_routes
         assert f"/{PLUGIN_NAME}/config" in registered_routes
         assert f"/{PLUGIN_NAME}/login/start" in registered_routes
@@ -560,6 +564,13 @@ def test_refreshes_stale_backup_before_failed_migration_rollback():
             "tmp_auth_key",
         ]
         assert row == (5, "149.154.167.51", 443, b"current-auth", 42, b"current-tmp")
+
+        rotated_backup = tmp_dir / "user_session.session.bak.1"
+        assert rotated_backup.exists()
+        conn = sqlite3.connect(rotated_backup)
+        stale_row = conn.execute("SELECT * FROM sessions").fetchone()
+        conn.close()
+        assert stale_row == (5, "149.154.167.51", 443, b"stale-auth", 7, b"stale-tmp")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -613,9 +624,9 @@ def test_init_client_reports_schema_migration_failure_without_caching_client():
             "_ensure_compatible_session_schema",
             side_effect=sqlite3.DatabaseError("broken schema"),
         ) as repair_schema:
-                wrapper = client_module.TelegramClientWrapper(
-                    {"api_id": 123, "api_hash": "hash"}, tmp_dir
-                )
+            wrapper = client_module.TelegramClientWrapper(
+                {"api_id": 123, "api_hash": "hash"}, tmp_dir
+            )
 
         assert wrapper.client is None
         telegram_client.assert_called_once()
