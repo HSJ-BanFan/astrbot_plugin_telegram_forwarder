@@ -1185,13 +1185,19 @@ select {
   scrollbar-width: thin;
 }
 
+.target-topology:not(.topology-readonly) .topology-canvas {
+  max-height: none;
+  overflow: hidden;
+}
+
 .overview-topology-panel .topology-canvas {
   max-height: min(440px, 46vh);
 }
 
 .topology-stage {
   position: relative;
-  min-width: 920px;
+  width: 100%;
+  min-width: 0;
   height: var(--topology-height);
   min-height: 260px;
   overflow: hidden;

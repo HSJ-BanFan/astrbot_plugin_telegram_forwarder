@@ -24,8 +24,8 @@ def test_dashboard_plugin_page_skips_legacy_token_auth() -> None:
     assert 'id="authForm"' not in text
     assert 'id="tokenInput"' not in text
     assert "访问 Token" not in text.split('id="appShell"', 1)[0]
-    assert 'href="./assets/style.css?v=20260704-ui-topology"' in text
-    assert 'src="./assets/app.js?v=20260704-ui-topology"' in text
+    assert 'href="./assets/style.css?v=20260704-topology-fit"' in text
+    assert 'src="./assets/app.js?v=20260704-topology-fit"' in text
     assert 'href="/assets/style.css"' not in text
     assert 'src="/assets/app.js"' not in text
 
@@ -34,7 +34,7 @@ def test_dashboard_plugin_page_loads_bridge_before_app() -> None:
     text = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
 
     bridge_pos = text.index('src="/api/plugin/page/bridge-sdk.js"')
-    app_pos = text.index('src="./assets/app.js?v=20260704-ui-topology"')
+    app_pos = text.index('src="./assets/app.js?v=20260704-topology-fit"')
     assert bridge_pos < app_pos
 
 
@@ -129,6 +129,42 @@ def test_dashboard_page_stylesheet_is_self_contained() -> None:
     assert "@import" not in text
     assert ".app-shell" in text
     assert ".nav-item" in text
+
+
+def test_topology_stage_adapts_to_dashboard_iframe_width() -> None:
+    css_files = [
+        WEB_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "style.css",
+    ]
+
+    for css_file in css_files:
+        text = css_file.read_text(encoding="utf-8")
+        match = re.search(r"\.topology-stage\s*\{(?P<body>[^}]+)\}", text)
+        assert match, f"{css_file.relative_to(ROOT)} missing .topology-stage rule"
+        body = match.group("body")
+        assert "width: 100%;" in body
+        assert "min-width: 0;" in body
+        assert "min-width: 920px" not in body
+
+
+def test_editable_topology_canvas_expands_to_content_height() -> None:
+    css_files = [
+        WEB_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "style.css",
+    ]
+
+    for css_file in css_files:
+        text = css_file.read_text(encoding="utf-8")
+        match = re.search(
+            r"\.target-topology:not\(\.topology-readonly\)\s+\.topology-canvas\s*\{(?P<body>[^}]+)\}",
+            text,
+        )
+        assert match, f"{css_file.relative_to(ROOT)} missing editable topology canvas rule"
+        body = match.group("body")
+        assert "max-height: none;" in body
+        assert "overflow: hidden;" in body
 
 
 def test_legacy_web_relative_module_imports_resolve() -> None:
