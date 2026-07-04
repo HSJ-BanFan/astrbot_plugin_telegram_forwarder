@@ -40,6 +40,11 @@
   opacity: 0.68;
 }
 
+/* 按压回弹：让每次点击都有"按下去"的手感 */
+.btn:active {
+  transform: translateY(0) scale(0.97);
+}
+
 .danger {
   color: var(--danger);
 }
@@ -60,20 +65,20 @@
 
 .overview-layout {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .overview-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.34fr);
-  gap: 16px;
+  gap: 18px;
   align-items: start;
 }
 
 .status-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 
 .metric-card,
@@ -101,38 +106,104 @@
 .step-card:hover {
   border-color: var(--border-glow-active);
   box-shadow: var(--shadow), 0 0 0 1px rgba(34, 158, 217, 0.1);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
 .metric-card {
-  min-height: 108px;
+  min-height: 112px;
   padding: 18px;
+  overflow: hidden;
 }
 
-.metric-blue {
-  border-color: var(--border-glow-active);
-  background:
-    linear-gradient(135deg, rgba(34, 158, 217, 0.14), rgba(56, 189, 248, 0.06)),
-    var(--panel-raised);
+/* 每张指标卡的色调变量：小面积点缀色让四张卡各有"体温"，又不破坏蓝白基调 */
+.metric-card[data-tone="blue"] {
+  --tone: var(--primary);
+  --tone-soft: var(--primary-tint);
 }
 
-.metric-card span {
+.metric-card[data-tone="sky"] {
+  --tone: var(--accent-strong);
+  --tone-soft: rgba(56, 189, 248, 0.16);
+}
+
+.metric-card[data-tone="violet"] {
+  --tone: var(--violet);
+  --tone-soft: var(--violet-soft);
+}
+
+.metric-card[data-tone="amber"] {
+  --tone: var(--warning);
+  --tone-soft: var(--warning-soft);
+}
+
+/* 右上角同色系柔光，hover 时轻微放大 */
+.metric-card::after {
+  content: "";
+  position: absolute;
+  right: -36px;
+  top: -36px;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--tone-soft, var(--primary-soft)), transparent 70%);
+  pointer-events: none;
+  transition: transform 0.3s ease;
+}
+
+.metric-card:hover::after {
+  transform: scale(1.18);
+}
+
+.metric-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.metric-label {
   color: var(--muted);
   font-size: 13px;
   font-weight: 600;
 }
 
+.metric-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--tone, var(--primary));
+  background: var(--tone-soft, var(--primary-soft));
+}
+
+.metric-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
 .metric-card strong {
+  position: relative;
+  z-index: 1;
   display: block;
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--ink);
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1.18;
   font-family: "Space Grotesk", "DM Sans", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态徽章嵌在大数字位时收敛字号，避免长文本溢出 */
+.metric-card strong .status-badge {
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .panel {
-  padding: 20px;
+  padding: 22px;
   margin-bottom: 16px;
 }
 
@@ -172,8 +243,23 @@
 }
 
 .panel-head h2 {
+  position: relative;
   margin: 0;
+  padding-left: 13px;
   font-size: 19px;
+}
+
+/* 渐变锚点条：给每个面板标题一个统一的视觉起点，提升扫读节奏 */
+.panel-head h2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 17px;
+  border-radius: 99px;
+  background: linear-gradient(180deg, var(--primary), var(--accent));
+  transform: translateY(-50%);
 }
 
 .panel-head p {
@@ -570,6 +656,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
+}
+
+.topology-node.has-badge strong {
+  padding-right: 52px;
 }
 
 .topology-node span {
@@ -995,6 +1085,12 @@ select:focus {
   color: var(--ink);
   border: 1px solid var(--border-glow);
   background: var(--primary-soft);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.queue-item:hover {
+  transform: translateX(3px);
+  border-color: var(--border-glow-active);
 }
 
 .queue-item span {
@@ -1145,6 +1241,30 @@ select:focus {
   background-size: 400% 100%;
   animation: skeleton-loading 1.4s ease infinite;
   border-radius: 4px;
+}
+
+/* 通用空状态：虚线容器 + 图标，比一条假数据行更清晰友好 */
+.list-empty {
+  min-height: 104px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.list-empty svg {
+  width: 22px;
+  height: 22px;
+  color: var(--primary);
+  opacity: 0.75;
 }
 
 @media (max-width: 1180px) {

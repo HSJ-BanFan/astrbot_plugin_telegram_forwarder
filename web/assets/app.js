@@ -17,7 +17,7 @@ import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
 import { initChannels, collectChannels, collectMergeRules, defaultChannel, renderChannels, renderMergeRules } from './js/ui_channels.js';
 import { renderQQTargetSelector, renderTGChannelSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
-import { escapeHtml, channelKey } from './js/utils.js';
+import { escapeHtml, channelKey, motionEnabled } from './js/utils.js';
 
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
 export const TRI_STATE = ["继承全局", "开启", "关闭"];
@@ -244,11 +244,12 @@ function topologyY(index) {
 
 function topologyNode(label, meta, side, index, attrs = "", badge = "") {
   const y = topologyY(index);
+  const badgeClass = badge ? " has-badge" : "";
   const badgeHtml = badge
     ? `<em class="topology-node-badge" aria-hidden="true">${escapeHtml(badge)}</em>`
     : "";
   return `
-    <button class="topology-node topology-node-${side}" style="--topology-y: ${y}px" type="button" ${attrs}>
+    <button class="topology-node topology-node-${side}${badgeClass}" style="--topology-y: ${y}px" type="button" ${attrs}>
       <strong>${escapeHtml(label)}</strong>
       <span>${escapeHtml(meta)}</span>
       ${badgeHtml}
@@ -437,7 +438,12 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       focusStage.classList.remove("has-focus");
       focusLines.querySelectorAll(".edge-focus").forEach((p) => {
         p.classList.remove("edge-focus");
-        p.style.animationDelay = "";
+        if (p.classList.contains("active")) {
+          const now = window.performance?.now?.() || 0;
+          p.style.animationDelay = `-${Math.round(now % 1100)}ms, -${Math.round(now % 2400)}ms`;
+        } else {
+          p.style.animationDelay = "";
+        }
       });
       focusStage.querySelectorAll(".node-focus").forEach((n) => n.classList.remove("node-focus"));
     };
@@ -458,6 +464,7 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       cancelPendingClear();
       clearFocusFrame = window.requestAnimationFrame(() => {
         clearFocusFrame = 0;
+        if (!focusStage.isConnected) return;
         if (focusNodeAtPointer()) return;
         clearFocus();
       });
@@ -466,7 +473,11 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       cancelPendingClear();
       resetFocusClasses();
       const edges = focusLines.querySelectorAll(`path[${attr}="${value}"]`);
-      if (!edges.length) return;
+      if (!edges.length) {
+        delete root.dataset.topologyFocusAttr;
+        delete root.dataset.topologyFocusValue;
+        return;
+      }
       root.dataset.topologyFocusAttr = attr;
       root.dataset.topologyFocusValue = value;
       focusLines.classList.add("has-focus");
@@ -492,22 +503,34 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
         focusByEdgeAttr("data-target", node.dataset.topologyTargetRow);
       }
     };
-    const restoreFocusFromPointer = () => {
-      const node = focusNodeAtPointer();
-      if (node) {
-        focusNode(node);
+    const restoreFocus = () => {
+      const attr = root.dataset.topologyFocusAttr;
+      const value = root.dataset.topologyFocusValue;
+      if (attr && value != null) {
+        focusByEdgeAttr(attr, value);
       } else {
-        clearFocus();
+        const node = focusNodeAtPointer();
+        if (node) {
+          focusNode(node);
+        } else {
+          clearFocus();
+        }
       }
     };
     focusStage.addEventListener("pointerover", (event) => {
+      if (!focusStage.isConnected) return;
       rememberPointer(event);
       const node = nearestFocusNode(event.target);
       if (!node || nearestFocusNode(event.relatedTarget) === node) return;
       focusNode(node);
     });
-    focusStage.addEventListener("pointermove", rememberPointer);
+    focusStage.addEventListener("pointermove", (event) => {
+      if (!focusStage.isConnected) return;
+      rememberPointer(event);
+    });
     focusStage.addEventListener("pointerout", (event) => {
+      if (!focusStage.isConnected) return;
+      if (event.target instanceof Element && !event.target.isConnected) return;
       rememberPointer(event);
       const fromNode = nearestFocusNode(event.target);
       const toNode = nearestFocusNode(event.relatedTarget);
@@ -518,12 +541,18 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       }
       scheduleClearFocus();
     });
-    focusStage.addEventListener("pointerleave", () => {
+    focusStage.addEventListener("pointerleave", (event) => {
+      if (!focusStage.isConnected) return;
       forgetPointer();
       clearFocus();
     });
-    focusStage.addEventListener("focusin", (event) => focusNode(nearestFocusNode(event.target)));
+    focusStage.addEventListener("focusin", (event) => {
+      if (!focusStage.isConnected) return;
+      focusNode(nearestFocusNode(event.target));
+    });
     focusStage.addEventListener("focusout", (event) => {
+      if (!focusStage.isConnected) return;
+      if (event.target instanceof Element && !event.target.isConnected) return;
       const fromNode = nearestFocusNode(event.target);
       const nextNode = nearestFocusNode(event.relatedTarget);
       if (!fromNode || fromNode === nextNode) return;
@@ -534,7 +563,7 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       clearFocus();
     });
     if (root.dataset.topologyFocusAttr && root.dataset.topologyFocusValue != null) {
-      restoreFocusFromPointer();
+      restoreFocus();
     }
   }
 }
@@ -701,6 +730,9 @@ function renderTopologyInto(root, {
     ).join("")
     : '<div class="topology-empty topology-empty-target">未选择 QQ 群目标</div>';
 
+  const now = window.performance?.now?.() || 0;
+  const activeDelay = `-${Math.round(now % 1100)}ms, -${Math.round(now % 2400)}ms`;
+
   const edges = sourceItems
     .flatMap((source, sourceIndex) =>
       source.targets.map((target) => {
@@ -709,7 +741,8 @@ function renderTopologyInto(root, {
         const y1 = topologyY(sourceIndex);
         const y2 = topologyY(targetPosition);
         const edgeClass = `${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}`;
-        return `<path class="${edgeClass}" data-source="${sourceIndex}" data-target="${targetPosition}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
+        const style = source.active ? `style="animation-delay: ${activeDelay}"` : "";
+        return `<path class="${edgeClass}" ${style} data-source="${sourceIndex}" data-target="${targetPosition}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
       }),
     )
     .join("");
@@ -1036,17 +1069,30 @@ export function setSection(section) {
   document.querySelectorAll(".section").forEach((node) => {
     const isTarget = node.id === `section-${section}`;
     node.classList.toggle("active", isTarget);
-    if (isTarget && window.gsap) {
-      window.gsap.fromTo(node,
-        { opacity: 0, y: 15 },
-        { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }
+    if (isTarget && motionEnabled()) {
+      // GSAP 接管入场时关闭 CSS 兜底动画，避免透明度叠乘造成的闪烁
+      node.style.animation = "none";
+      const cards = node.querySelectorAll(":scope .metric-card, :scope .panel");
+      window.gsap.killTweensOf([node, ...cards]);
+      window.gsap.fromTo(
+        node,
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.3, ease: "power2.out", clearProps: "opacity,transform" }
       );
+      if (cards.length) {
+        window.gsap.fromTo(
+          cards,
+          { opacity: 0, y: 16 },
+          { opacity: 1, y: 0, duration: 0.36, ease: "power2.out", stagger: 0.055, delay: 0.05, clearProps: "opacity,transform" }
+        );
+      }
     }
   });
   document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.section === section));
   const active = document.querySelector(`.nav-item[data-section="${section}"]`);
   if (els.sectionTitle) {
-    els.sectionTitle.textContent = active?.textContent || "总览";
+    els.sectionTitle.textContent =
+      active?.querySelector(".nav-label")?.textContent?.trim() || active?.textContent?.trim() || "总览";
   }
   updateTopbarActions();
   closeSidebar();

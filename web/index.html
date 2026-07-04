@@ -8,6 +8,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   </head>
   <body>
+    <div class="bg-aurora" aria-hidden="true"><i></i><i></i></div>
     <div class="auth-screen" id="authScreen">
       <form class="auth-panel" id="authForm">
         <div class="auth-logo">TG</div>
@@ -34,14 +35,41 @@
           </div>
         </div>
         <nav class="nav-list">
-          <button class="nav-item active" data-section="overview">运行总览</button>
-          <button class="nav-item" data-section="targets">转发关系</button>
-          <button class="nav-item" data-section="channels">频道规则</button>
-          <button class="nav-item" data-section="global">转发策略</button>
-          <button class="nav-item" data-section="merge">合并规则</button>
-          <button class="nav-item" data-section="login">Telegram 登录</button>
-          <button class="nav-item" data-section="web">Web 设置</button>
-          <button class="nav-item" data-section="advanced">高级 JSON</button>
+          <p class="nav-group-label">监控</p>
+          <button class="nav-item active" data-section="overview">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+            <span class="nav-label">运行总览</span>
+          </button>
+          <button class="nav-item" data-section="targets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
+            <span class="nav-label">转发关系</span>
+          </button>
+          <p class="nav-group-label">规则</p>
+          <button class="nav-item" data-section="channels">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
+            <span class="nav-label">频道规则</span>
+          </button>
+          <button class="nav-item" data-section="global">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>
+            <span class="nav-label">转发策略</span>
+          </button>
+          <button class="nav-item" data-section="merge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" /></svg>
+            <span class="nav-label">合并规则</span>
+          </button>
+          <p class="nav-group-label">系统</p>
+          <button class="nav-item" data-section="login">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+            <span class="nav-label">Telegram 登录</span>
+          </button>
+          <button class="nav-item" data-section="web">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
+            <span class="nav-label">Web 设置</span>
+          </button>
+          <button class="nav-item" data-section="advanced">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>
+            <span class="nav-label">高级 JSON</span>
+          </button>
         </nav>
         <button class="btn btn-soft danger sidebar-exit" id="logoutBtn" type="button">退出</button>
       </aside>
@@ -68,20 +96,32 @@
         <section class="section active" id="section-overview">
           <div class="overview-layout">
             <div class="status-grid">
-              <div class="metric-card metric-blue">
-                <span>Telegram</span>
+              <div class="metric-card" data-tone="blue">
+                <div class="metric-head">
+                  <span class="metric-label">Telegram</span>
+                  <span class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg></span>
+                </div>
                 <strong id="telegramStatus">-</strong>
               </div>
-              <div class="metric-card">
-                <span>调度器</span>
+              <div class="metric-card" data-tone="sky">
+                <div class="metric-head">
+                  <span class="metric-label">调度器</span>
+                  <span class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg></span>
+                </div>
                 <strong id="schedulerStatus">-</strong>
               </div>
-              <div class="metric-card">
-                <span>监控频道</span>
+              <div class="metric-card" data-tone="violet">
+                <div class="metric-head">
+                  <span class="metric-label">监控频道</span>
+                  <span class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" /><path d="M4.93 19.07a10 10 0 0 1 0-14.14" /><path d="M7.76 16.24a6 6 0 0 1 0-8.49" /><path d="M16.24 7.76a6 6 0 0 1 0 8.49" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /></svg></span>
+                </div>
                 <strong id="channelCount">-</strong>
               </div>
-              <div class="metric-card">
-                <span>待发送队列</span>
+              <div class="metric-card" data-tone="amber">
+                <div class="metric-head">
+                  <span class="metric-label">待发送队列</span>
+                  <span class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg></span>
+                </div>
                 <strong id="queueCount">-</strong>
               </div>
             </div>

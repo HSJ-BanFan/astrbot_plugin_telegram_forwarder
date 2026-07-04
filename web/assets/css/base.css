@@ -41,6 +41,54 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 动态极光背景：两团缓慢漂移的蓝紫光斑，让页面有"呼吸感"；
+   独立 fixed 层 + pointer-events 穿透，prefers-reduced-motion 下自动静止为柔光。 */
+.bg-aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bg-aurora i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.bg-aurora i:first-child {
+  left: -14vw;
+  top: -20vh;
+  width: min(54vw, 680px);
+  height: min(54vw, 680px);
+  background: radial-gradient(circle at 32% 32%, rgba(56, 189, 248, 0.4), rgba(56, 189, 248, 0) 68%);
+  animation: aurora-drift-a 26s ease-in-out infinite alternate;
+}
+
+.bg-aurora i:last-child {
+  right: -12vw;
+  bottom: -18vh;
+  width: min(46vw, 580px);
+  height: min(46vw, 580px);
+  background: radial-gradient(circle at 60% 44%, rgba(34, 158, 217, 0.34), rgba(124, 108, 240, 0.16) 48%, rgba(34, 158, 217, 0) 72%);
+  animation: aurora-drift-b 32s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift-a {
+  to {
+    transform: translate3d(10vw, 8vh, 0) scale(1.14);
+  }
+}
+
+@keyframes aurora-drift-b {
+  to {
+    transform: translate3d(-9vw, -7vh, 0) scale(1.1);
+  }
+}
+
 .auth-screen {
   position: fixed;
   inset: 0;
@@ -89,6 +137,7 @@ select {
   height: 42px;
   flex: 0 0 auto;
   font-size: 14px;
+  animation: brand-breathe 4s ease-in-out infinite;
 }
 
 .auth-panel h1,
@@ -113,6 +162,8 @@ select {
 }
 
 .app-shell {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
@@ -125,7 +176,7 @@ select {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 18px 14px;
+  padding: 20px 16px;
   border-right: 1px solid var(--line);
   /* 白底带淡蓝渐变，替代深色玻璃 */
   background: linear-gradient(180deg, #ffffff, #f4f8fc);
@@ -136,7 +187,7 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 8px 22px;
+  padding: 6px 8px 24px;
 }
 
 .sidebar-head strong {
@@ -157,16 +208,49 @@ select {
   gap: 6px;
 }
 
+.nav-group-label {
+  margin: 16px 8px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  opacity: 0.72;
+}
+
+.nav-group-label:first-child {
+  margin-top: 0;
+}
+
 .nav-item {
   width: 100%;
   min-height: 44px;
   padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
   border-radius: 10px;
   color: var(--muted);
   background: transparent;
   text-align: left;
   font-weight: 600;
   transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nav-item svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.nav-item:hover svg,
+.nav-item.active svg {
+  opacity: 1;
+}
+
+.nav-item:active {
+  transform: translateX(2px) scale(0.98);
 }
 
 .nav-item:hover {
@@ -198,7 +282,7 @@ select {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 20px;
+  margin-bottom: 26px;
 }
 
 .topbar h1 {
@@ -364,6 +448,38 @@ select {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* 品牌圆点呼吸光晕：给静态侧栏一个持续的生命体征 */
+@keyframes brand-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(34, 158, 217, 0.24), 0 10px 24px rgba(34, 158, 217, 0.26);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(34, 158, 217, 0.32), 0 14px 34px rgba(34, 158, 217, 0.44);
+  }
+}
+
+/* 滚动条融入蓝白主题 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 99px;
+  background-color: rgba(34, 158, 217, 0.28);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(34, 158, 217, 0.5);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 import { store } from './store.js';
 import { apiRequest } from './api.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, motionEnabled } from './utils.js';
 import { els, showToast, withAction, loadStatusOnly } from './context.js';
 
 function runtimeStatusLabel(status) {
@@ -18,6 +18,28 @@ function formatRuntimeTime(value) {
     return date.toLocaleTimeString("zh-CN", { hour12: false });
   }
   return String(value).replace("T", " ");
+}
+
+/* 数字滚动：数值变化时从旧值滚到新值，让指标卡"看得见变化" */
+function animateMetricNumber(el, value) {
+  const next = Number(value) || 0;
+  const prevRaw = el.dataset.countValue;
+  const prev = prevRaw == null ? null : Number(prevRaw);
+  el.dataset.countValue = String(next);
+  if (!motionEnabled() || prev == null || !Number.isFinite(prev) || prev === next) {
+    el.textContent = String(next);
+    return;
+  }
+  if (el._countTween) el._countTween.kill();
+  const state = { value: prev };
+  el._countTween = window.gsap.to(state, {
+    value: next,
+    duration: 0.7,
+    ease: "power2.out",
+    onUpdate: () => {
+      el.textContent = String(Math.round(state.value));
+    },
+  });
 }
 
 export function renderRuntimeOperations(runtime) {
@@ -67,7 +89,7 @@ export function renderRuntimeOperations(runtime) {
             `;
           })
           .join("")
-      : '<div class="runtime-log-item"><div><strong>暂无运行记录</strong><span>Web 操作会显示在这里。</span></div><small>-</small></div>';
+      : '<div class="list-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg><span>暂无运行记录，Web 操作会显示在这里</span></div>';
   }
 }
 
@@ -105,12 +127,12 @@ export function renderStatus() {
     els.schedulerStatus.innerHTML = `<span class="status-badge"><span class="status-dot ${dotClass}"></span>${escapeHtml(text)}</span>`;
   }
   if (els.channelCount) {
-    els.channelCount.textContent = String(status.channels?.count ?? 0);
+    animateMetricNumber(els.channelCount, status.channels?.count ?? 0);
   }
   if (els.queueCount) {
-    els.queueCount.textContent = String(queue.total ?? 0);
+    animateMetricNumber(els.queueCount, queue.total ?? 0);
   }
-  
+
   renderRuntimeOperations(runtime);
 
   if (els.queueList) {
@@ -119,10 +141,10 @@ export function renderStatus() {
       ? entries
           .map(([channel, count]) => `<div class="queue-item"><span>${escapeHtml(channel)}</span><strong>${count}</strong></div>`)
           .join("")
-      : '<div class="queue-item"><span>无待发送消息</span><strong>0</strong></div>';
+      : '<div class="list-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg><span>队列已清空，暂无待发送消息</span></div>';
   }
 
-  if (window.gsap) {
+  if (motionEnabled()) {
     window.gsap.killTweensOf(".status-dot");
     window.gsap.to(".status-dot.success", {
       scale: 1.25,

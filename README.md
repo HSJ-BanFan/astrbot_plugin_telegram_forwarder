@@ -237,6 +237,52 @@ https://api.ipify.org
 * **monitor_keywords**: 全局监听关键词。与频道监听关键词做并集，命中后立即触发转发。
 * **monitor_regex**: 全局监听正则。与频道监听正则共同生效，命中后立即触发转发。
 
+### 6. 跨环境部署：路径映射（AstrBot 与 NapCat 部署方式不同时必读）
+
+当 AstrBot 与 NapCat **不在同一个文件系统**中运行时（例如 AstrBot 跑在宿主机、NapCat 跑在 Docker 容器里，或两者在不同容器中），**必须配置路径映射**，否则文件、视频以及语音发送失败后的源文件补发都会失败。
+
+**典型报错**（NapCat 侧收到宿主机路径，容器内不存在）：
+
+```text
+ActionFailed retcode=1200, message="ENOENT: no such file or directory,
+copyfile '/E:/.../plugin_data/astrbot_plugin_telegram_forwarder/xxx.flac' -> '/app/.config/QQ/NapCat/temp/....flac'"
+```
+
+**原因**：图片和语音条会在 AstrBot 进程内转成 base64 传输，不受影响；但文件（File）、视频（Video）等大载荷是**按本地路径**下发给 NapCat 的。NapCat 在容器内无法访问 AstrBot 宿主机上的路径，就会报 `ENOENT`。
+
+**解决步骤**：
+
+1. **把插件数据目录挂载进 NapCat 容器**（只读即可）。以 docker run 为例：
+
+   ```bash
+   -v /path/to/astrbot/data/plugin_data:/plugin_data:ro
+   ```
+
+   docker-compose 写法：
+
+   ```yaml
+   volumes:
+     - /path/to/astrbot/data/plugin_data:/plugin_data:ro
+   ```
+
+2. **在 AstrBot 中配置路径映射**：打开 AstrBot WebUI → 配置 → 其他配置 → 平台设置 → `路径映射 (path_mapping)`，添加一条规则，格式为 `<AstrBot 侧路径>:<NapCat 容器内路径>`：
+
+   ```text
+   /path/to/astrbot/data/plugin_data:/plugin_data
+   ```
+
+   Windows 宿主机同样支持盘符路径（建议使用正斜杠）：
+
+   ```text
+   E:/astrbot/data/plugin_data:/plugin_data
+   ```
+
+3. **重启 AstrBot** 使配置生效。
+
+配置成功后，日志中会出现类似 `[QQSender] Path mapping: 'E:\\...\\xxx.flac' -> '/plugin_data/astrbot_plugin_telegram_forwarder/xxx.flac'` 的映射记录。
+
+> **提示**：如果 AstrBot 与 NapCat 运行在同一环境（同宿主机直装，或同一容器内共享文件系统），无需此配置。
+
 ---
 
 ## 💡 常见问题
@@ -245,6 +291,8 @@ https://api.ipify.org
   * **A**: 插件会将外链和语音分两条消息发送，请检查消息是否被群管屏蔽。
 * **Q: 大文件发送失败？**
   * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。QQ 发送会按本地文件大小自动延长等待时间；超时不会自动重复发送，以避免重复消息。
+* **Q: 文件/音频发送报 `ENOENT: no such file or directory, copyfile ...`？**
+  * **A**: 这是 AstrBot 与 NapCat 部署环境不同（如 NapCat 跑在 Docker 中）导致 NapCat 无法访问 AstrBot 侧的文件路径。请参阅上文「[配置说明 → 6. 跨环境部署：路径映射](#6-跨环境部署路径映射astrbot-与-napcat-部署方式不同时必读)」完成目录挂载与 `path_mapping` 配置。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 

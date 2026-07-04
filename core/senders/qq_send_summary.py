@@ -69,9 +69,7 @@ def build_send_summary(
         deferred_batch_indexes=deferred,
         error_types=target_failures,
         target_sessions=target_session_tuple,
-        target_sessions_by_batch={
-            batch_index: target_session_tuple for batch_index in target_successes
-        },
+        target_sessions_by_batch=dict.fromkeys(target_successes, target_session_tuple),
         completed_target_sessions={
             batch_index: tuple(
                 target_session
