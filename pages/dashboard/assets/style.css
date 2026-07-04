@@ -257,6 +257,62 @@ select {
   transition: background 0.3s ease, border-color 0.3s ease;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  padding: 10px 4px 0;
+}
+
+.sidebar-status-card {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  box-shadow: var(--shadow-tight);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-status-card .status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.sidebar-status-card .status-badge.success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.sidebar-status-card .status-badge.disabled {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--muted);
+}
+
+.sidebar-status-card .status-text {
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.sidebar-status-card .status-link {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 500;
+  word-break: break-all;
+  transition: color 0.18s ease;
+}
+
+.sidebar-status-card .status-link:hover {
+  color: var(--primary-strong);
+  text-decoration: underline;
+}
+
 .sidebar-head {
   display: flex;
   align-items: center;

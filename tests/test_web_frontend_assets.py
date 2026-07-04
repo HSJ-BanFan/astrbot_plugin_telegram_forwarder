@@ -18,6 +18,7 @@ def _load_build_frontend():
     spec = importlib.util.spec_from_file_location(
         "build_frontend", ROOT / "scripts" / "build_frontend.py"
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

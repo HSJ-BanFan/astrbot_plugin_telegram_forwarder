@@ -124,6 +124,7 @@ function cacheElements() {
     "appShell",
     "sidebar",
     "sidebarScrim",
+    "sidebarFooter",
     "mobileMenu",
     "logoutBtn",
     "refreshBtn",
@@ -197,6 +198,55 @@ export function intValue(id, fallback = 0) {
 
 function currentWebConfig() {
   return { ...DEFAULT_WEB_CONFIG, ...(store.state.config?.web_config || {}) };
+}
+
+export function renderSidebarStatusCard() {
+  if (!els.sidebarFooter) return;
+  const web = currentWebConfig();
+  const enabled = Boolean(web.enabled);
+  const host = web.host || "127.0.0.1";
+  const port = web.port || 8180;
+  
+  const showHost = host === "0.0.0.0" ? (window.location.hostname || "localhost") : host;
+  const webUrl = `http://${showHost}:${port}/`;
+
+  if (enabled) {
+    const isDashboard = isDashboardPage();
+    const statusLabel = isDashboard ? "已连接官方插件页 API，独立 WebUI:" : "独立 WebUI 运行中:";
+    
+    els.sidebarFooter.innerHTML = `
+      <div class="sidebar-status-card">
+        <div class="status-badge success">
+          <span class="status-dot success" style="width: 6px; height: 6px; background: var(--success); border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle;"></span>
+          运行正常
+        </div>
+        <div class="status-text">${statusLabel}</div>
+        <a href="${webUrl}" target="_blank" class="status-link">${webUrl}</a>
+      </div>
+    `;
+    
+    if (window.gsap && motionEnabled()) {
+      const dot = els.sidebarFooter.querySelector(".status-dot");
+      if (dot) {
+        window.gsap.killTweensOf(dot);
+        window.gsap.to(dot, {
+          scale: 1.4,
+          opacity: 0.5,
+          duration: 1.2,
+          repeat: -1,
+          yoyo: true,
+          ease: "power1.inOut"
+        });
+      }
+    }
+  } else {
+    els.sidebarFooter.innerHTML = `
+      <div class="sidebar-status-card">
+        <div class="status-badge disabled">已关闭</div>
+        <div class="status-text">Web 独立控制台未启用。您可以前往「Web 设置」开启。</div>
+      </div>
+    `;
+  }
 }
 
 function normalizeChannelRef(value) {
@@ -831,6 +881,25 @@ function renderTopologyInto(root, {
   const channels = Array.isArray(cfg.source_channels) ? cfg.source_channels : [];
   const defaultTargets = uniqueList(splitList(cfg.target_qq_session || []));
   const safeFilter = TOPOLOGY_FILTERS.has(filter) ? filter : "all";
+
+  // Calculate a signature to check if the topology data has actually changed.
+  // If nothing changed, we skip innerHTML re-render to prevent interrupting running GSAP animations.
+  const dataKey = JSON.stringify({
+    channels,
+    defaultTargets,
+    safeFilter,
+    query,
+    paletteChannelsQuery: topologyUiState.paletteChannelsQuery,
+    paletteGroupsQuery: topologyUiState.paletteGroupsQuery,
+    queue: store.state.status?.queue?.by_channel,
+    tgChannels: store.state.tgChannels,
+    qqGroups: store.state.qqGroups
+  });
+
+  if (root.dataset.lastTopologyKey === dataKey) {
+    return;
+  }
+  root.dataset.lastTopologyKey = dataKey;
   const allSourceItems = channels
     .map((channel, index) => {
       const username = normalizeChannelRef(channel?.channel_username || "");
@@ -1330,6 +1399,7 @@ export function renderAll() {
   renderMergeRules();
   renderRawConfig();
   updateTopbarActions();
+  renderSidebarStatusCard();
 }
 
 async function saveRawConfig() {
@@ -1584,6 +1654,7 @@ async function boot() {
         compact: true,
       });
       renderTopologySurfaces();
+      renderSidebarStatusCard();
     }
   });
 
