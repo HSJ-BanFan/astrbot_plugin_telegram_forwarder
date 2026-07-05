@@ -1,3 +1,5 @@
+from typing import cast
+
 from telethon.tl.types import Message
 
 from astrbot.api import logger
@@ -180,7 +182,9 @@ class MessageMerger:
         """
         custom_finder = getattr(rule, "find_group", None)
         if callable(custom_finder):
-            return custom_finder(start_index, messages, channel_name, used_indices)
+            return cast(
+                dict, custom_finder(start_index, messages, channel_name, used_indices)
+            )
 
         start_msg = messages[start_index]
         group_messages = [start_msg]

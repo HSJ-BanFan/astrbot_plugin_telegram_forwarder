@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from telethon.errors import (
     FloodWaitError,
@@ -627,7 +627,7 @@ class WebAdminServer:
 
         temp_dir = self._temp_login_dir()
         os.makedirs(temp_dir, exist_ok=True)
-        self._login_wrapper = TelegramClientWrapper(self.plugin.config, temp_dir)
+        self._login_wrapper = TelegramClientWrapper(self.plugin.config, Path(temp_dir))
         if not self._login_wrapper.client:
             raise WebAdminError("Telegram 客户端未就绪，请先配置 api_id / api_hash。")
         return self._login_wrapper
@@ -725,7 +725,8 @@ class WebAdminServer:
         except Exception as exc:
             logger.debug(f"[WebAdmin] disconnect before rebuild failed: {exc}")
         await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
-        wrapper.client = None
+        # cast 避免 pyright 把 client 收窄固定为 None（_init_client 会重建实例）
+        wrapper.client = cast(Any, None)
         wrapper._authorized = False
         wrapper._init_client()
 
@@ -1148,7 +1149,8 @@ class WebAdminServer:
             self.plugin.config["phone"] = phone
             self.plugin.config.save_config()
 
-        wrapper.client = None
+        # cast 避免 pyright 把 client 收窄固定为 None（_init_client 会重建实例）
+        wrapper.client = cast(Any, None)
         wrapper._authorized = False
         wrapper._init_client()
         authorized = False
@@ -1357,6 +1359,24 @@ class WebAdminServer:
     async def runtime_check(self) -> dict[str, Any]:
         if getattr(self.plugin.command_handler, "_paused", False):
             raise WebAdminError("当前已暂停抓取与发送，请先恢复运行。")
+        running_operation = next(
+            (
+                operation
+                for operation in self._runtime_operations
+                if operation.get("status") == "running"
+                and operation.get("label") == "立即抓取发送"
+            ),
+            None,
+        )
+        if running_operation is not None:
+            return {
+                "message": "已有立即抓取发送任务在执行。",
+                "operation": {
+                    key: value
+                    for key, value in running_operation.items()
+                    if not key.startswith("_")
+                },
+            }
         self.plugin.forwarder._stopping = False
         operation = self._new_runtime_operation(
             "立即抓取发送",
@@ -1433,10 +1453,19 @@ class WebAdminServer:
 
     async def runtime_pause(self) -> dict[str, Any]:
         self.plugin.command_handler._paused = True
-        self.plugin.forwarder._stopping = True
+        cancelled_count = (
+            self.plugin.forwarder.request_stop()
+            if hasattr(self.plugin.forwarder, "request_stop")
+            else 0
+        )
+        if not hasattr(self.plugin.forwarder, "request_stop"):
+            self.plugin.forwarder._stopping = True
         if self.plugin.scheduler and self.plugin.scheduler.running:
             self.plugin.scheduler.pause()
-        return {"message": "已暂停抓取与发送。"}
+        message = "已暂停抓取与发送。"
+        if cancelled_count:
+            message += f" 已请求停止 {cancelled_count} 个在途发送任务。"
+        return {"message": message}
 
     async def runtime_resume(self) -> dict[str, Any]:
         self.plugin.command_handler._paused = False
@@ -1455,12 +1484,32 @@ class WebAdminServer:
 
     async def runtime_clear_queue(self, payload: dict[str, Any]) -> dict[str, Any]:
         target = str(payload.get("target") or "all").strip().lower()
+        if hasattr(self.plugin.forwarder, "clear_pending_queue"):
+            result = await self.plugin.forwarder.clear_pending_queue(target)
+            if result.get("target") == "all":
+                message = f"已清空所有待发送队列（{result.get('cleared', 0)} 条）。"
+            else:
+                message = (
+                    f"已清空 {result.get('target', target)} 的待发送队列"
+                    f"（{result.get('cleared', 0)} 条）。"
+                )
+            if result.get("cancelled_sends", 0):
+                message += f" 已请求取消 {result['cancelled_sends']} 个在途发送任务。"
+            if result.get("fast_forwarded", 0):
+                message += f" 已同步 {result['fast_forwarded']} 个频道到最新消息。"
+            if result.get("fast_forward_failed"):
+                message += " 以下频道最新消息同步失败：" + ", ".join(
+                    result["fast_forward_failed"]
+                )
+            return {"message": message, **result}
+
         storage = self.plugin.forwarder.storage
         if target in ("", "all"):
+            old_len = len(storage.get_all_pending())
             for channel_data in storage.persistence.get("channels", {}).values():
                 channel_data["pending_queue"] = []
             storage.save()
-            return {"message": "已清空所有待发送队列。"}
+            return {"message": f"已清空所有待发送队列（{old_len} 条）。"}
 
         channel = target.lstrip("@#")
         data = storage.get_channel_data(channel)

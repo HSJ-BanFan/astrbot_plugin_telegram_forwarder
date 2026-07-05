@@ -108,6 +108,15 @@ def _is_rich_media_failure(
     )
 
 
+def _is_rich_media_upload_reject(error: Exception) -> bool:
+    """判定 QQ 端已读到文件但富媒体上传被拒（风控/服务端限制）。
+
+    这类失败与路径拼写无关（ENOENT 类错误不会出现该 errMsg），
+    换路径重发同一份字节必然同样被拒。
+    """
+    return "rich media transfer failed" in str(error).lower()
+
+
 def _is_apk_rich_media_failure(
     error: Exception, classify_send_error: Callable[[Exception], str]
 ) -> bool:
@@ -187,6 +196,7 @@ async def _try_non_apk_file_fallback(
     unified_msg_origin: str,
     target_session: str,
     send_message_fn: SendMessageFn,
+    map_path: Callable[[str], str],
 ) -> bool:
     original_name = _get_file_component_name(component)
     direct_link_base_url = str(
@@ -223,6 +233,26 @@ async def _try_non_apk_file_fallback(
     if not source_path or not Path(source_path).is_file():
         logger.warning(
             f"[QQSender] 文件发送失败且缺少可访问源文件，无法源文件兜底: "
+            f"target={target_session}, file={original_name}, source={source_path!r}"
+        )
+        return False
+
+    # 富媒体上传被拒说明 QQ 端已成功读到文件字节，换路径拼写重发无济于事；
+    # 直接交还 pending 队列按周期重试（瞬时风控可自愈）。
+    if _is_rich_media_upload_reject(error):
+        logger.warning(
+            f"[QQSender] QQ 已读取文件但富媒体上传被拒（疑似风控/服务端限制），"
+            f"跳过源文件路径兜底，交还队列重试: "
+            f"target={target_session}, file={original_name}, source={source_path!r}, "
+            f"error={error!r}"
+        )
+        return False
+
+    # 源路径与主发送载荷完全相同（未配置映射或映射未命中）时，原样重发必然同结果。
+    if map_path(source_path) == source_path:
+        logger.warning(
+            f"[QQSender] 源文件路径与主发送载荷一致，重发无意义，跳过源文件路径兜底"
+            f"（若 QQ 端与插件不同环境，请检查 platform_settings.path_mapping）: "
             f"target={target_session}, file={original_name}, source={source_path!r}"
         )
         return False
@@ -359,4 +389,5 @@ async def handle_file_send_failure(
         unified_msg_origin=unified_msg_origin,
         target_session=target_session,
         send_message_fn=send_message_fn,
+        map_path=map_path,
     )

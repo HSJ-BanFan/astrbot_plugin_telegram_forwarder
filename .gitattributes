@@ -1,0 +1,4 @@
+# Keep checkouts byte-identical to the index so scripts/build_frontend.py --check
+# (a byte-exact CI gate) never sees CRLF false drift on Windows (core.autocrlf).
+* text=auto eol=lf
+*.png binary

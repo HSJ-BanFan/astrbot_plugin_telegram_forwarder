@@ -14,6 +14,7 @@ SendKind = Literal[
     "special_media",
     "fallback_link",
     "fallback_zip",
+    "fallback_file_source",
 ]
 
 

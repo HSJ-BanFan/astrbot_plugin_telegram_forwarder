@@ -156,6 +156,24 @@ class Forwarder:
 
         task.add_done_callback(_cleanup)
 
+    def request_stop(self) -> int:
+        """Request runtime stop and cancel in-flight send tasks."""
+        self._stopping = True
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+
+        cancelled_count = 0
+        for task in list(self._active_send_tasks):
+            if task is current_task or task.done():
+                continue
+            task.cancel()
+            cancelled_count += 1
+        if cancelled_count:
+            logger.info(f"[Forwarder] 已请求取消 {cancelled_count} 个在途发送任务。")
+        return cancelled_count
+
     def _request_queue_clear(self) -> int:
         self._queue_clear_generation += 1
         current_task = asyncio.current_task()
@@ -1557,12 +1575,18 @@ class Forwarder:
                     continue
                 filtered_fetched_by_channel.setdefault(channel, []).append(item_id)
             try:
+                if self._stopping:
+                    logger.info("[Send] 暂停请求已生效，跳过本轮发送分发。")
+                    return
                 send_summary = await self._send_sorted_messages_in_batches(
                     final_batches
                 )
             except asyncio.CancelledError:
                 if self._queue_clear_stale(clear_generation):
                     logger.info("[Send] 在途发送已被清队列请求取消。")
+                    return
+                if self._stopping:
+                    logger.info("[Send] 在途发送已被暂停请求取消。")
                     return
                 raise
             except Exception as e:
@@ -1765,6 +1789,9 @@ class Forwarder:
             clear_generation = self._queue_clear_generation
 
             def should_abort_send() -> bool:
+                if self._stopping:
+                    logger.info("[Send] 暂停请求已生效，停止后续分发。")
+                    return True
                 if self._queue_clear_stale(clear_generation):
                     logger.info("[Send] 队列清空期间停止后续分发。")
                     return True
@@ -2185,11 +2212,11 @@ class Forwarder:
 
     def stop(self):
         """停止转发器工作"""
-        self._stopping = True
+        self.request_stop()
 
     async def shutdown(self, timeout: float = 10.0) -> None:
         """等待运行中的任务结束；超时后取消剩余任务。"""
-        self._stopping = True
+        self.request_stop()
 
         pending_tasks = [task for task in self._active_tasks if not task.done()]
         if not pending_tasks:

@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import conftest as plugin_conftest
 import pytest
 
-
 SENDMSG_RESULT_ZERO_MESSAGE = (
     "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
     "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:\n"
@@ -39,9 +38,11 @@ class FakeActionFailed(Exception):
         return self.result["retcode"]
 
     def __repr__(self):
-        return "<ActionFailed " + ", ".join(
-            f"{key}={value!r}" for key, value in self.result.items()
-        ) + ">"
+        return (
+            "<ActionFailed "
+            + ", ".join(f"{key}={value!r}" for key, value in self.result.items())
+            + ">"
+        )
 
     def __str__(self):
         return self.__repr__()
@@ -71,9 +72,21 @@ async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module
         raise RuntimeError("big merge failed")
 
     processed_batches = [
-        {"batch_index": 0, "nodes_data": [[qq_module.Plain("a")]], "contains_audio": False},
-        {"batch_index": 1, "nodes_data": [[qq_module.Plain("b")]], "contains_audio": False},
-        {"batch_index": 2, "nodes_data": [[qq_module.Plain("c")]], "contains_audio": False},
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("a")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.Plain("b")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 2,
+            "nodes_data": [[qq_module.Plain("c")]],
+            "contains_audio": False,
+        },
     ]
     target_successes = {0: set(), 1: {"aiocqhttp:GroupMessage:1"}, 2: set()}
     target_failures: dict[int, str] = {}
@@ -125,8 +138,16 @@ async def test_big_merge_fallback_treats_sendmsg_result_zero_timeout_as_delivere
         raise RuntimeError("big merge failed")
 
     processed_batches = [
-        {"batch_index": 0, "nodes_data": [[qq_module.Plain("a")]], "contains_audio": False},
-        {"batch_index": 1, "nodes_data": [[qq_module.Plain("b")]], "contains_audio": False},
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("a")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.Plain("b")]],
+            "contains_audio": False,
+        },
     ]
     target_successes = {0: set(), 1: set()}
     target_failures: dict[int, str] = {}
@@ -166,7 +187,9 @@ async def test_big_merge_fallback_treats_sendmsg_result_zero_timeout_as_delivere
 
 
 @pytest.mark.asyncio
-async def test_special_media_chunk_records_success_before_later_batch_failure(qq_module):
+async def test_special_media_chunk_records_success_before_later_batch_failure(
+    qq_module,
+):
     send_calls: list[int] = []
 
     async def send_processed_batch_fn(**kwargs):
@@ -896,9 +919,7 @@ class TestAudioBatchSending:
         assert type(calls[1].args[1].chain[0]).__name__ == "Record"
         assert type(calls[2].args[1].chain[0]).__name__ == "File"
         error_messages = [
-            call.args[0]
-            for call in qq_module.logger.error.call_args_list
-            if call.args
+            call.args[0] for call in qq_module.logger.error.call_args_list if call.args
         ]
         assert any(
             "音频源文件补发失败" in message
@@ -1027,9 +1048,10 @@ class TestAudioBatchSending:
         assert getattr(sent_file, "name", None) != "None"
 
     @pytest.mark.asyncio
-    async def test_zip_file_send_failure_falls_back_to_source_file_path(
+    async def test_zip_rich_media_reject_skips_source_retry_and_reraises(
         self, sender, qq_module
     ):
+        """QQ 已读到文件但富媒体上传被拒：不做源路径重试，异常上抛交还队列。"""
         root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
         root.mkdir(exist_ok=True)
         plugin_data_dir = root / f"zip-source-fallback-{uuid.uuid4().hex}"
@@ -1039,8 +1061,55 @@ class TestAudioBatchSending:
 
         sender.config = {"forward_config": {}}
         sender.context.send_message = AsyncMock(
+            side_effect=RuntimeError("retcode=1200 rich media transfer failed")
+        )
+        file_component = qq_module.File(
+            file="/plugin_data/astrbot_plugin_telegram_forwarder/pixiv-ranking.zip",
+            name="pixiv-ranking.zip",
+        )
+        file_component.file_ = (
+            "/plugin_data/astrbot_plugin_telegram_forwarder/pixiv-ranking.zip"
+        )
+        file_component.url = ""
+        file_component._tgf_source_path = str(zip_path)
+
+        try:
+            with pytest.raises(RuntimeError):
+                await sender._send_processed_batch(
+                    batch_data={
+                        "nodes_data": [[file_component]],
+                        "local_files": [str(zip_path)],
+                        "contains_audio": False,
+                    },
+                    unified_msg_origin="target",
+                    self_id=1,
+                    node_name="bot",
+                    target_session="target",
+                )
+
+            assert sender.context.send_message.await_count == 1
+        finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_zip_enoent_with_mapping_retries_source_path(self, sender, qq_module):
+        """映射路径读不到（ENOENT）且源路径拼写不同：保留源文件路径救援。"""
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"zip-source-fallback-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        zip_path = plugin_data_dir / "pixiv-ranking.zip"
+        zip_path.write_bytes(b"zip-binary")
+
+        sender.config = {"forward_config": {}}
+        sender._map_path = lambda p: (
+            "/plugin_data/astrbot_plugin_telegram_forwarder/" + Path(p).name
+        )
+        sender.context.send_message = AsyncMock(
             side_effect=[
-                RuntimeError("retcode=1200 rich media transfer failed"),
+                RuntimeError(
+                    "retcode=1200 ENOENT: no such file or directory, copyfile"
+                ),
                 None,
             ]
         )
@@ -1096,7 +1165,9 @@ class TestAudioBatchSending:
             file="/plugin_data/astrbot_plugin_telegram_forwarder/report.zip",
             name="report.zip",
         )
-        file_component.file_ = "/plugin_data/astrbot_plugin_telegram_forwarder/report.zip"
+        file_component.file_ = (
+            "/plugin_data/astrbot_plugin_telegram_forwarder/report.zip"
+        )
         file_component.url = ""
         file_component._tgf_source_path = "/tmp/report.zip"
 
@@ -1116,7 +1187,9 @@ class TestAudioBatchSending:
         fallback_chain = sender.context.send_message.await_args_list[1].args[1].chain
         assert len(fallback_chain) == 1
         assert type(fallback_chain[0]).__name__ == "Plain"
-        assert "https://files.example.com/downloads/report.zip" in fallback_chain[0].text
+        assert (
+            "https://files.example.com/downloads/report.zip" in fallback_chain[0].text
+        )
 
     @pytest.mark.asyncio
     async def test_file_send_overrides_to_dict_for_nonexistent_mapped_path(
@@ -1231,7 +1304,9 @@ class TestAudioBatchSending:
             )
 
             assert sender.context.send_message.await_count == 3
-            sent_component = sender.context.send_message.await_args_list[2].args[1].chain[0]
+            sent_component = (
+                sender.context.send_message.await_args_list[2].args[1].chain[0]
+            )
             assert type(sent_component).__name__ == "File"
             assert sent_component.name == "base.apk.zip"
             assert len(batch_data["local_files"]) == 2
@@ -1465,9 +1540,7 @@ class TestAudioBatchSending:
         assert sender.context.send_message.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_audio_record_timeout_logs_without_retry(
-        self, sender, qq_module
-    ):
+    async def test_audio_record_timeout_logs_without_retry(self, sender, qq_module):
         sender.context.send_message = AsyncMock(
             side_effect=[asyncio.TimeoutError(), None]
         )
@@ -1495,8 +1568,7 @@ class TestAudioBatchSending:
         ]
         assert sender.context.send_message.await_count == 2
         assert any(
-            "send kind=audio_record" in message
-            and "timeout=30.000s" in message
+            "send kind=audio_record" in message and "timeout=30.000s" in message
             for message in warning_messages
         )
         assert not any("attempt 1/2" in message for message in warning_messages)
@@ -1602,9 +1674,7 @@ class TestQQSendWrapper:
             )
 
     @pytest.mark.asyncio
-    async def test_send_with_timeout_does_not_retry_timeout(
-        self, sender, qq_module
-    ):
+    async def test_send_with_timeout_does_not_retry_timeout(self, sender, qq_module):
         sender.context.send_message = AsyncMock(
             side_effect=[asyncio.TimeoutError(), None]
         )
@@ -1812,9 +1882,7 @@ class TestVideoBatchSending:
         assert type(calls[0].args[1].chain[0]).__name__ == "Video"
         assert type(calls[1].args[1].chain[0]).__name__ == "File"
         error_messages = [
-            call.args[0]
-            for call in qq_module.logger.error.call_args_list
-            if call.args
+            call.args[0] for call in qq_module.logger.error.call_args_list if call.args
         ]
         assert any(
             "视频源文件补发失败" in message
@@ -2042,7 +2110,9 @@ class TestSendHelperExtraction:
 
 class TestDispatchLoopExtraction:
     @pytest.mark.asyncio
-    async def test_send_cleans_up_processed_batches_when_dispatch_raises(self, sender, qq_module, monkeypatch):
+    async def test_send_cleans_up_processed_batches_when_dispatch_raises(
+        self, sender, qq_module, monkeypatch
+    ):
         cleanup_calls: list[list[dict]] = []
         processed_batch = {
             "batch_index": 0,
@@ -2078,7 +2148,9 @@ class TestDispatchLoopExtraction:
 
         with pytest.raises(RuntimeError, match="dispatch failed"):
             await sender.send(
-                batches=[[type("Msg", (), {"id": 1, "text": "hello", "reply_to": None})()]],
+                batches=[
+                    [type("Msg", (), {"id": 1, "text": "hello", "reply_to": None})()]
+                ],
                 src_channel="demo",
                 effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
             )
@@ -2183,7 +2255,9 @@ class TestSendSummary:
         assert summary.error_types == {0: "timeout", 1: "timeout"}
 
     @pytest.mark.asyncio
-    async def test_send_marks_numeric_targets_failed_when_platform_id_unresolved(self, sender):
+    async def test_send_marks_numeric_targets_failed_when_platform_id_unresolved(
+        self, sender
+    ):
         sender.context.send_message = AsyncMock()
         sender.config = {"forward_config": {"qq_merge_threshold": 99}}
         sender.platform_id = None
@@ -2286,7 +2360,9 @@ class TestTargetCircuitBreaker:
 
 
 class TestCleanupFiles:
-    def test_cleanup_processed_batches_does_not_remove_untracked_original_file(self, sender, qq_module, tmp_path):
+    def test_cleanup_processed_batches_does_not_remove_untracked_original_file(
+        self, sender, qq_module, tmp_path
+    ):
         temp_file = tmp_path / "fallback.zip"
         original_file = tmp_path / "original.mp4"
         temp_file.write_bytes(b"zip")
@@ -2296,7 +2372,9 @@ class TestCleanupFiles:
         processed_batches = [
             {
                 "local_files": [str(temp_file)],
-                "nodes_data": [[qq_module.File(file=str(original_file), name="original.mp4")]],
+                "nodes_data": [
+                    [qq_module.File(file=str(original_file), name="original.mp4")]
+                ],
             }
         ]
 

@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import inspect
 import sys
+from typing import Any
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -63,12 +64,15 @@ def _make_comp(name):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def _from_file_system(cls2: Any, path: Any):
+        return cls2(path)
+
     cls = type(
         name,
         (),
         {
             "__init__": _init,
-            "fromFileSystem": classmethod(lambda cls2, p: cls2(p)),
+            "fromFileSystem": classmethod(_from_file_system),
         },
     )
     return cls

@@ -75,6 +75,7 @@ def load_commands_module() -> ModuleType:
     with patch.dict(sys.modules, stubbed_modules):
         sys.modules.pop(module_name, None)
         spec = importlib.util.spec_from_file_location(module_name, module_path)
+        assert spec is not None
         mod = importlib.util.module_from_spec(spec)
         mod.__package__ = "astrbot_plugin_telegram_forwarder.core"
         assert spec.loader is not None

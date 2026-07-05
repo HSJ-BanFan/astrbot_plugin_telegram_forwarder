@@ -20,6 +20,27 @@ function formatRuntimeTime(value) {
   return String(value).replace("T", " ");
 }
 
+async function runButtonAction(button, action, doneMessage, options = {}) {
+  if (!button || button.dataset.runtimeActionBusy === "true") return;
+  const originalText = button.textContent;
+  button.dataset.runtimeActionBusy = "true";
+  button.disabled = true;
+  if (options.loadingText) button.textContent = options.loadingText;
+  try {
+    await withAction(action, doneMessage, options);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+    delete button.dataset.runtimeActionBusy;
+  }
+}
+
+function bindRuntimeButton(button, handler) {
+  if (!button || button.dataset.runtimeActionBound === "true") return;
+  button.dataset.runtimeActionBound = "true";
+  button.addEventListener("click", handler);
+}
+
 /* 数字滚动：数值变化时从旧值滚到新值，让指标卡"看得见变化" */
 function animateMetricNumber(el, value) {
   const next = Number(value) || 0;
@@ -45,13 +66,19 @@ function animateMetricNumber(el, value) {
 export function renderRuntimeOperations(runtime) {
   const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
   const active = operations.find((operation) => operation.status === "running");
+  const isPaused = Boolean(runtime.paused);
+  const hasSendBusy = Boolean(runtime.send_busy || runtime.global_send_busy);
   const busyNotes = [];
-  if (runtime.capture_busy) busyNotes.push("有频道正在抓取");
-  if (runtime.send_busy || runtime.global_send_busy) busyNotes.push("发送任务正在执行，定时发送会自动跳过本轮");
+  if (runtime.capture_busy) busyNotes.push(isPaused ? "正在停止频道抓取" : "有频道正在抓取");
+  if (hasSendBusy) busyNotes.push(isPaused ? "正在停止当前发送任务" : "发送任务正在执行，定时发送会自动跳过本轮");
   if (runtime.active_web_operations) busyNotes.push(`${runtime.active_web_operations} 个 Web 操作运行中`);
 
   if (els.runtimeMessage) {
-    if (active) {
+    if (isPaused) {
+      els.runtimeMessage.textContent = busyNotes.length
+        ? `已暂停抓取与发送，${busyNotes.join("，")}`
+        : "已暂停抓取与发送。";
+    } else if (active) {
       els.runtimeMessage.textContent = `${active.label}：${active.message || "正在执行。"}`;
     } else if (busyNotes.length) {
       els.runtimeMessage.textContent = busyNotes.join("，");
@@ -61,8 +88,9 @@ export function renderRuntimeOperations(runtime) {
   }
 
   if (els.runtimeState) {
-    els.runtimeState.innerHTML = busyNotes.length
-      ? busyNotes.map((note) => `<span class="runtime-chip active">${escapeHtml(note)}</span>`).join("")
+    const stateNotes = isPaused ? ["已暂停", ...busyNotes] : busyNotes;
+    els.runtimeState.innerHTML = stateNotes.length
+      ? stateNotes.map((note) => `<span class="runtime-chip active">${escapeHtml(note)}</span>`).join("")
       : '<span class="runtime-chip">当前没有 Web 运行任务</span>';
   }
 
@@ -246,29 +274,39 @@ export function renderStatus() {
 }
 
 export function initOverview() {
-  if (els.runCheckBtn) {
-    els.runCheckBtn.addEventListener("click", () =>
-      withAction(() => apiRequest("/api/runtime/check", "POST"), "已开始后台执行。", { refresh: "status" })
+  bindRuntimeButton(els.runCheckBtn, () =>
+    runButtonAction(
+      els.runCheckBtn,
+      () => apiRequest("/api/runtime/check", "POST"),
+      "已开始后台执行。",
+      { refresh: "status", loadingText: "执行中" }
+    )
+  );
+  bindRuntimeButton(els.pauseBtn, () =>
+    runButtonAction(
+      els.pauseBtn,
+      () => apiRequest("/api/runtime/pause", "POST"),
+      "已暂停。",
+      { refresh: "status", loadingText: "暂停中" }
+    )
+  );
+  bindRuntimeButton(els.resumeBtn, () =>
+    runButtonAction(
+      els.resumeBtn,
+      () => apiRequest("/api/runtime/resume", "POST"),
+      "已恢复。",
+      { refresh: "status", loadingText: "恢复中" }
+    )
+  );
+  bindRuntimeButton(els.clearQueueBtn, () => {
+    if (!window.confirm("确认清空全部待发送队列？")) return;
+    runButtonAction(
+      els.clearQueueBtn,
+      () => apiRequest("/api/runtime/clear-queue", "POST", { target: "all" }),
+      "队列已清空。",
+      { refresh: "status", loadingText: "清空中" }
     );
-  }
-  if (els.pauseBtn) {
-    els.pauseBtn.addEventListener("click", () =>
-      withAction(() => apiRequest("/api/runtime/pause", "POST"), "已暂停。", { refresh: "status" })
-    );
-  }
-  if (els.resumeBtn) {
-    els.resumeBtn.addEventListener("click", () =>
-      withAction(() => apiRequest("/api/runtime/resume", "POST"), "已恢复。", { refresh: "status" })
-    );
-  }
-  if (els.clearQueueBtn) {
-    els.clearQueueBtn.addEventListener("click", () => {
-      if (!window.confirm("确认清空全部待发送队列？")) return;
-      withAction(() => apiRequest("/api/runtime/clear-queue", "POST", { target: "all" }), "队列已清空。", {
-        refresh: "status",
-      });
-    });
-  }
+  });
 
   // subscribe to store changes to re-render status
   store.subscribe(renderStatus);

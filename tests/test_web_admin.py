@@ -668,6 +668,78 @@ async def test_runtime_check_rejects_when_paused(web_admin):
     web_admin.plugin.forwarder.send_pending_messages.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_runtime_check_reuses_running_operation(web_admin):
+    running = web_admin.server._new_runtime_operation(
+        "立即抓取发送",
+        "正在发送待发送队列。",
+    )
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=True,
+        check_updates=AsyncMock(),
+        send_pending_messages=AsyncMock(),
+    )
+    web_admin.server._track_runtime_task = MagicMock()
+
+    result = await web_admin.server.runtime_check()
+
+    assert result["message"] == "已有立即抓取发送任务在执行。"
+    assert result["operation"]["id"] == running["id"]
+    assert len(web_admin.server._runtime_operations) == 1
+    assert web_admin.plugin.forwarder._stopping is True
+    web_admin.plugin.forwarder.check_updates.assert_not_awaited()
+    web_admin.plugin.forwarder.send_pending_messages.assert_not_awaited()
+    web_admin.server._track_runtime_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runtime_pause_requests_active_send_stop(web_admin):
+    request_stop = MagicMock(return_value=1)
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=False,
+        request_stop=request_stop,
+    )
+    web_admin.plugin.scheduler = SimpleNamespace(
+        running=True,
+        pause=MagicMock(),
+    )
+
+    result = await web_admin.server.runtime_pause()
+
+    assert web_admin.plugin.command_handler._paused is True
+    request_stop.assert_called_once_with()
+    web_admin.plugin.scheduler.pause.assert_called_once_with()
+    assert "已请求停止 1 个在途发送任务" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_clear_queue_uses_forwarder_queue_clear(web_admin):
+    clear_pending_queue = AsyncMock(
+        return_value={
+            "target": "all",
+            "cleared": 3,
+            "cancelled_sends": 1,
+            "fast_forwarded": 2,
+            "fast_forward_failed": ["failed_channel"],
+        }
+    )
+    web_admin.plugin.forwarder = SimpleNamespace(
+        clear_pending_queue=clear_pending_queue,
+    )
+
+    result = await web_admin.server.runtime_clear_queue({"target": "all"})
+
+    clear_pending_queue.assert_awaited_once_with("all")
+    assert result["cleared"] == 3
+    assert result["cancelled_sends"] == 1
+    assert result["fast_forwarded"] == 2
+    assert result["fast_forward_failed"] == ["failed_channel"]
+    assert "已清空所有待发送队列（3 条）" in result["message"]
+    assert "已请求取消 1 个在途发送任务" in result["message"]
+    assert "已同步 2 个频道到最新消息" in result["message"]
+    assert "failed_channel" in result["message"]
+
+
 def test_static_assets_serving(web_admin):
     client = web_admin.server.app.test_client()
 

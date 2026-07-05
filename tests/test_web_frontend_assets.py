@@ -362,3 +362,18 @@ def test_dashboard_bridge_api_preserves_request_timeout() -> None:
         assert "function withTimeout" in text
         assert "Promise.race" in text
         assert "bridgeRequest(path, method, body, timeout)" in text
+
+
+def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "ui_overview.js").read_text(encoding="utf-8")
+
+        assert "function runButtonAction" in text
+        assert 'button.dataset.runtimeActionBusy === "true"' in text
+        assert "button.disabled = true" in text
+        assert "button.disabled = false" in text
+        assert "function bindRuntimeButton" in text
+        assert 'button.dataset.runtimeActionBound === "true"' in text
+        assert 'button.dataset.runtimeActionBound = "true"' in text
+        assert 'apiRequest("/api/runtime/check", "POST")' in text
+        assert 'apiRequest("/api/runtime/clear-queue", "POST", { target: "all" })' in text

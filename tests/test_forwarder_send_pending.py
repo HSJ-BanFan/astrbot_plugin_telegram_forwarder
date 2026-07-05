@@ -124,11 +124,11 @@ class QQSendSummary(SimpleNamespace):
     pass
 
 
-def _snapshot_modules(*names: str) -> dict[str, object | None]:
+def _snapshot_modules(*names: str) -> dict[str, ModuleType | None]:
     return {name: sys.modules.get(name) for name in names}
 
 
-def _restore_modules(snapshot: dict[str, object | None]) -> None:
+def _restore_modules(snapshot: dict[str, ModuleType | None]) -> None:
     for name, value in snapshot.items():
         if value is None:
             sys.modules.pop(name, None)
@@ -222,6 +222,7 @@ def load_forwarder_module():
             "astrbot_plugin_telegram_forwarder.core.forwarder",
             module_path,
         )
+        assert spec is not None
         module = importlib.util.module_from_spec(spec)
         module.__package__ = "astrbot_plugin_telegram_forwarder.core"
         sys.modules[spec.name] = module
@@ -336,6 +337,49 @@ def test_normalize_target_list_strips_skips_none_and_dedupes():
         "g3",
     ]
     assert forwarder_module.Forwarder._normalize_target_list("g1,g2") == []
+
+
+@pytest.mark.asyncio
+async def test_send_distribution_stops_after_pause_request():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {"channel": "demo-a", "id": 1, "time": 1},
+            {"channel": "demo-b", "id": 2, "time": 2},
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._get_display_name = AsyncMock(side_effect=lambda channel: channel)
+    forwarder.config["source_channels"] = [
+        {"channel_username": "demo-a", "priority": 0},
+        {"channel_username": "demo-b", "priority": 0},
+    ]
+    send_calls = []
+
+    async def send_once(**kwargs):
+        send_calls.append(kwargs["src_channel"])
+        forwarder._stopping = True
+        return QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+            target_sessions=("test:GroupMessage:1",),
+            target_sessions_by_batch={},
+            completed_target_sessions={},
+        )
+
+    forwarder.qq_sender = SimpleNamespace(send=AsyncMock(side_effect=send_once))
+
+    summary = await forwarder._send_sorted_messages_in_batches(
+        [
+            ([SimpleNamespace(id=1)], "demo-a"),
+            ([SimpleNamespace(id=2)], "demo-b"),
+        ]
+    )
+
+    assert send_calls == ["demo-a"]
+    assert summary.acked_batch_indexes == (0,)
 
 
 @pytest.mark.asyncio

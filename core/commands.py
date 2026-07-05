@@ -553,13 +553,23 @@ class PluginCommands:
             return
 
         self._paused = True
-        self.forwarder._stopping = True
+        cancelled_count = (
+            self.forwarder.request_stop()
+            if hasattr(self.forwarder, "request_stop")
+            else 0
+        )
+        if not hasattr(self.forwarder, "request_stop"):
+            self.forwarder._stopping = True
 
         if self.scheduler and self.scheduler.running:
             self.scheduler.pause()
             logger.info("[Commands] 调度器已暂停")
 
-        yield event.plain_result("⏸️ 已暂停抓取与发送。使用 /tg resume 恢复。")
+        message = "⏸️ 已暂停抓取与发送。"
+        if cancelled_count:
+            message += f"已请求停止 {cancelled_count} 个在途发送任务。"
+        message += "使用 /tg resume 恢复。"
+        yield event.plain_result(message)
 
     async def resume(self, event: AstrMessageEvent):
         """恢复抓取和发送（恢复调度器）"""

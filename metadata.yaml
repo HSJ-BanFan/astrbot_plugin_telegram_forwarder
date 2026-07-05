@@ -3,7 +3,7 @@ display_name: 电报搬运工
 desc: 监控多个 Telegram 频道或群组，将文字、图片、音频、视频和文件同步转发到 QQ 群或 Telegram 频道，支持过滤、队列管理和 Web 管理。
 short_desc: 监控 Telegram 频道并同步转发到 QQ 群或 Telegram 频道。
 author: HSJ-BanFan&Foolllll
-version: 0.9.0
+version: 0.9.1
 repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
 support_platforms:
   - aiocqhttp

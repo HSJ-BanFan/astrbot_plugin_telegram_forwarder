@@ -8,9 +8,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import pytest
-
 import conftest as plugin_conftest
+import pytest
 
 _repo_root = Path(__file__).resolve().parents[1]
 
@@ -214,6 +213,7 @@ class TestTryNonApkFileFallback:
             unified_msg_origin="umo",
             target_session="g1",
             send_message_fn=send_fn,
+            map_path=lambda p: p,
         )
         assert ok is True
         send_fn.assert_awaited_once()
@@ -234,12 +234,14 @@ class TestTryNonApkFileFallback:
             unified_msg_origin="umo",
             target_session="g1",
             send_message_fn=send_fn,
+            map_path=lambda p: p,
         )
         assert ok is False
         send_fn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_source_file_fallback(self, tmp_path):
+    async def test_rich_media_reject_skips_source_retry(self, tmp_path):
+        """QQ 已读到文件但上传被拒（风控类）：换路径重试无意义，直接交还队列。"""
         m = load_fallback_module()
         source = tmp_path / "doc.pdf"
         source.write_bytes(b"pdf-bytes")
@@ -248,14 +250,63 @@ class TestTryNonApkFileFallback:
         ok = await m._try_non_apk_file_fallback(
             forward_cfg={},
             component=comp,
-            error=Exception("rich media transfer failed"),
+            error=Exception(
+                'ActionFailed retcode=1200 {"errMsg": "rich media transfer failed"}'
+            ),
             unified_msg_origin="umo",
             target_session="g1",
             send_message_fn=send_fn,
+            map_path=lambda p: "/container" + p.replace("\\", "/"),
+        )
+        assert ok is False
+        send_fn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_identity_mapped_source_skips_retry(self, tmp_path):
+        """源路径与主发送载荷相同（无映射）：原样重发必然同结果，跳过。"""
+        m = load_fallback_module()
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"pdf-bytes")
+        send_fn = AsyncMock()
+        comp = _file_component(m, name="doc.pdf", file=str(source))
+        ok = await m._try_non_apk_file_fallback(
+            forward_cfg={},
+            component=comp,
+            error=Exception(
+                "ActionFailed retcode=1200 ENOENT: no such file or directory, copyfile"
+            ),
+            unified_msg_origin="umo",
+            target_session="g1",
+            send_message_fn=send_fn,
+            map_path=lambda p: p,
+        )
+        assert ok is False
+        send_fn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_enoent_with_mapping_retries_raw_source_path(self, tmp_path):
+        """映射路径读不到且源路径拼写不同：保留原始路径救援（同机映射配错场景）。"""
+        m = load_fallback_module()
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"pdf-bytes")
+        send_fn = AsyncMock()
+        comp = _file_component(m, name="doc.pdf", file=str(source))
+        ok = await m._try_non_apk_file_fallback(
+            forward_cfg={},
+            component=comp,
+            error=Exception(
+                "ActionFailed retcode=1200 ENOENT: no such file or directory, copyfile"
+            ),
+            unified_msg_origin="umo",
+            target_session="g1",
+            send_message_fn=send_fn,
+            map_path=lambda p: "/container" + p.replace("\\", "/"),
         )
         assert ok is True
         send_fn.assert_awaited_once()
         assert send_fn.await_args.kwargs["send_kind"] == "fallback_file_source"
+        sent_component = send_fn.await_args.args[1].chain[0]
+        assert getattr(sent_component, "file", None) == str(source)
 
 
 class TestHandleFileSendFailure:

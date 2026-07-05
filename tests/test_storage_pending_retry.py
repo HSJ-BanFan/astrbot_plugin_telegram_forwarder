@@ -4,15 +4,15 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType
 from unittest.mock import MagicMock
 
 
-def _snapshot_modules(*names: str) -> dict[str, object | None]:
+def _snapshot_modules(*names: str) -> dict[str, ModuleType | None]:
     return {name: sys.modules.get(name) for name in names}
 
 
-def _restore_modules(snapshot: dict[str, object | None]) -> None:
+def _restore_modules(snapshot: dict[str, ModuleType | None]) -> None:
     for name, value in snapshot.items():
         if value is None:
             sys.modules.pop(name, None)
@@ -27,12 +27,15 @@ def load_storage_module():
 
     try:
         sys.modules["astrbot"] = MagicMock()
-        sys.modules["astrbot.api"] = SimpleNamespace(logger=MagicMock())
+        api_module = ModuleType("astrbot.api")
+        api_module.logger = MagicMock()
+        sys.modules["astrbot.api"] = api_module
 
         spec = importlib.util.spec_from_file_location(
             "astrbot_plugin_telegram_forwarder.common.storage",
             module_path,
         )
+        assert spec is not None
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(module)
