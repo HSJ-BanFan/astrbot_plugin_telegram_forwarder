@@ -123,7 +123,7 @@ Web 管理界面默认监听 `http://127.0.0.1:8180`（可在 `_conf_schema.json
 
 - `main.py` — 插件入口、Web API 路由表（27 条）、`/tg` 命令组（13 条）
 - `relogin.py` — Telegram 重新登录工具
-- `metadata.yaml` — v0.8.1，作者 HSJ-BanFan&Foolllll
+- `metadata.yaml` — v0.9.0，作者 HSJ-BanFan&Foolllll
 - `requirements.txt` — apscheduler / telethon>=1.42.0,<1.43.0 / pysocks / flask
 - `_conf_schema.json` — WebUI 可编辑配置 schema
 - `README.md` / `CHANGELOG.md`
