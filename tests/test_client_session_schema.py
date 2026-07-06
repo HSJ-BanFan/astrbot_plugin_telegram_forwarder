@@ -664,6 +664,36 @@ def test_redact_proxy_url_preserves_url_without_credentials():
     assert redacted == "socks5://example.com:1080"
 
 
+def test_parse_proxy_url_includes_socks5_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_url(
+        "socks5://admin:wowull@example.com:12311"
+    )
+
+    assert proxy == (2, "example.com", 12311, True, "admin", "wowull")
+
+
+def test_parse_proxy_url_decodes_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_url(
+        "socks5://adm%40in:wo%3Awull@example.com:12311"
+    )
+
+    assert proxy == (2, "example.com", 12311, True, "adm@in", "wo:wull")
+
+
+def test_parse_proxy_url_without_credentials_keeps_short_tuple():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_url(
+        "socks5://example.com:12311"
+    )
+
+    assert proxy == (2, "example.com", 12311)
+
+
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():
     client_module = load_client_module()
     wrapper = object.__new__(client_module.TelegramClientWrapper)

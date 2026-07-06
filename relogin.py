@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import socks
 from telethon import TelegramClient
@@ -35,6 +35,21 @@ if not CONFIG_FILE.exists():
 # 而不是假定本地一定存在可读取的配置文件。
 print("=== Telegram Forwarder 重新登录助手 ===")
 
+
+def parse_proxy_url(proxy_url: str):
+    parsed = urlparse(proxy_url)
+    if not parsed.hostname or parsed.port is None:
+        raise ValueError("代理 URL 必须包含主机和端口")
+
+    proxy_type = socks.HTTP if parsed.scheme.startswith("http") else socks.SOCKS5
+    username = unquote(parsed.username) if parsed.username is not None else None
+    password = unquote(parsed.password) if parsed.password is not None else None
+    if bool(username) != bool(password):
+        raise ValueError("代理用户名和密码必须同时填写")
+    if username and password:
+        return (proxy_type, parsed.hostname, parsed.port, True, username, password)
+    return (proxy_type, parsed.hostname, parsed.port)
+
 api_id_raw = input("请输入 API ID: ").strip()
 try:
     api_id = int(api_id_raw)
@@ -48,9 +63,7 @@ proxy_url = input(
 proxy_setting = None
 if proxy_url:
     try:
-        parsed = urlparse(proxy_url)
-        proxy_type = socks.HTTP if parsed.scheme.startswith("http") else socks.SOCKS5
-        proxy_setting = (proxy_type, parsed.hostname, parsed.port)
+        proxy_setting = parse_proxy_url(proxy_url)
         print(f"使用代理: {proxy_setting}")
     except Exception as e:
         print(f"代理设置错误: {e}")
