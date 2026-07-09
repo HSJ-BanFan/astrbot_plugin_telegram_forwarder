@@ -268,7 +268,7 @@ class TelegramClientWrapper:
 
         backup_file = Path(f"{session_file}.bak")
         TelegramClientWrapper._rotate_existing_backup(backup_file)
-        shutil.copy2(session_file, backup_file)
+        shutil.copyfile(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)
         backup_table = "sessions_schema_migration_backup"
@@ -297,7 +297,7 @@ class TelegramClientWrapper:
             # 确保回滚时 SQLite 句柄已释放（Windows 下覆盖 .session 尤为依赖此点）。
             conn.close()
             if migration_failed:
-                shutil.copy2(backup_file, session_file)
+                shutil.copyfile(backup_file, session_file)
 
     async def ensure_connected(self) -> bool:
         if not self.client:

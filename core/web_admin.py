@@ -571,7 +571,7 @@ class WebAdminServer:
                 if not os.path.exists(temp_file):
                     continue
                 suffix = temp_file.removeprefix(temp_path)
-                shutil.copy2(temp_file, f"{session_path}{suffix}")
+                shutil.copyfile(temp_file, f"{session_path}{suffix}")
             TelegramClientWrapper._ensure_compatible_session_schema(session_path)
 
     @staticmethod
@@ -663,7 +663,9 @@ class WebAdminServer:
             for path in self._session_files(official_session_path):
                 if os.path.exists(path):
                     os.makedirs(backup_dir, exist_ok=True)
-                    shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
+                    shutil.copyfile(
+                        path, os.path.join(backup_dir, os.path.basename(path))
+                    )
                     copied_official_backup = True
             backup_completed = True
 
@@ -686,7 +688,7 @@ class WebAdminServer:
                 if not os.path.exists(temp_path):
                     continue
                 suffix = temp_path.removeprefix(temp_session_path)
-                shutil.copy2(temp_path, f"{official_session_path}{suffix}")
+                shutil.copyfile(temp_path, f"{official_session_path}{suffix}")
                 installed = True
 
             if not installed:
@@ -703,7 +705,7 @@ class WebAdminServer:
                     target = os.path.join(
                         official_wrapper.plugin_data_dir, backup_path.name
                     )
-                    shutil.copy2(str(backup_path), target)
+                    shutil.copyfile(str(backup_path), target)
             raise
 
         self.plugin.config["phone"] = phone
@@ -1112,7 +1114,9 @@ class WebAdminServer:
             for path in self._session_files(session_path):
                 if os.path.exists(path):
                     os.makedirs(backup_dir, exist_ok=True)
-                    shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
+                    shutil.copyfile(
+                        path, os.path.join(backup_dir, os.path.basename(path))
+                    )
                     copied_backup = True
             backup_completed = True
 
@@ -1138,7 +1142,7 @@ class WebAdminServer:
                             pass
                 if copied_backup:
                     for backup_path in Path(backup_dir).glob("*"):
-                        shutil.copy2(
+                        shutil.copyfile(
                             str(backup_path),
                             os.path.join(wrapper.plugin_data_dir, backup_path.name),
                         )

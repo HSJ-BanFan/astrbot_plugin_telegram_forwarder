@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import importlib.util
 import shutil
 import sqlite3
@@ -233,6 +234,58 @@ def test_main_accepts_uploaded_session_path_inside_plugin_data_dir():
         main_module.TelegramClientWrapper.clear_cache.assert_called_with(
             str(tmp_dir / "user_session")
         )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_main_sync_uses_content_copy_when_copy2_metadata_fails():
+    tmp_dir = make_test_dir()
+    uploaded_file = tmp_dir / "uploaded.session"
+    uploaded_file.write_text("session", encoding="utf-8")
+
+    def copy2_with_metadata_failure(src, dst):
+        shutil.copyfile(src, dst)
+        raise PermissionError(1, "Operation not permitted")
+
+    try:
+        main_module = load_main_module(tmp_dir)
+
+        with patch.object(
+            main_module.shutil,
+            "copy2",
+            side_effect=copy2_with_metadata_failure,
+        ):
+            main_module.Main(MagicMock(), {"telegram_session": [uploaded_file.name]})
+
+        assert (tmp_dir / "user_session.session").read_text(
+            encoding="utf-8"
+        ) == "session"
+        main_module.TelegramClientWrapper.clear_cache.assert_called_with(
+            str(tmp_dir / "user_session")
+        )
+        main_module.logger.error.assert_not_called()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_main_skips_recopy_when_uploaded_source_hash_was_already_synced():
+    tmp_dir = make_test_dir()
+    uploaded_file = tmp_dir / "uploaded.session"
+    uploaded_file.write_text("legacy-schema", encoding="utf-8")
+    target_file = tmp_dir / "user_session.session"
+    target_file.write_text("repaired-schema", encoding="utf-8")
+    synced_hash = hashlib.sha256(uploaded_file.read_bytes()).hexdigest()
+    (tmp_dir / "user_session.session.source.sha256").write_text(
+        synced_hash, encoding="utf-8"
+    )
+
+    try:
+        main_module = load_main_module(tmp_dir)
+
+        main_module.Main(MagicMock(), {"telegram_session": [uploaded_file.name]})
+
+        assert target_file.read_text(encoding="utf-8") == "repaired-schema"
+        main_module.TelegramClientWrapper.clear_cache.assert_not_called()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

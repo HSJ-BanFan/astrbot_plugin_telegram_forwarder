@@ -1,5 +1,6 @@
 import asyncio
 import filecmp
+import hashlib
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,6 +54,120 @@ class Main(star.Star):
             return None
         return str(candidate)
 
+    @staticmethod
+    def _file_sha256(path: str | Path) -> str:
+        """计算文件内容的 SHA-256 摘要。
+
+        Args:
+            path: 目标文件路径。
+
+        Returns:
+            十六进制摘要字符串。
+
+        Raises:
+            OSError: 文件无法读取时。
+        """
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _write_session_source_marker(marker_path: Path, digest: str) -> None:
+        """原子写入上传会话文件的同步指纹（.tmp + replace）。"""
+        try:
+            tmp_path = marker_path.with_name(marker_path.name + ".tmp")
+            tmp_path.write_text(digest, encoding="utf-8")
+            tmp_path.replace(marker_path)
+        except Exception as e:
+            logger.warning(f"[Main] 写入会话同步指纹失败: {e}")
+
+    def _is_uploaded_session_already_synced(
+        self,
+        marker_path: Path,
+        uploaded_digest: str,
+        full_uploaded_path: str,
+        target_session_path: Path,
+    ) -> bool:
+        """判断上传的会话文件是否已同步过，无需再次覆盖目标文件。
+
+        优先比对同步指纹：同一份上传文件同步过一次后，即使目标文件
+        随后被 Telethon schema 自愈修改，也不再回拷旧文件（否则每次
+        启动都会重新引入不兼容 schema，形成"覆盖→修复"死循环）。
+
+        Args:
+            marker_path: 同步指纹文件路径。
+            uploaded_digest: 上传文件当前内容的 SHA-256。
+            full_uploaded_path: 上传文件的绝对路径。
+            target_session_path: 目标会话文件路径。
+
+        Returns:
+            True 表示可跳过本次同步。
+        """
+        try:
+            if (
+                marker_path.exists()
+                and marker_path.read_text(encoding="utf-8").strip() == uploaded_digest
+            ):
+                logger.debug("[Main] 上传会话文件与上次同步一致，跳过同步。")
+                return True
+        except Exception as e:
+            logger.warning(f"[Main] 读取会话同步指纹失败: {e}")
+
+        try:
+            if filecmp.cmp(full_uploaded_path, target_session_path, shallow=False):
+                logger.debug("[Main] 会话文件未变化，跳过同步。")
+                # 为存量部署补写指纹，让后续的 schema 自愈不再触发回拷。
+                self._write_session_source_marker(marker_path, uploaded_digest)
+                return True
+        except Exception as e:
+            logger.warning(f"[Main] 比较会话文件失败: {e}")
+        return False
+
+    def _sync_uploaded_session_file(self) -> None:
+        """按配置把上传的 Telegram 会话文件同步到插件数据目录。
+
+        使用 copyfile 做内容级复制（copy2 会附带 chmod/utime 元数据操作，
+        在 NAS/Docker 挂载卷上常因权限触发 Errno 1 Operation not permitted）。
+        """
+        session_files = self.config.get("telegram_session", [])
+        if not (isinstance(session_files, list) and session_files):
+            return
+
+        uploaded_session_path = session_files[0]
+        full_uploaded_path = self._resolve_uploaded_session_path(uploaded_session_path)
+        if not full_uploaded_path:
+            logger.warning(
+                f"[Main] 配置中的会话文件路径不存在: {uploaded_session_path}"
+            )
+            return
+
+        target_session_path = self.plugin_data_dir / "user_session.session"
+        marker_path = self.plugin_data_dir / "user_session.session.source.sha256"
+
+        try:
+            uploaded_digest = self._file_sha256(full_uploaded_path)
+        except Exception as e:
+            logger.warning(f"[Main] 读取上传会话文件失败: {e}")
+            return
+
+        if target_session_path.exists() and self._is_uploaded_session_already_synced(
+            marker_path, uploaded_digest, full_uploaded_path, target_session_path
+        ):
+            return
+
+        try:
+            shutil.copyfile(full_uploaded_path, target_session_path)
+            self._write_session_source_marker(marker_path, uploaded_digest)
+            logger.debug(f"[Main] 已从上传配置同步会话文件: {target_session_path}")
+            # 客户端缓存键使用不带 .session 后缀的 user_session。
+            session_key_path = self.plugin_data_dir / "user_session"
+            TelegramClientWrapper.clear_cache(str(session_key_path))
+            logger.debug("[Main] 会话文件已更新，已清理客户端缓存。")
+        except Exception as e:
+            logger.error(f"[Main] 同步会话文件失败 (可能被占用): {e}")
+
     def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         """初始化插件并装配运行时组件。"""
         super().__init__(context)
@@ -70,44 +185,7 @@ class Main(star.Star):
         self.storage = Storage(self.plugin_data_dir / "data.json")
 
         # 按配置同步上传的 Telegram 会话文件。
-        session_files = self.config.get("telegram_session", [])
-        if session_files and isinstance(session_files, list) and len(session_files) > 0:
-            uploaded_session_path = session_files[0]
-            full_uploaded_path = self._resolve_uploaded_session_path(
-                uploaded_session_path
-            )
-
-            if full_uploaded_path:
-                target_session_path = self.plugin_data_dir / "user_session.session"
-
-                should_copy = True
-                if target_session_path.exists():
-                    try:
-                        if filecmp.cmp(
-                            full_uploaded_path, target_session_path, shallow=False
-                        ):
-                            should_copy = False
-                            logger.debug("[Main] 会话文件未变化，跳过同步。")
-                    except Exception as e:
-                        logger.warning(f"[Main] 比较会话文件失败: {e}")
-
-                if should_copy:
-                    try:
-                        shutil.copy2(full_uploaded_path, target_session_path)
-                        logger.debug(
-                            f"[Main] 已从上传配置同步会话文件: {target_session_path}"
-                        )
-                        # 客户端缓存键使用不带 .session 后缀的 user_session。
-                        session_key_path = self.plugin_data_dir / "user_session"
-                        TelegramClientWrapper.clear_cache(str(session_key_path))
-                        logger.debug("[Main] 会话文件已更新，已清理客户端缓存。")
-
-                    except Exception as e:
-                        logger.error(f"[Main] 同步会话文件失败 (可能被占用): {e}")
-            else:
-                logger.warning(
-                    f"[Main] 配置中的会话文件路径不存在: {full_uploaded_path}"
-                )
+        self._sync_uploaded_session_file()
 
         # TelegramClientWrapper 负责管理 Telegram 客户端连接状态。
         self.client_wrapper = TelegramClientWrapper(self.config, self.plugin_data_dir)
