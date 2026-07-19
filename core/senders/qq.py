@@ -43,7 +43,9 @@ from .qq_media import (
     should_merge_batch_nodes,
 )
 from .qq_reply_preview import (
+    REPLY_UNAVAILABLE_PREVIEW,
     build_reply_preview,
+    build_reply_preview_from_quote,
     get_sender_display_name,
     prefetch_reply_previews,
     reply_media_label,
@@ -70,7 +72,16 @@ from .qq_targets import (
 )
 from .qq_types import SendKind
 
-_ = Plain, ProcessedBatch, File, Image, Record, Video
+_ = (
+    Plain,
+    ProcessedBatch,
+    File,
+    Image,
+    Record,
+    Video,
+    REPLY_UNAVAILABLE_PREVIEW,
+    build_reply_preview_from_quote,
+)
 
 DEFAULT_QQ_SEND_TIMEOUT_SEC = 30.0
 QQ_LARGE_FILE_GRACE_THRESHOLD_BYTES = 10 * 1024 * 1024

@@ -40,7 +40,10 @@
 - `QQLogPolicy`: 把 QQ 发送路径中原本散落的 `logger.info(...)` 集中管理，通过 `debug_enabled()` 回调决定是否输出诊断日志，避免正常运行时日志冗余。`/tg debug` 命令直接控制此开关。
 
 ### qq_reply_preview.py（回复预览）
-- `build_reply_preview` / `get_sender_display_name` / `prefetch_reply_previews` / `reply_media_label`: 因为 QQ 原生不支持高级回复样式，这里负责全内容预抓取并构造内联前置（带 Marker node）伪造"引用的原消息"。详见 `docs/superpowers/specs/2026-04-16-reply-quote-full-content-design.md`。
+- `build_reply_preview` / `build_reply_preview_from_quote` / `get_sender_display_name` / `prefetch_reply_previews` / `reply_media_label` / `REPLY_UNAVAILABLE_PREVIEW`
+- QQ / OneBot 11 无 Telegram 式跨消息引用气泡，因此统一把被回复内容折叠为内联前缀（`↩ 回复 ...`）。
+- 解析顺序：本批次已有消息 → `get_messages` 拉取 → `quote_text` 片段 → 占位 `[原消息不可用]` + 日志。
+- 同批次内的被回复消息**不会再被跳过**（历史 bug：`existing_ids` 过滤导致 GH#22 场景只转发回复正文）。
 
 ### qq_runtime.py（平台运行时探测）
 - `get_platform_instances` / `get_platform_bot` / `select_qq_platform`: 从 AstrBot 上下文发现可用 QQ 平台实例并选出最合适的平台与 bot，屏蔽平台管理器的多种实现细节差异。
@@ -94,6 +97,7 @@
 - `telegram.py` — `TelegramSender`
 
 ## 变更记录 (Changelog)
+- **2026-07-19**: 修复回复引用（GH#22）：同批被回复消息本地构造预览；抓取失败降级 `quote_text` / `[原消息不可用]`；`exclude_text_on_media` 时仍保留引用前缀。
 - **2026-07-04 (补扫)**: 新增 `qq_circuit` / `qq_dispatcher` / `qq_file_fallback` 三个独立单测文件；更新测试与质量章节，关闭既有测试缺口。
 - **2026-07-04**: 补全所有 13 个子模块的职责描述（batch_builder / send_prep / send_summary / runtime / targets / reply_preview / log_policy / file_fallback / dispatcher / types）；追加测试与 FAQ 章节。
 - **2026-06-08**: 补充创建 `core/senders` 文档，重点补全了 `qq_media` 的路径映射及补丁原理和 `qq_circuit` 的熔断原理。

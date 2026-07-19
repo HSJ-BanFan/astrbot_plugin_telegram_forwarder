@@ -52,6 +52,7 @@
   * **灵活过滤**: 内置关键词黑名单与正则表达式过滤引擎。
   * **冷启动支持**: 可指定历史日期开始搬运。在频道设置中指定 `start_time` (格式: YYYY-MM-DD) 即可。
   * **转发查重**: 自动识别频道间的转发关系，避免监控多个关联频道时出现重复消息。
+  * **回复引用**: Telegram 回复消息转发到 QQ 时，会以内联前缀形式附带被回复内容摘要（`↩ 回复 ...`）；QQ / OneBot 不支持原生跨消息引用气泡，故为文本降级。
   * **协议登录**: 使用 Telethon 客户端登录，支持转发您已加入的所有频道。
 
 ---
@@ -331,6 +332,8 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
   * **A**: 这是 AstrBot 与 NapCat 部署环境不同（如 NapCat 跑在 Docker 中）导致 NapCat 无法访问 AstrBot 侧的文件路径。请参阅上文「[配置说明 → 6. 跨环境部署：路径映射](#6-跨环境部署路径映射)」完成目录挂载与 `path_mapping` 配置。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
+* **Q: 转发 Telegram 回复消息到 QQ 后没有“引用气泡”？**
+  * **A**: QQ / OneBot 11 不支持 Telegram 那种跨消息原生引用。插件会把被回复内容压缩成内联前缀（`↩ 回复 发送者:\n摘要`）拼进本条消息。若原消息已删除或抓取失败，会降级为 `quote_text` 片段或占位文案 `[原消息不可用]`，并在日志中标注。Telegram → Telegram 转发走原生 `forward_messages`，引用关系由 Telegram 自身保留。
 
 ---
 

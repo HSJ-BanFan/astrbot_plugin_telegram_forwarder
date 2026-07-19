@@ -709,21 +709,35 @@ class TestReplyPreview:
         assert result.endswith("...")
 
     @pytest.mark.asyncio
-    async def test_prefetch_reply_previews_skips_existing_batch_message(self, sender):
-        source = type("Msg", (), {"id": 1, "reply_to": None})()
-        reply_header = type("Reply", (), {"reply_to_msg_id": 1})()
-        reply_msg = type("Msg", (), {"id": 2, "reply_to": reply_header})()
+    async def test_prefetch_reply_previews_uses_same_batch_message(self, sender):
+        """同批次内的被回复消息应本地构造预览，不再跳过、也不再请求网络。"""
+        user = type("User", (), {"first_name": "Alice"})()
+        source = type(
+            "Msg",
+            (),
+            {
+                "id": 1,
+                "reply_to": None,
+                "sender": user,
+                "post_author": None,
+                "text": "这是一段正常的信息",
+            },
+        )()
+        reply_header = type("Reply", (), {"reply_to_msg_id": 1, "quote_text": None})()
+        reply_msg = type(
+            "Msg", (), {"id": 2, "reply_to": reply_header, "text": "测试"}
+        )()
         sender.downloader.client = MagicMock()
         sender.downloader.client.get_messages = AsyncMock()
 
         result = await sender._prefetch_reply_previews([source, reply_msg], "demo")
 
-        assert result == {}
+        assert result == {1: "↩ 回复 Alice:\n这是一段正常的信息"}
         sender.downloader.client.get_messages.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_prefetch_reply_previews_fetches_missing_reply(self, sender):
-        reply_header = type("Reply", (), {"reply_to_msg_id": 99})()
+        reply_header = type("Reply", (), {"reply_to_msg_id": 99, "quote_text": None})()
         msg = type("Msg", (), {"id": 2, "reply_to": reply_header})()
         quoted = type(
             "Msg",
@@ -739,8 +753,9 @@ class TestReplyPreview:
         sender.downloader.client.get_messages.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_prefetch_reply_previews_ignores_fetch_failure(self, sender):
-        reply_header = type("Reply", (), {"reply_to_msg_id": 99})()
+    async def test_prefetch_reply_previews_falls_back_on_fetch_failure(self, sender):
+        """抓取失败时使用明确占位文案，而不是静默丢弃引用。"""
+        reply_header = type("Reply", (), {"reply_to_msg_id": 99, "quote_text": None})()
         msg = type("Msg", (), {"id": 2, "reply_to": reply_header})()
         sender.downloader.client = MagicMock()
         sender.downloader.client.get_messages = AsyncMock(
@@ -749,7 +764,24 @@ class TestReplyPreview:
 
         result = await sender._prefetch_reply_previews([msg], "demo")
 
-        assert result == {}
+        assert result == {99: "↩ 回复:\n[原消息不可用]"}
+
+    @pytest.mark.asyncio
+    async def test_prefetch_reply_previews_uses_quote_text_when_fetch_fails(
+        self, sender
+    ):
+        reply_header = type(
+            "Reply", (), {"reply_to_msg_id": 99, "quote_text": "片段引用"}
+        )()
+        msg = type("Msg", (), {"id": 2, "reply_to": reply_header})()
+        sender.downloader.client = MagicMock()
+        sender.downloader.client.get_messages = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        result = await sender._prefetch_reply_previews([msg], "demo")
+
+        assert result == {99: "↩ 回复:\n片段引用"}
 
 
 class TestAudioBatchSending:
@@ -1946,7 +1978,7 @@ class TestReplyPreviewIntegration:
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
         sender.bot = bot
 
-        reply_header = type("Reply", (), {"reply_to_msg_id": 99})()
+        reply_header = type("Reply", (), {"reply_to_msg_id": 99, "quote_text": None})()
         msg = type(
             "Msg", (), {"id": 2, "text": "reply body", "reply_to": reply_header}
         )()
@@ -1966,6 +1998,102 @@ class TestReplyPreviewIntegration:
         ]
         assert any("↩ 回复:" in text for text in texts)
         assert any("quoted text" in text for text in texts)
+        assert any("reply body" in text for text in texts)
+
+    @pytest.mark.asyncio
+    async def test_same_batch_reply_uses_local_source_preview(self, sender, qq_module):
+        """GH#22 场景：同批 A 与回复 A 的 B 一起转发时，B 应带上 A 的引用。"""
+        sender.context.send_message = AsyncMock()
+        sender._bootstrap_qq_runtime = AsyncMock()
+        sender._ensure_node_name = AsyncMock(return_value="bot")
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        sender.downloader.client = MagicMock()
+        sender.downloader.client.get_messages = AsyncMock()
+        bot = MagicMock()
+        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        sender.bot = bot
+
+        source = type(
+            "Msg",
+            (),
+            {
+                "id": 1,
+                "text": "这是一段正常的信息",
+                "reply_to": None,
+                "sender": None,
+                "post_author": None,
+            },
+        )()
+        reply_header = type("Reply", (), {"reply_to_msg_id": 1, "quote_text": None})()
+        reply = type(
+            "Msg", (), {"id": 2, "text": "测试消息", "reply_to": reply_header}
+        )()
+
+        await sender.send(
+            batches=[[source, reply]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
+        )
+
+        def _collect_texts(components):
+            texts = []
+            for component in components:
+                if hasattr(component, "text"):
+                    texts.append(component.text)
+                content = getattr(component, "content", None)
+                if content:
+                    texts.extend(_collect_texts(content))
+                nodes = getattr(component, "nodes", None) or getattr(
+                    component, "value", None
+                )
+                if isinstance(nodes, list):
+                    texts.extend(_collect_texts(nodes))
+            return texts
+
+        all_texts = []
+        for call in sender.context.send_message.await_args_list:
+            chain = call.args[1]
+            all_texts.extend(_collect_texts(chain.chain))
+        joined = "\n".join(all_texts)
+        assert "这是一段正常的信息" in joined
+        assert "测试消息" in joined
+        assert "↩ 回复" in joined
+        sender.downloader.client.get_messages.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reply_preview_placeholder_when_source_missing(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock()
+        sender._bootstrap_qq_runtime = AsyncMock()
+        sender._ensure_node_name = AsyncMock(return_value="bot")
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        sender.downloader.client = MagicMock()
+        sender.downloader.client.get_messages = AsyncMock(return_value=[None])
+        bot = MagicMock()
+        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        sender.bot = bot
+
+        reply_header = type("Reply", (), {"reply_to_msg_id": 99, "quote_text": None})()
+        msg = type(
+            "Msg", (), {"id": 2, "text": "reply body", "reply_to": reply_header}
+        )()
+
+        await sender.send(
+            batches=[[msg]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
+        )
+
+        sent_chain = sender.context.send_message.await_args_list[0].args[1]
+        texts = [
+            component.text
+            for component in sent_chain.chain
+            if hasattr(component, "text")
+        ]
+        assert any("[原消息不可用]" in text for text in texts)
         assert any("reply body" in text for text in texts)
 
 
