@@ -20,6 +20,7 @@ from astrbot.api.message_components import (
 )
 
 from ...common.text_tools import clean_telegram_text, is_numeric_channel_id
+from .qq_reply_preview import REPLY_UNAVAILABLE_PREVIEW
 
 if TYPE_CHECKING:
     from .qq import QQSender
@@ -143,13 +144,26 @@ async def build_processed_batches(
 
                 should_exclude_text = exclude_text_on_media and has_any_attachment
 
+                # 回复引用：即使开启 exclude_text_on_media（丢弃本条媒体附带正文），
+                # 仍保留被回复内容的内联预览，避免 QQ 端只剩媒体而丢失上下文。
                 reply_header = getattr(msg, "reply_to", None)
                 reply_id = getattr(reply_header, "reply_to_msg_id", None)
                 reply_preview = None
                 if reply_id is not None:
                     reply_preview = reply_preview_cache.get(reply_id)
-                if reply_preview and not should_exclude_text:
-                    text_parts.insert(0, reply_preview)
+                    if not reply_preview:
+                        # prefetch 已尽量降级；此处再兜一层，防止未来路径漏写 cache
+                        reply_preview = REPLY_UNAVAILABLE_PREVIEW
+                        logger.info(
+                            f"[QQSender] 批次内 reply 预览缺失，使用占位: "
+                            f"msg={getattr(msg, 'id', None)} reply_to={reply_id}"
+                        )
+                if reply_preview:
+                    if should_exclude_text:
+                        # 正文被排除时，把引用单独挂到节点上，再继续处理媒体
+                        current_node_components.append(Plain(reply_preview + "\n"))
+                    else:
+                        text_parts.insert(0, reply_preview)
 
                 # 头部只应该在一个逻辑展示块里出现一次。
                 # 单频道时在每个批次的第一条消息前添加头部；混合大合并时则只在整个合并序列的第一条前添加，
