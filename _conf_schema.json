@@ -168,15 +168,15 @@
                     "filter_keywords": {
                         "type": "list",
                         "item_type": "string",
-                        "description": "过滤关键词",
+                        "description": "过滤关键词（黑名单）",
                         "default": [],
-                        "hint": "包含这些关键词的消息将被丢弃"
+                        "hint": "黑名单：包含这些词的消息将被丢弃。不是「只转发这些词」。若要只保留含关键词的消息，请用下方 filter_regex 负向正则，例如 ^(?!.*(?:关键词1|关键词2)).*$"
                     },
                     "filter_regex": {
                         "type": "string",
-                        "description": "正则过滤",
+                        "description": "正则过滤（黑名单）",
                         "default": "",
-                        "hint": "Python 正则表达式过滤"
+                        "hint": "黑名单：Python 正则 re.search 命中即丢弃。只转发含关键词示例：^(?!.*(?:监听|更新)).*$ （不包含这些词的消息全部丢弃）"
                     },
                     "filter_spoiler_messages": {
                         "description": "过滤遮罩/剧透消息",
@@ -203,15 +203,15 @@
                     "monitor_keywords": {
                         "type": "list",
                         "item_type": "string",
-                        "description": "监听关键词",
+                        "description": "监听关键词（仅加速）",
                         "default": [],
-                        "hint": "命中后会立即触发转发"
+                        "hint": "仅加速：命中后立即转发。不会过滤未命中的消息。若要「只转发关键词」，请改用 filter_regex 负向正则"
                     },
                     "monitor_regex": {
                         "type": "string",
-                        "description": "监听正则",
+                        "description": "监听正则（仅加速）",
                         "default": "",
-                        "hint": "命中后会立即触发转发"
+                        "hint": "仅加速：命中后立即转发。不会过滤未命中的消息"
                     },
                     "target_qq_sessions": {
                         "description": "该频道专属 QQ 目标会话列表",
@@ -426,28 +426,28 @@
             "filter_keywords": {
                 "type": "list",
                 "item_type": "string",
-                "description": "过滤关键词",
+                "description": "过滤关键词（黑名单）",
                 "default": [],
-                "hint": "包含这些关键词的消息将被丢弃"
+                "hint": "黑名单：包含这些词的消息将被丢弃。不是「只转发这些词」。若要只保留含关键词的消息，请用 filter_regex 负向正则，例如 ^(?!.*(?:关键词1|关键词2)).*$"
             },
             "filter_regex": {
                 "type": "string",
-                "description": "正则过滤",
+                "description": "正则过滤（黑名单）",
                 "default": "",
-                "hint": "Python 正则表达式过滤。留空则不启用。"
+                "hint": "黑名单：Python 正则 re.search 命中即丢弃。留空不启用。只转发含关键词示例：^(?!.*(?:监听|更新)).*$"
             },
             "monitor_keywords": {
                 "type": "list",
                 "item_type": "string",
-                "description": "监听关键词",
+                "description": "监听关键词（仅加速）",
                 "default": [],
-                "hint": "命中后会立即触发转发"
+                "hint": "仅加速：命中后立即转发。不会过滤未命中的消息。若要「只转发关键词」，请改用 filter_regex 负向正则"
             },
             "monitor_regex": {
                 "type": "string",
-                "description": "监听正则",
+                "description": "监听正则（仅加速）",
                 "default": "",
-                "hint": "命中后会立即触发转发"
+                "hint": "仅加速：命中后立即转发。不会过滤未命中的消息"
             }
         }
     },
