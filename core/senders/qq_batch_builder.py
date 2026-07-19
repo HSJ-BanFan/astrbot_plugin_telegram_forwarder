@@ -141,6 +141,16 @@ async def build_processed_batches(
                     has_any_attachment = True
                     media_components.extend(sender._dispatch_media_file(fpath))
 
+                # 动画贴纸 / 自定义动图表情等 QQ 无法展示的媒体：下载器会跳过。
+                # 补一条文本说明，避免合并转发里出现空白节点或「该消息类型暂不支持查看」。
+                skipped_media = getattr(msg, "_tgf_skipped_media", None)
+                if not has_any_attachment and skipped_media:
+                    label = {
+                        "sticker": "[动画贴纸，QQ 暂不支持显示]",
+                        "animated_or_custom_emoji": "[动图表情，QQ 暂不支持显示]",
+                    }.get(str(skipped_media), "[不支持的媒体，已跳过]")
+                    media_components.append(Plain(label + "\n"))
+
                 should_exclude_text = exclude_text_on_media and has_any_attachment
 
                 reply_header = getattr(msg, "reply_to", None)

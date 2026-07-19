@@ -158,12 +158,14 @@ async def dispatch_processed_batches_to_targets(
                     ]
                     for bd in chunk_send_batches:
                         chunk_nodes.extend(bd["nodes_data"])
-                    # 视频可以先尝试进入大合并；如果 QQ 端拒收，外层异常处理会降级为逐批发送。
-                    # 音频和普通文件仍然保守拆发，避免整块合并失败。
+                    # 视频/音频/普通文件在 NapCat 合并转发中兼容性差：
+                    # - 大视频 >100MB 会触发 Highway「请使用文件上传」
+                    # - 路径不可达时可能留下「该消息类型暂不支持查看」占位
+                    # 因此与音频、文件一样保守拆发，避免整块合并失败或半残节点。
                     chunk_blocks_big_merge = any(
                         batch_data.get("contains_audio")
                         or any(
-                            isinstance(component, (Record, File))
+                            isinstance(component, (Record, File, Video))
                             for node_components in batch_data["nodes_data"]
                             for component in node_components
                         )

@@ -18,6 +18,10 @@ from .qq_batch_builder import ProcessedBatchData
 
 _ = Plain
 
+# NapCat / QQ Highway 对「视频消息」有约 100MB 硬限制（日志：视频文件过大: x MB > 100 MB，请使用文件上传）。
+# 超过该阈值时改为 File 发送，避免合并转发或 Video 通道直接失败后留下「该消息类型暂不支持查看」。
+QQ_VIDEO_AS_VIDEO_MAX_BYTES = 100 * 1024 * 1024
+
 _logged_path_mapping_states: set[str] = set()
 
 
@@ -288,6 +292,35 @@ def dispatch_media_file(
         return [record]
     if ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
         mapped = map_path(fpath)
+        file_size = _safe_file_size(fpath)
+        # 超过 NapCat 视频通道上限时走 File，避免 Highway「>100MB 请用文件上传」与合并节点占位失败。
+        if file_size is not None and file_size > QQ_VIDEO_AS_VIDEO_MAX_BYTES:
+            component = _patch_file_to_dict(
+                File(
+                    file=mapped,
+                    url="",
+                    name=path_obj.name,
+                )
+            )
+            _set_component_attr(component, "_tgf_source_path", fpath)
+            size_mb = file_size / (1024 * 1024)
+            limit_mb = QQ_VIDEO_AS_VIDEO_MAX_BYTES / (1024 * 1024)
+            logger.warning(
+                f"[QQSender] Video exceeds QQ video-message limit, sending as File: "
+                f"source_path={fpath!r}, mapped_path={mapped!r}, "
+                f"file_size_mb={size_mb:.2f}, limit_mb={limit_mb:.0f}"
+            )
+            if log_policy is not None:
+                log_policy.log_video_dispatch_prepared(
+                    source_path=fpath,
+                    mapped_path=mapped,
+                    file=getattr(component, "file", None),
+                    ext=ext,
+                    file_size=file_size,
+                    mapped_changed=mapped != fpath,
+                )
+            return [component]
+
         if mapped != fpath:
             video = Video(file=_as_file_uri(mapped))
         else:
@@ -299,14 +332,14 @@ def dispatch_media_file(
                 mapped_path=mapped,
                 file=getattr(video, "file", None),
                 ext=ext,
-                file_size=_safe_file_size(fpath),
+                file_size=file_size,
                 mapped_changed=mapped != fpath,
             )
         else:
             logger.info(
                 f"[QQSender] Video dispatch prepared: source_path={fpath!r}, "
                 f"mapped_path={mapped!r}, file={getattr(video, 'file', None)!r}, "
-                f"ext={ext!r}, file_size={_safe_file_size(fpath)}, "
+                f"ext={ext!r}, file_size={file_size}, "
                 f"mapped_changed={mapped != fpath}"
             )
         return [video]
