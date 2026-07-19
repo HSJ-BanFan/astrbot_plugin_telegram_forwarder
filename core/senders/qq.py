@@ -23,6 +23,7 @@ except ImportError:
     path_Mapping = None
 
 from ..downloader import MediaDownloader
+from .auto_recall import AutoRecallManager, capture_bot_message_ids
 from .qq_batch_builder import (
     ProcessedBatch,
     ProcessedBatchData,
@@ -118,11 +119,16 @@ class QQSender:
     """
 
     def __init__(
-        self, context: star.Context, config: AstrBotConfig, downloader: MediaDownloader
+        self,
+        context: star.Context,
+        config: AstrBotConfig,
+        downloader: MediaDownloader,
+        auto_recall: AutoRecallManager | None = None,
     ):
         self.context = context
         self.config = config
         self.downloader = downloader
+        self.auto_recall = auto_recall
         self._group_locks = {}  # 群锁，防止并发发送
         self.platform_id = None  # 动态捕获的平台 ID
         self.bot = None  # 动态捕获的 bot 实例
@@ -130,6 +136,7 @@ class QQSender:
         self._target_circuit: dict[str, dict[str, float | int]] = {}
         self._debug_override: dict[str, bool] = {}
         self._log_policy = QQLogPolicy(self._debug_enabled)
+        self._active_recall_source_channel = ""
 
     async def _ensure_node_name(self, bot, cache_fallback: bool = False):
         """获取 bot 昵称"""
@@ -253,11 +260,23 @@ class QQSender:
         payload_file = getattr(primary_component, "file", None)
         if timeout_sec is None:
             timeout_sec = self._resolve_send_timeout_sec(send_kind, components)
+        captured_ids: list[int] = []
         try:
-            await asyncio.wait_for(
-                self.context.send_message(unified_msg_origin, message_chain),
-                timeout=timeout_sec,
-            )
+            if (
+                self.auto_recall is not None
+                and self.auto_recall.is_enabled()
+                and self.bot is not None
+            ):
+                async with capture_bot_message_ids(self.bot) as captured_ids:
+                    await asyncio.wait_for(
+                        self.context.send_message(unified_msg_origin, message_chain),
+                        timeout=timeout_sec,
+                    )
+            else:
+                await asyncio.wait_for(
+                    self.context.send_message(unified_msg_origin, message_chain),
+                    timeout=timeout_sec,
+                )
         except asyncio.TimeoutError:
             duration = time.monotonic() - started_at
             logger.warning(
@@ -276,6 +295,14 @@ class QQSender:
             source_path=source_path,
             duration=duration,
         )
+        if captured_ids and self.auto_recall is not None:
+            self.auto_recall.schedule(
+                platform="qq",
+                message_ids=captured_ids,
+                target=unified_msg_origin,
+                source_channel=self._active_recall_source_channel,
+                note=str(send_kind),
+            )
 
     async def _handle_file_send_failure(
         self,
@@ -580,139 +607,144 @@ class QQSender:
         if effective_cfg is None:
             effective_cfg = {}
 
-        strip_links, exclude_text_on_media = self._resolve_text_processing_options(
-            effective_cfg, involved_channels
-        )
-        qq_targets = self._resolve_qq_targets(effective_cfg)
-
-        if not qq_targets or not batches:
-            return QQSendSummary()
-
-        qq_targets = self._normalize_qq_targets(qq_targets)
-        if qq_targets is None:
-            return QQSendSummary()
-
-        session_targets_cfg, numeric_group_ids = self._split_qq_targets(qq_targets)
-        preferred_platform_ids = self._session_platform_ids(session_targets_cfg)
-        if numeric_group_ids or session_targets_cfg:
-            await self._bootstrap_qq_runtime(
-                preferred_platform_ids=preferred_platform_ids
+        previous_recall_source = self._active_recall_source_channel
+        self._active_recall_source_channel = str(src_channel or "")
+        try:
+            strip_links, exclude_text_on_media = self._resolve_text_processing_options(
+                effective_cfg, involved_channels
             )
+            qq_targets = self._resolve_qq_targets(effective_cfg)
 
-        context_target_sessions = self._resolve_context_target_sessions(qq_targets)
-        real_batches = self._flatten_batches(batches)
+            if not qq_targets or not batches:
+                return QQSendSummary()
 
-        if not real_batches:
-            logger.debug("[QQSender] 展平后无有效批次, 跳过发送")
-            return QQSendSummary()
+            qq_targets = self._normalize_qq_targets(qq_targets)
+            if qq_targets is None:
+                return QQSendSummary()
 
-        if not context_target_sessions:
-            failed_batch_indexes = tuple(range(len(real_batches)))
-            return QQSendSummary(
-                failed_batch_indexes=failed_batch_indexes,
-                error_types=dict.fromkeys(
-                    failed_batch_indexes, "unresolved_target_session"
-                ),
-            )
-
-        forward_cfg = self.config.get("forward_config", {})
-        qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
-        (
-            fail_fast_limit,
-            target_circuit_fail_threshold,
-            target_circuit_cooldown_sec,
-        ) = self._resolve_send_limits(forward_cfg)
-
-        logger.debug(
-            f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次"
-        )
-
-        self_id, node_name = await self._resolve_bot_send_identity()
-
-        is_mixed_big_merge = bool(involved_channels and len(involved_channels) > 1)
-
-        context_target_set = set(context_target_sessions)
-        target_successes = {
-            batch_index: {
-                str(target_session)
-                for target_session in (completed_target_sessions_by_batch or {}).get(
-                    batch_index, ()
+            session_targets_cfg, numeric_group_ids = self._split_qq_targets(qq_targets)
+            preferred_platform_ids = self._session_platform_ids(session_targets_cfg)
+            if numeric_group_ids or session_targets_cfg:
+                await self._bootstrap_qq_runtime(
+                    preferred_platform_ids=preferred_platform_ids
                 )
-                if str(target_session) in context_target_set
-            }
-            for batch_index in range(len(real_batches))
-        }
-        deferred_batch_indexes: set[int] = set()
 
-        if all(
-            len(success_sessions) == len(context_target_sessions)
-            for success_sessions in target_successes.values()
-        ):
-            logger.debug("[QQSender] 本轮批次的 QQ 目标均已完成，跳过重复发送")
+            context_target_sessions = self._resolve_context_target_sessions(qq_targets)
+            real_batches = self._flatten_batches(batches)
+
+            if not real_batches:
+                logger.debug("[QQSender] 展平后无有效批次, 跳过发送")
+                return QQSendSummary()
+
+            if not context_target_sessions:
+                failed_batch_indexes = tuple(range(len(real_batches)))
+                return QQSendSummary(
+                    failed_batch_indexes=failed_batch_indexes,
+                    error_types=dict.fromkeys(
+                        failed_batch_indexes, "unresolved_target_session"
+                    ),
+                )
+
+            forward_cfg = self.config.get("forward_config", {})
+            qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
+            (
+                fail_fast_limit,
+                target_circuit_fail_threshold,
+                target_circuit_cooldown_sec,
+            ) = self._resolve_send_limits(forward_cfg)
+
+            logger.debug(
+                f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次"
+            )
+
+            self_id, node_name = await self._resolve_bot_send_identity()
+
+            is_mixed_big_merge = bool(involved_channels and len(involved_channels) > 1)
+
+            context_target_set = set(context_target_sessions)
+            target_successes = {
+                batch_index: {
+                    str(target_session)
+                    for target_session in (
+                        completed_target_sessions_by_batch or {}
+                    ).get(batch_index, ())
+                    if str(target_session) in context_target_set
+                }
+                for batch_index in range(len(real_batches))
+            }
+            deferred_batch_indexes: set[int] = set()
+
+            if all(
+                len(success_sessions) == len(context_target_sessions)
+                for success_sessions in target_successes.values()
+            ):
+                logger.debug("[QQSender] 本轮批次的 QQ 目标均已完成，跳过重复发送")
+                return self._build_send_summary(
+                    context_target_sessions=context_target_sessions,
+                    target_successes=target_successes,
+                    target_failures={},
+                    deferred_batch_indexes=deferred_batch_indexes,
+                )
+
+            build_result = await build_processed_batches(
+                sender=self,
+                real_batches=real_batches,
+                src_channel=src_channel,
+                display_name=display_name,
+                involved_channels=involved_channels,
+                strip_links=strip_links,
+                exclude_text_on_media=exclude_text_on_media,
+            )
+            processed_batches = build_result.processed_batches
+            target_failures = build_result.target_failures
+
+            use_big_merge = (qq_merge_threshold > 1) and (
+                len(processed_batches) >= qq_merge_threshold
+            )
+            if use_big_merge and not is_mixed_big_merge:
+                logger.info(
+                    f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发"
+                )
+
+            try:
+                dispatch_result = await dispatch_processed_batches_to_targets(
+                    context_target_sessions=context_target_sessions,
+                    real_batch_count=len(real_batches),
+                    processed_batches=processed_batches,
+                    target_successes=target_successes,
+                    target_failures=target_failures,
+                    deferred_batch_indexes=deferred_batch_indexes,
+                    use_big_merge=use_big_merge,
+                    is_mixed_big_merge=is_mixed_big_merge,
+                    forward_cfg=forward_cfg,
+                    self_id=self_id,
+                    node_name=node_name,
+                    get_lock=self._get_lock,
+                    target_is_open=self._target_is_open,
+                    record_target_success=self._record_target_success,
+                    record_target_failure=self._record_target_failure,
+                    classify_send_error=self._classify_send_error,
+                    send_processed_batch_fn=self._send_processed_batch,
+                    send_message_fn=self._send_with_timeout,
+                    fail_fast_limit=fail_fast_limit,
+                    target_circuit_fail_threshold=target_circuit_fail_threshold,
+                    target_circuit_cooldown_sec=target_circuit_cooldown_sec,
+                    log_policy=self._log_policy,
+                )
+                target_successes = dispatch_result.target_successes
+                target_failures = dispatch_result.target_failures
+                deferred_batch_indexes = dispatch_result.deferred_batch_indexes
+            finally:
+                self._cleanup_processed_batches(processed_batches)
+
             return self._build_send_summary(
                 context_target_sessions=context_target_sessions,
                 target_successes=target_successes,
-                target_failures={},
-                deferred_batch_indexes=deferred_batch_indexes,
-            )
-
-        build_result = await build_processed_batches(
-            sender=self,
-            real_batches=real_batches,
-            src_channel=src_channel,
-            display_name=display_name,
-            involved_channels=involved_channels,
-            strip_links=strip_links,
-            exclude_text_on_media=exclude_text_on_media,
-        )
-        processed_batches = build_result.processed_batches
-        target_failures = build_result.target_failures
-
-        use_big_merge = (qq_merge_threshold > 1) and (
-            len(processed_batches) >= qq_merge_threshold
-        )
-        if use_big_merge and not is_mixed_big_merge:
-            logger.info(
-                f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发"
-            )
-
-        try:
-            dispatch_result = await dispatch_processed_batches_to_targets(
-                context_target_sessions=context_target_sessions,
-                real_batch_count=len(real_batches),
-                processed_batches=processed_batches,
-                target_successes=target_successes,
                 target_failures=target_failures,
                 deferred_batch_indexes=deferred_batch_indexes,
-                use_big_merge=use_big_merge,
-                is_mixed_big_merge=is_mixed_big_merge,
-                forward_cfg=forward_cfg,
-                self_id=self_id,
-                node_name=node_name,
-                get_lock=self._get_lock,
-                target_is_open=self._target_is_open,
-                record_target_success=self._record_target_success,
-                record_target_failure=self._record_target_failure,
-                classify_send_error=self._classify_send_error,
-                send_processed_batch_fn=self._send_processed_batch,
-                send_message_fn=self._send_with_timeout,
-                fail_fast_limit=fail_fast_limit,
-                target_circuit_fail_threshold=target_circuit_fail_threshold,
-                target_circuit_cooldown_sec=target_circuit_cooldown_sec,
-                log_policy=self._log_policy,
             )
-            target_successes = dispatch_result.target_successes
-            target_failures = dispatch_result.target_failures
-            deferred_batch_indexes = dispatch_result.deferred_batch_indexes
         finally:
-            self._cleanup_processed_batches(processed_batches)
-
-        return self._build_send_summary(
-            context_target_sessions=context_target_sessions,
-            target_successes=target_successes,
-            target_failures=target_failures,
-            deferred_batch_indexes=deferred_batch_indexes,
-        )
+            self._active_recall_source_channel = previous_recall_source
 
     @staticmethod
     def _absolute_lexical_path(path: str | Path) -> Path:

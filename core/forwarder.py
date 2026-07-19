@@ -18,6 +18,7 @@ from .client import TelegramClientWrapper
 from .downloader import MediaDownloader
 from .filters.message_filter import MessageFilter
 from .mergers import MessageMerger
+from .senders.auto_recall import AutoRecallManager
 from .senders.qq import QQSender, QQSendSummary
 from .senders.telegram import TelegramSender
 
@@ -55,9 +56,21 @@ class Forwarder:
         # 初始化组件
         self.downloader = MediaDownloader(self.client, plugin_data_dir)
 
+        # 自动撤回管理器：发送成功后登记，由周期任务到期执行
+        self.auto_recall = AutoRecallManager(
+            config=config,
+            storage=storage,
+            get_qq_bot=lambda: getattr(self.qq_sender, "bot", None),
+            get_tg_client=lambda: self.client_wrapper.client,
+        )
+
         # 初始化发送器
-        self.tg_sender = TelegramSender(self.client, config)
-        self.qq_sender = QQSender(self.context, config, self.downloader)
+        self.tg_sender = TelegramSender(
+            self.client, config, auto_recall=self.auto_recall
+        )
+        self.qq_sender = QQSender(
+            self.context, config, self.downloader, auto_recall=self.auto_recall
+        )
 
         # 初始化过滤器和合并引擎
         self.message_filter = MessageFilter(config)
@@ -93,6 +106,8 @@ class Forwarder:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
+        if hasattr(self, "auto_recall"):
+            self.auto_recall.reload_config(self.config)
         active_channels = self._active_source_channel_names()
         self.storage.reset_inactive_channels(active_channels)
         logger.info("[Forwarder] 运行时配置组件已刷新。")
@@ -1050,6 +1065,18 @@ class Forwarder:
                 if item["channel"] == src_channel and item["id"] in msg_ids
             ]
         return self._completed_qq_targets_for_items(pending_items)
+
+    async def process_auto_recalls(self) -> dict[str, int]:
+        """处理到期的自动撤回任务。"""
+        if self._stopping:
+            return {"due": 0, "success": 0, "failed": 0, "skipped": 0}
+        if not hasattr(self, "auto_recall"):
+            return {"due": 0, "success": 0, "failed": 0, "skipped": 0}
+        try:
+            return await self.auto_recall.process_due()
+        except Exception as exc:
+            logger.warning(f"[Forwarder] 自动撤回任务异常: {exc}")
+            return {"due": 0, "success": 0, "failed": 0, "skipped": 0}
 
     async def send_pending_messages(
         self,

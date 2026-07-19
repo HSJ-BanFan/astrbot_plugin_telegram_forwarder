@@ -164,6 +164,7 @@ def load_forwarder_module():
         "astrbot_plugin_telegram_forwarder.core.downloader",
         "astrbot_plugin_telegram_forwarder.core.senders.telegram",
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
+        "astrbot_plugin_telegram_forwarder.core.senders.auto_recall",
         "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
         "astrbot_plugin_telegram_forwarder.core.mergers",
         "astrbot_plugin_telegram_forwarder.core.forwarder",
@@ -209,6 +210,10 @@ def load_forwarder_module():
             "astrbot_plugin_telegram_forwarder.core.senders.qq",
             QQSender=object,
             QQSendSummary=QQSendSummary,
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.senders.auto_recall",
+            AutoRecallManager=object,
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.filters.message_filter",

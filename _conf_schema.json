@@ -417,6 +417,24 @@
                 "default": true,
                 "hint": "遇到 wrong session ID 等会话异常时，清理缓存并重建连接一次"
             },
+            "auto_recall_enabled": {
+                "description": "转发后自动撤回",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，消息成功转发到 QQ/TG 目标后会在配置窗口到期时自动撤回，降低误转发与被举报风险。默认关闭，避免影响已有部署。"
+            },
+            "auto_recall_window_seconds": {
+                "description": "自动撤回窗口(秒)",
+                "type": "int",
+                "default": 120,
+                "hint": "消息发送成功后多久自动撤回。默认 120 秒（2 分钟）。QQ 侧依赖 OneBot delete_msg，且通常只能撤回机器人自己发出的消息；Telegram 侧依赖目标频道管理权限。"
+            },
+            "auto_recall_max_queue_size": {
+                "description": "自动撤回队列上限",
+                "type": "int",
+                "default": 500,
+                "hint": "待撤回记录的最大条数。超限时丢弃最早的记录，防止积压无限增长。"
+            },
             "curfew_time": {
                 "description": "宵禁时间段",
                 "hint": "在此时间段内将跳过拉取和转发。格式如 23:00-07:00 (支持跨天)。留空禁用。",
