@@ -53,15 +53,20 @@ class Storage:
 
     def _load(self) -> dict:
         """从文件加载持久化数据"""
-        default_data = {"channels": {}}
+        default_data = {"channels": {}, "auto_recall_queue": []}
 
         if self.data_file.exists():
             try:
                 with self.data_file.open(encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"[Storage] 无法加载数据文件: {e}，将使用默认配置")
                 return default_data
+            if not isinstance(data, dict):
+                return default_data
+            data.setdefault("channels", {})
+            data.setdefault("auto_recall_queue", [])
+            return data
 
         return default_data
 
@@ -359,4 +364,19 @@ class Storage:
         self.persistence["channels"][channel_name]["last_post_id"] = last_id
 
         # 立即保存到文件
+        self.save()
+
+    def get_auto_recall_queue(self) -> list:
+        """获取待自动撤回队列。"""
+        queue = self.persistence.get("auto_recall_queue", [])
+        if not isinstance(queue, list):
+            self.persistence["auto_recall_queue"] = []
+            return []
+        return queue
+
+    def set_auto_recall_queue(self, queue: list) -> None:
+        """覆盖写入待自动撤回队列并立即落盘。"""
+        if not isinstance(queue, list):
+            queue = []
+        self.persistence["auto_recall_queue"] = queue
         self.save()

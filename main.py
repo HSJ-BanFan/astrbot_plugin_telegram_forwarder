@@ -580,6 +580,27 @@ class Main(star.Star):
             replace_existing=True,
         )
 
+        # 自动撤回扫描：比发送周期更短，确保接近窗口到期时尽快执行。
+        auto_recall_cfg = forward_config if isinstance(forward_config, dict) else {}
+        auto_recall_enabled = bool(auto_recall_cfg.get("auto_recall_enabled", False))
+        auto_recall_window = int(
+            auto_recall_cfg.get("auto_recall_window_seconds", 120) or 120
+        )
+        if auto_recall_window < 1:
+            auto_recall_window = 120
+        auto_recall_interval = max(5, min(30, auto_recall_window // 4 or 5))
+        recall_start_time = datetime.now() + timedelta(seconds=startup_grace + 8)
+        self.scheduler.add_job(
+            self.forwarder.process_auto_recalls,
+            "interval",
+            seconds=auto_recall_interval,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=recall_start_time,
+            id="telegram_forwarder_auto_recall",
+            replace_existing=True,
+        )
+
         if not self.scheduler.running:
             self.scheduler.start()
 
@@ -589,6 +610,11 @@ class Main(star.Star):
         )
         logger.info(
             f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
+        )
+        logger.info(
+            f" - 自动撤回: {'开启' if auto_recall_enabled else '关闭'} "
+            f"(窗口 {auto_recall_window}s, 扫描每 {auto_recall_interval}s, "
+            f"首次执行: {recall_start_time.strftime('%H:%M:%S')})"
         )
         source_channels = self.config.get("source_channels", [])
         channel_names: list[str] = []

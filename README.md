@@ -53,6 +53,7 @@
   * **冷启动支持**: 可指定历史日期开始搬运。在频道设置中指定 `start_time` (格式: YYYY-MM-DD) 即可。
   * **转发查重**: 自动识别频道间的转发关系，避免监控多个关联频道时出现重复消息。
   * **协议登录**: 使用 Telethon 客户端登录，支持转发您已加入的所有频道。
+  * **定时自动撤回**: 可选在转发成功后按配置窗口（默认 2 分钟）自动撤回目标消息，降低误转发与被举报风险。
 
 ---
 
@@ -272,6 +273,9 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `send_result_strict_ack`| `bool`| `false` | 是否开启严格确认。开启后，只有发送成功的消息才会移出队列。 |
 | `pending_retry_base_delay_sec`| `int`| `60` | 失败重试基础退避延迟 (秒)。 |
 | `pending_retry_max_delay_sec`| `int`| `1800` | 失败重试最大延迟 (秒)。 |
+| `auto_recall_enabled` | `bool` | `false` | 是否在转发成功后自动撤回目标消息（防误转/防举报）。默认关闭。 |
+| `auto_recall_window_seconds` | `int` | `120` | 自动撤回窗口（秒），默认 120（2 分钟）。 |
+| `auto_recall_max_queue_size` | `int` | `500` | 待撤回队列上限，超限丢弃最早记录。 |
 | `curfew_time` | `string` | `""` | 宵禁时间段 (例如 `23:00-07:00`)，在该时间段内不抓取和发送消息。 |
 | `filter_keywords` | `list` | `[]` | 全局过滤关键词列表。 |
 | `filter_regex` | `string` | `""` | 全局过滤正则表达式。 |
