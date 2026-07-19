@@ -231,6 +231,46 @@ class TestDispatchSimplePath:
         # 空字符串目标被跳过，只对 "g1" 发送一次
         send_batch.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_big_merge_splits_when_video_present(self, monkeypatch):
+        """大合并块含 Video 时不再走 Nodes，改为逐批 send_processed_batch。"""
+        monkeypatch.setattr(asyncio, "sleep", _nosleep)
+        m = load_dispatcher_module()
+        send_batch = AsyncMock()
+        send_message = AsyncMock()
+        video = m.Video(file="a.mp4")
+        batch = _batch(nodes=[[video], [_plain_component()]])
+        successes = {0: set()}
+        await m.dispatch_processed_batches_to_targets(
+            context_target_sessions=["g1"],
+            real_batch_count=1,
+            processed_batches=[batch],
+            target_successes=successes,
+            target_failures={},
+            deferred_batch_indexes=set(),
+            use_big_merge=True,
+            is_mixed_big_merge=False,
+            forward_cfg={"qq_merge_chunk_size": 10, "qq_merge_chunk_delay": 0},
+            self_id=123,
+            node_name="bot",
+            get_lock=lambda s: asyncio.Lock(),
+            target_is_open=lambda s, now: False,
+            record_target_success=MagicMock(),
+            record_target_failure=MagicMock(),
+            classify_send_error=lambda e: "retcode_1200",
+            send_processed_batch_fn=send_batch,
+            send_message_fn=send_message,
+            fail_fast_limit=3,
+            target_circuit_fail_threshold=3,
+            target_circuit_cooldown_sec=300,
+        )
+        send_batch.assert_awaited_once()
+        assert send_batch.await_args.kwargs["allow_forward_nodes"] is False
+        # 不应走 big_merge 的 Nodes 直发
+        for call in send_message.await_args_list:
+            assert call.kwargs.get("send_kind") != "big_merge"
+        assert "g1" in successes[0]
+
 
 class TestSendProcessedBatch:
     @pytest.mark.asyncio

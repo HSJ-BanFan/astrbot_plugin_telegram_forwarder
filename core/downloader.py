@@ -27,19 +27,33 @@ class MediaDownloader:
         if not msg.media:
             return local_files
 
-        # 跳过动画贴纸 (.tgs) 和自定义动图表情 — QQ 无法显示
+        # 跳过动画贴纸 (.tgs) 和自定义动图表情 — QQ 无法显示。
+        # 若仍强行塞进合并转发，QQ 客户端常显示「该消息类型暂不支持查看」。
         _skip_attr_names = {
             "DocumentAttributeAnimated",
             "DocumentAttributeCustomEmoji",
         }
-        if msg.sticker or (
-            hasattr(msg.media, "document")
-            and any(
+        is_sticker = bool(getattr(msg, "sticker", None))
+        is_unsupported_animated = False
+        if hasattr(msg.media, "document"):
+            is_unsupported_animated = any(
                 getattr(a, "type", None) == "animated"
                 or type(a).__name__ in _skip_attr_names
                 for a in getattr(getattr(msg.media, "document", None), "attributes", [])
             )
-        ):
+        if is_sticker or is_unsupported_animated:
+            reason = "sticker" if is_sticker else "animated_or_custom_emoji"
+            try:
+                object.__setattr__(msg, "_tgf_skipped_media", reason)
+            except Exception:
+                try:
+                    setattr(msg, "_tgf_skipped_media", reason)
+                except Exception:
+                    pass
+            logger.info(
+                f"[Downloader] 消息 {getattr(msg, 'id', '?')} 含 QQ 不支持的媒体"
+                f"（{reason}），跳过下载以避免合并转发占位失败。"
+            )
             return local_files
 
         # 检查大小限制 (图片除外)

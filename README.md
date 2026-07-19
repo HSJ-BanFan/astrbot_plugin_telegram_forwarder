@@ -329,6 +329,11 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
   * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。QQ 发送会按本地文件大小自动延长等待时间；超时不会自动重复发送，以避免重复消息。
 * **Q: 文件/音频发送报 `ENOENT: no such file or directory, copyfile ...`？**
   * **A**: 这是 AstrBot 与 NapCat 部署环境不同（如 NapCat 跑在 Docker 中）导致 NapCat 无法访问 AstrBot 侧的文件路径。请参阅上文「[配置说明 → 6. 跨环境部署：路径映射](#6-跨环境部署路径映射)」完成目录挂载与 `path_mapping` 配置。
+* **Q: QQ 里出现「该消息类型暂不支持查看」？**
+  * **A**: 这不是单一 bug，常见有三类原因（可对照插件 / NapCat 日志）：
+    1. **动画贴纸 / 自定义动图表情**（例如鸭子动画）：QQ 无法还原 Telegram sticker / custom emoji，插件会跳过下载并改为文本占位，避免合并转发里出现空白失败节点。
+    2. **视频 > 约 100MB**：NapCat Highway 对「视频消息」有约 100MB 硬限制（日志常见 `视频文件过大: x MB > 100 MB，请使用文件上传`）。插件会把超限视频改走 **文件消息**；仍无法无限兼容超大视频，请同时把 `max_file_size` 配到合理值，或自行压缩后再发。
+    3. **跨环境路径错误 / 合并转发富媒体失败**：日志常见 `ENOENT copyfile`、`rich media transfer failed`、伪造合并转发失败。优先检查 path_mapping 与目录挂载；含视频/文件/音频的批次会**拆出发送**，不再硬塞进合并转发。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 
