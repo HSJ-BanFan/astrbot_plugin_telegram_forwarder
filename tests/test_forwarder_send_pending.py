@@ -267,6 +267,8 @@ def make_forwarder(forwarder_module, storage: FakeStorage, *, strict_ack: bool):
         "has_exclusive_qq_sessions": False,
     }
     forwarder.storage = storage
+    forwarder.downloader = MagicMock()
+    forwarder.downloader.contains_qr_code = AsyncMock(return_value=False)
     forwarder.client = MagicMock()
     forwarder.client.get_messages = AsyncMock(
         side_effect=lambda channel, ids: [
@@ -337,6 +339,35 @@ def test_normalize_target_list_strips_skips_none_and_dedupes():
         "g3",
     ]
     assert forwarder_module.Forwarder._normalize_target_list("g1,g2") == []
+
+
+@pytest.mark.parametrize(
+    ("channel_setting", "expected"),
+    [
+        ("继承全局", True),
+        ("开启", True),
+        ("关闭", False),
+    ],
+)
+def test_effective_config_resolves_qr_filter_channel_override(
+    channel_setting, expected
+):
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    forwarder.config = {
+        "target_qq_session": [],
+        "forward_config": {"filter_qr_code_images": True},
+        "source_channels": [
+            {
+                "channel_username": "demo",
+                "filter_qr_code_images": channel_setting,
+            }
+        ],
+    }
+
+    effective = forwarder._get_effective_config("demo")
+
+    assert effective["filter_qr_code_images"] is expected
 
 
 @pytest.mark.asyncio
@@ -1336,6 +1367,87 @@ async def test_send_pending_removes_filtered_fetched_items_alongside_acked_batch
     removed_ids = sorted(msg_id for _, ids in storage.removed for msg_id in ids)
     assert removed_ids == [601, 602]
     assert storage.pending == []
+
+
+@pytest.mark.asyncio
+async def test_send_pending_drops_entire_album_when_one_image_contains_qr_code():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 611,
+                "time": 2,
+                "grouped_id": 91,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 612,
+                "time": 1,
+                "grouped_id": 91,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["图片"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "filter_qr_code_images": True,
+        "effective_target_qq_sessions": ["test:GroupMessage:1"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.downloader.contains_qr_code = AsyncMock(
+        side_effect=lambda msg: msg.id == 612
+    )
+    forwarder._send_sorted_messages_in_batches = AsyncMock()
+    forwarder.client.get_messages = AsyncMock(
+        return_value=[
+            type(
+                "Msg",
+                (),
+                {
+                    "id": 611,
+                    "text": "first",
+                    "date": 611,
+                    "photo": object(),
+                    "video": None,
+                    "voice": None,
+                    "audio": None,
+                    "document": None,
+                    "reply_markup": None,
+                },
+            )(),
+            type(
+                "Msg",
+                (),
+                {
+                    "id": 612,
+                    "text": "second",
+                    "date": 612,
+                    "photo": object(),
+                    "video": None,
+                    "voice": None,
+                    "audio": None,
+                    "document": None,
+                    "reply_markup": None,
+                },
+            )(),
+        ]
+    )
+
+    await forwarder.send_pending_messages()
+
+    removed_ids = sorted(msg_id for _, ids in storage.removed for msg_id in ids)
+    assert removed_ids == [611, 612]
+    assert storage.pending == []
+    forwarder._send_sorted_messages_in_batches.assert_not_awaited()
 
 
 @pytest.mark.asyncio

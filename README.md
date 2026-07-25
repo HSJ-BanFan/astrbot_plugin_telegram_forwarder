@@ -235,6 +235,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `filter_keywords` | `list` | `[]` | 专属过滤关键词列表，包含这些词的消息将被丢弃。 |
 | `filter_regex` | `string` | `""` | 专属的 Python 正则表达式过滤规则。 |
 | `filter_spoiler_messages`| `string`| `"继承全局"` | 是否过滤剧透/遮罩消息。可选：`继承全局`、`开启`、`关闭`。 |
+| `filter_qr_code_images`| `string`| `"继承全局"` | 是否过滤含二维码的 Telegram 图片。可选：`继承全局`、`开启`、`关闭`；相册中任一图片命中时跳过整个相册。 |
 | `strip_markdown_links`| `string` | `"继承全局"` | 开启后 [文本](链接) 只保留「文本」。可选：`继承全局`、`开启`、`关闭`。 |
 | `monitor_keywords` | `list` | `[]` | 监听关键词，命中后立即触发转发（不受检测间隔限制）。 |
 | `monitor_regex` | `string` | `""` | 监听正则表达式，命中后立即触发转发。 |
@@ -253,6 +254,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `enable_deduplication`| `bool`| `true` | 是否启用转发查重，避免多频道监控时发送重复的转发消息。 |
 | `exclude_text_on_media`| `bool`| `false` | 开启后，包含媒体的消息将只发送媒体，不再发送任何文本。 |
 | `filter_spoiler_messages`| `bool`| `false` | 是否全局过滤剧透/遮罩消息（文本或媒体剧透）。 |
+| `filter_qr_code_images`| `bool`| `false` | 是否在发送前检测并过滤含二维码的 Telegram 图片；相册中任一图片命中时跳过整个相册。 |
 | `strip_markdown_links`| `bool` | `false` | 是否全局剥离 Markdown 链接，仅保留链接标题。 |
 | `forward_types` | `list` | `["文字","图片","视频","音频","文件"]` | 全局允许转发的消息类型。 |
 | `max_file_size` | `float` | `0` | 全局单个媒体文件大小上限限制 (MB)，`0` 为不限制。 |

@@ -1,4 +1,5 @@
 import asyncio
+from io import BytesIO
 from pathlib import Path
 
 from telethon.tl.types import Message
@@ -17,6 +18,53 @@ class MediaDownloader:
         self.client = client
         self.plugin_data_dir = plugin_data_dir
         self.max_file_size = max_file_size
+
+    async def contains_qr_code(self, msg: Message) -> bool:
+        """Check whether a Telegram photo contains a QR code.
+
+        Args:
+            msg: Telegram message whose photo should be inspected.
+
+        Returns:
+            True when a QR code is detected. Non-photo messages, empty downloads,
+            and scan failures return False.
+
+        Raises:
+            asyncio.CancelledError: If the surrounding download task is cancelled.
+        """
+        if not msg.photo:
+            return False
+
+        try:
+            image_bytes = await self.client.download_media(msg, file=bytes)
+            if not image_bytes:
+                return False
+
+            def scan_image() -> bool:
+                """Decode the downloaded image in a worker thread.
+
+                Returns:
+                    True when ZXing decodes a QR code from the image.
+                """
+                import zxingcpp
+                from PIL import Image
+
+                with Image.open(BytesIO(image_bytes)) as image:
+                    return (
+                        zxingcpp.read_barcode(
+                            image, formats=zxingcpp.BarcodeFormat.QRCode
+                        )
+                        is not None
+                    )
+
+            return await asyncio.to_thread(scan_image)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"[Filter] 消息 {msg.id} 二维码检测失败，按未命中继续处理: {e}"
+            )
+            return False
 
     async def download_media(self, msg: Message, max_size_mb: float = 0) -> list[str]:
         """

@@ -19,6 +19,7 @@ export function defaultChannel() {
     filter_keywords: [],
     filter_regex: "",
     filter_spoiler_messages: "继承全局",
+    filter_qr_code_images: "继承全局",
     strip_markdown_links: "继承全局",
     monitor_keywords: [],
     monitor_regex: "",
@@ -106,6 +107,7 @@ export function collectChannels({ keepEmpty = true } = {}) {
         filter_keywords: getList("filter_keywords", current.filter_keywords),
         filter_regex: channelField(card, "filter_regex") ? getText("filter_regex") : current.filter_regex,
         filter_spoiler_messages: getTri("filter_spoiler_messages", current.filter_spoiler_messages),
+        filter_qr_code_images: getTri("filter_qr_code_images", current.filter_qr_code_images),
         strip_markdown_links: getTri("strip_markdown_links", current.strip_markdown_links),
         monitor_keywords: getList("monitor_keywords", current.monitor_keywords),
         monitor_regex: channelField(card, "monitor_regex") ? getText("monitor_regex") : current.monitor_regex,
@@ -199,6 +201,7 @@ export function renderChannels() {
                     <span>忽略全局文本过滤</span>
                   </label>
                   <div class="form-grid">
+                    <label class="field">二维码图片${triStateSelect("filter_qr_code_images", cfg.filter_qr_code_images)}</label>
                     <label class="field">过滤关键词<textarea data-channel-field="filter_keywords" rows="4">${escapeHtml(joinList(cfg.filter_keywords))}</textarea></label>
                     <label class="field">监听关键词<textarea data-channel-field="monitor_keywords" rows="4">${escapeHtml(joinList(cfg.monitor_keywords))}</textarea></label>
                     <label class="field">过滤正则<input data-channel-field="filter_regex" value="${escapeHtml(cfg.filter_regex)}" /></label>

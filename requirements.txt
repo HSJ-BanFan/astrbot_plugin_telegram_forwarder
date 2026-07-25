@@ -2,3 +2,5 @@ apscheduler
 telethon>=1.42.0,<1.43.0
 pysocks
 flask
+pillow
+zxing-cpp>=3,<4

@@ -189,6 +189,17 @@
                         "default": "继承全局",
                         "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
                     },
+                    "filter_qr_code_images": {
+                        "description": "过滤二维码图片",
+                        "type": "string",
+                        "options": [
+                            "继承全局",
+                            "开启",
+                            "关闭"
+                        ],
+                        "default": "继承全局",
+                        "hint": "开启后，含二维码的 Telegram 图片将被跳过；相册中任一图片命中时跳过整个相册"
+                    },
                     "strip_markdown_links": {
                         "description": "剥离 Markdown 链接，只保留文本",
                         "type": "string",
@@ -272,6 +283,12 @@
                 "type": "bool",
                 "default": false,
                 "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
+            },
+            "filter_qr_code_images": {
+                "description": "过滤二维码图片",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，发送前会检测 Telegram 图片中的二维码，命中则跳过该消息；相册中任一图片命中时跳过整个相册"
             },
             "strip_markdown_links": {
                 "description": "剥离 Markdown 链接，只保留文本",

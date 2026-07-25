@@ -60,6 +60,7 @@ export const FORWARD_GROUPS = [
     label: "过滤监听",
     fields: [
       { key: "enable_deduplication", label: "转发查重", type: "bool", defaultValue: true },
+      { key: "filter_qr_code_images", label: "过滤二维码图片", type: "bool", defaultValue: false },
       { key: "filter_keywords", label: "过滤关键词", type: "list", defaultValue: [] },
       { key: "filter_regex", label: "正则过滤", type: "text", defaultValue: "" },
       { key: "monitor_keywords", label: "监听关键词", type: "list", defaultValue: [] },
