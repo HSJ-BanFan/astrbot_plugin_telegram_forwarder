@@ -259,26 +259,28 @@ export function initLogin() {
 
   const runProxyTest = (button, resultElement, mode) => {
     if (!button || !resultElement) return;
-    button.addEventListener("click", () =>
-      withButtonLoading(button, "测试中...", async () => {
-        resultElement.className = "proxy-test-result";
-        resultElement.textContent = "测试中...";
-        try {
-          const result = await apiRequest("/api/proxy/test", "POST", {
-            mode,
-            proxy_config: proxyConfigFromInputs(),
-          }, 12000);
-          const success = Boolean(result.success) && Number.isFinite(result.latency_ms);
-          resultElement.classList.add(success ? "success" : "timeout");
-          resultElement.textContent = success ? `${result.latency_ms} ms` : "超时";
-          return result;
-        } catch (error) {
-          resultElement.classList.add("timeout");
-          resultElement.textContent = error.message.includes("填写") ? error.message : "超时";
-          throw error;
-        }
-      })
-    );
+    button.addEventListener("click", async () => {
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "测试中...";
+      resultElement.className = "proxy-test-result";
+      resultElement.textContent = "测试中...";
+      try {
+        const result = await apiRequest("/api/proxy/test", "POST", {
+          mode,
+          proxy_config: proxyConfigFromInputs(),
+        }, 12000);
+        const success = Boolean(result.success) && Number.isFinite(result.latency_ms);
+        resultElement.classList.add(success ? "success" : "timeout");
+        resultElement.textContent = success ? `${result.latency_ms} ms` : "超时";
+      } catch (error) {
+        resultElement.classList.add("timeout");
+        resultElement.textContent = error.message.includes("填写") ? error.message : "超时";
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    });
   };
 
   runProxyTest(els.proxyConnectivityBtn, els.proxyConnectivityResult, "connectivity");

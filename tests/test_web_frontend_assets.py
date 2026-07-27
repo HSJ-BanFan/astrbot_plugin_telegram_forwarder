@@ -385,6 +385,14 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
             'resultElement.textContent = success ? `${result.latency_ms} ms` : "超时"'
             in login_text
         )
+        assert 'button.addEventListener("click", async () =>' in login_text
+        assert "button.textContent = originalText" in login_text
+        proxy_handler = login_text.split("const runProxyTest =", 1)[1].split(
+            "runProxyTest(els.proxyConnectivityBtn", 1
+        )[0]
+        assert "withButtonLoading" not in proxy_handler
+        assert "loadAll" not in proxy_handler
+        assert "showToast" not in proxy_handler
 
 
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
