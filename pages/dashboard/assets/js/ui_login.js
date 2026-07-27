@@ -249,6 +249,41 @@ export function initLogin() {
     );
   }
 
+  const proxyConfigFromInputs = () => ({
+    protocol: els.proxyProtocolInput?.value || "socks5",
+    host: els.proxyHostInput?.value.trim() || "",
+    port: Number.parseInt(els.proxyPortInput?.value, 10) || 0,
+    username: els.proxyUsernameInput?.value || "",
+    password: els.proxyPasswordInput?.value || "",
+  });
+
+  const runProxyTest = (button, resultElement, mode) => {
+    if (!button || !resultElement) return;
+    button.addEventListener("click", () =>
+      withButtonLoading(button, "测试中...", async () => {
+        resultElement.className = "proxy-test-result";
+        resultElement.textContent = "测试中...";
+        try {
+          const result = await apiRequest("/api/proxy/test", "POST", {
+            mode,
+            proxy_config: proxyConfigFromInputs(),
+          }, 12000);
+          const success = Boolean(result.success) && Number.isFinite(result.latency_ms);
+          resultElement.classList.add(success ? "success" : "timeout");
+          resultElement.textContent = success ? `${result.latency_ms} ms` : "超时";
+          return result;
+        } catch (error) {
+          resultElement.classList.add("timeout");
+          resultElement.textContent = error.message.includes("填写") ? error.message : "超时";
+          throw error;
+        }
+      })
+    );
+  };
+
+  runProxyTest(els.proxyConnectivityBtn, els.proxyConnectivityResult, "connectivity");
+  runProxyTest(els.proxyQualityBtn, els.proxyQualityResult, "quality");
+
   if (els.submitCodeBtn) {
     els.submitCodeBtn.addEventListener("click", () =>
       withButtonLoading(els.submitCodeBtn, "正在验证验证码...", async () => {

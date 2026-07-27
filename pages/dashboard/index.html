@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telegram Forwarder</title>
-    <link rel="stylesheet" href="./assets/style.css?v=53ab3acc45" />
-    <script src="./assets/js/gsap.min.js?v=53ab3acc45"></script>
+    <link rel="stylesheet" href="./assets/style.css?v=55e50872f6" />
+    <script src="./assets/js/gsap.min.js?v=55e50872f6"></script>
   </head>
   <body>
     <div class="bg-aurora" aria-hidden="true"><i></i><i></i></div>
@@ -212,6 +212,16 @@
                         <label class="field">端口<input id="proxyPortInput" type="number" inputmode="numeric" min="1" max="65535" placeholder="1080" /></label>
                         <label class="field">账号<input id="proxyUsernameInput" type="text" autocomplete="username" placeholder="可留空" /></label>
                         <label class="field">密码<input id="proxyPasswordInput" type="password" autocomplete="current-password" placeholder="可留空" /></label>
+                        <div class="proxy-test-row">
+                          <div class="proxy-test-item">
+                            <button class="btn btn-soft" id="proxyConnectivityBtn" type="button">测试</button>
+                            <span class="proxy-test-result" id="proxyConnectivityResult" aria-live="polite">未测试</span>
+                          </div>
+                          <div class="proxy-test-item">
+                            <button class="btn btn-soft" id="proxyQualityBtn" type="button">质量</button>
+                            <span class="proxy-test-result" id="proxyQualityResult" aria-live="polite">未测试</span>
+                          </div>
+                        </div>
                       </fieldset>
                     </div>
                     <div class="step-actions">
@@ -416,6 +426,6 @@
 
     <div class="toast" id="toast"></div>
     <script src="/api/plugin/page/bridge-sdk.js"></script>
-    <script src="./assets/app.js?v=53ab3acc45" type="module" defer></script>
+    <script src="./assets/app.js?v=55e50872f6" type="module" defer></script>
   </body>
 </html>

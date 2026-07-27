@@ -485,6 +485,160 @@ def test_save_config_rejects_unpaired_proxy_credentials(web_admin):
     web_admin.plugin.config.save_config.assert_not_called()
 
 
+def test_proxy_test_endpoint_requires_auth(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.post(
+        "/api/proxy/test",
+        json={"mode": "connectivity", "proxy_config": {}},
+    )
+
+    assert response.status_code == 401
+
+
+def test_probe_proxy_connectivity_reports_latency(web_admin):
+    fake_socket = MagicMock()
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=fake_socket
+        ) as create_connection,
+        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.025]),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "",
+                "password": "",
+            },
+            "connectivity",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 25}
+    create_connection.assert_called_once_with(("proxy.example.com", 1080), timeout=8.0)
+    fake_socket.close.assert_called_once_with()
+
+
+def test_probe_proxy_quality_connects_to_telegram_through_authenticated_proxy(
+    web_admin,
+):
+    proxy_socket = MagicMock()
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+
+    with (
+        patch.object(web_admin.module.socks, "socksocket", return_value=proxy_socket),
+        patch.object(
+            web_admin.module.ssl, "create_default_context", return_value=ssl_context
+        ),
+        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.042]),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+            "quality",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 42}
+    proxy_socket.set_proxy.assert_called_once_with(
+        web_admin.module.socks.SOCKS5,
+        "proxy.example.com",
+        1080,
+        rdns=True,
+        username="admin",
+        password="secret",
+    )
+    proxy_socket.connect.assert_called_once_with(("api.telegram.org", 443))
+    ssl_context.wrap_socket.assert_called_once_with(
+        proxy_socket, server_hostname="api.telegram.org"
+    )
+    tls_socket.close.assert_called_once_with()
+
+
+def test_probe_http_proxy_quality_sends_connect_with_basic_auth(web_admin):
+    proxy_socket = MagicMock()
+    proxy_socket.recv.return_value = b"HTTP/1.1 200 Connection established\r\n\r\n"
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=proxy_socket
+        ),
+        patch.object(
+            web_admin.module.ssl, "create_default_context", return_value=ssl_context
+        ),
+        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.050]),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "admin",
+                "password": "secret",
+            },
+            "quality",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 50}
+    request = proxy_socket.sendall.call_args.args[0]
+    assert b"CONNECT api.telegram.org:443 HTTP/1.1" in request
+    assert b"Proxy-Authorization: Basic YWRtaW46c2VjcmV0" in request
+    ssl_context.wrap_socket.assert_called_once_with(
+        proxy_socket, server_hostname="api.telegram.org"
+    )
+    tls_socket.close.assert_called_once_with()
+
+
+def test_probe_proxy_timeout_returns_timeout_status(web_admin):
+    with patch.object(
+        web_admin.module.socket,
+        "create_connection",
+        side_effect=TimeoutError("timed out"),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "connectivity",
+            8.0,
+        )
+
+    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+
+
+def test_proxy_test_rejects_invalid_mode(web_admin):
+    with pytest.raises(web_admin.module.WebAdminError, match="测试类型无效"):
+        asyncio.run(
+            web_admin.server.test_proxy(
+                {
+                    "mode": "unknown",
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "proxy.example.com",
+                        "port": 1080,
+                    },
+                }
+            )
+        )
+
+
 def test_qq_groups_requires_auth(web_admin):
     client = web_admin.server.app.test_client()
 

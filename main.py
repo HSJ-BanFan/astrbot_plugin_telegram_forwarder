@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from astrbot.api import AstrBotConfig, logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.web import error_response, json_response, request
@@ -226,6 +225,7 @@ class Main(star.Star):
             ("status", self.dashboard_status, ["GET"], "读取运行状态"),
             ("config", self.dashboard_get_config, ["GET"], "读取配置"),
             ("config", self.dashboard_save_config, ["POST"], "保存配置"),
+            ("proxy/test", self.dashboard_proxy_test, ["POST"], "测试代理连接"),
             ("qq/groups", self.dashboard_qq_groups, ["GET"], "加载 QQ 群列表"),
             (
                 "qq/groups/refresh",
@@ -433,6 +433,12 @@ class Main(star.Star):
         payload = await self._dashboard_payload()
         return await self._dashboard_call(
             lambda: self._ensure_web_admin_server().save_config(payload)
+        )
+
+    async def dashboard_proxy_test(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().test_proxy(payload)
         )
 
     async def dashboard_qq_groups(self):

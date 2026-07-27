@@ -6,15 +6,19 @@ import hmac
 import os
 import secrets
 import shutil
+import socket
 import sqlite3
+import ssl
 import tempfile
 import threading
+import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote, unquote, urlparse
 
+import socks
 from astrbot.api import logger
 from telethon.errors import (
     FloodWaitError,
@@ -357,6 +361,12 @@ class WebAdminServer:
         def api_save_config():
             payload = request.get_json(silent=True) or {}
             return run_api(self.save_config(payload), timeout=60.0)
+
+        @app.post("/api/proxy/test")
+        @require_auth
+        def api_proxy_test():
+            payload = request.get_json(silent=True) or {}
+            return run_api(self.test_proxy(payload), timeout=15.0)
 
         @app.get("/api/export/config")
         @require_auth
@@ -915,6 +925,85 @@ class WebAdminServer:
             auth += "@"
         url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
+
+    @staticmethod
+    def _probe_proxy_sync(
+        proxy_config: dict[str, Any], mode: str, timeout: float
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        sock = None
+        try:
+            if mode == "connectivity":
+                sock = socket.create_connection(
+                    (proxy_config["host"], proxy_config["port"]), timeout=timeout
+                )
+            else:
+                if proxy_config["protocol"] == "http":
+                    sock = socket.create_connection(
+                        (proxy_config["host"], proxy_config["port"]), timeout=timeout
+                    )
+                    sock.settimeout(timeout)
+                    headers = [
+                        "CONNECT api.telegram.org:443 HTTP/1.1",
+                        "Host: api.telegram.org:443",
+                    ]
+                    if proxy_config["username"]:
+                        credentials = (
+                            f"{proxy_config['username']}:{proxy_config['password']}"
+                        ).encode("utf-8")
+                        auth = base64.b64encode(credentials).decode("ascii")
+                        headers.append(f"Proxy-Authorization: Basic {auth}")
+                    sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
+                    response = b""
+                    while b"\r\n\r\n" not in response and len(response) < 16384:
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            break
+                        response += chunk
+                    status_line = response.split(b"\r\n", 1)[0]
+                    if b" 200 " not in status_line:
+                        raise OSError("HTTP proxy CONNECT failed")
+                else:
+                    proxy_type = {
+                        "socks4": socks.SOCKS4,
+                        "socks5": socks.SOCKS5,
+                    }[proxy_config["protocol"]]
+                    sock = socks.socksocket()
+                    sock.set_proxy(
+                        proxy_type,
+                        proxy_config["host"],
+                        proxy_config["port"],
+                        rdns=True,
+                        username=proxy_config["username"] or None,
+                        password=proxy_config["password"] or None,
+                    )
+                    sock.settimeout(timeout)
+                    sock.connect(("api.telegram.org", 443))
+                context = ssl.create_default_context()
+                sock = context.wrap_socket(sock, server_hostname="api.telegram.org")
+            latency_ms = max(1, round((time.perf_counter() - started) * 1000))
+            return {"success": True, "status": "ok", "latency_ms": latency_ms}
+        except (OSError, TimeoutError, socks.ProxyError) as exc:
+            logger.info(f"[WebAdmin] 代理测试未通过 ({mode}): {type(exc).__name__}")
+            return {"success": False, "status": "timeout", "latency_ms": None}
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    async def test_proxy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mode = str(payload.get("mode") or "").strip().lower()
+        if mode not in {"connectivity", "quality"}:
+            raise WebAdminError("代理测试类型无效。")
+        proxy_config = self.normalize_proxy_config(payload.get("proxy_config"))
+        if not proxy_config["host"]:
+            raise WebAdminError("请先填写代理 IP / 域名和端口。")
+        timeout = 8.0
+        return await asyncio.to_thread(
+            self._probe_proxy_sync, proxy_config, mode, timeout
+        )
 
     async def list_qq_groups(self, force: bool = False) -> dict[str, Any]:
         return await self.qq_group_cache.list_groups(

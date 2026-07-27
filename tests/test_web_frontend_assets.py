@@ -364,6 +364,29 @@ def test_dashboard_bridge_api_preserves_request_timeout() -> None:
         assert "bridgeRequest(path, method, body, timeout)" in text
 
 
+def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> None:
+    for index_path in (ROOT / "web" / "index.html", PAGE_ROOT / "index.html"):
+        text = index_path.read_text(encoding="utf-8")
+        for element_id in (
+            "proxyConnectivityBtn",
+            "proxyConnectivityResult",
+            "proxyQualityBtn",
+            "proxyQualityResult",
+        ):
+            assert f'id="{element_id}"' in text
+
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        app_text = (asset_root / "app.js").read_text(encoding="utf-8")
+        login_text = (asset_root / "js" / "ui_login.js").read_text(encoding="utf-8")
+        assert '"proxyConnectivityBtn"' in app_text
+        assert '"proxyQualityBtn"' in app_text
+        assert 'apiRequest("/api/proxy/test", "POST"' in login_text
+        assert (
+            'resultElement.textContent = success ? `${result.latency_ms} ms` : "超时"'
+            in login_text
+        )
+
+
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
         text = (asset_root / "js" / "ui_overview.js").read_text(encoding="utf-8")
@@ -376,4 +399,6 @@ def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
         assert 'button.dataset.runtimeActionBound === "true"' in text
         assert 'button.dataset.runtimeActionBound = "true"' in text
         assert 'apiRequest("/api/runtime/check", "POST")' in text
-        assert 'apiRequest("/api/runtime/clear-queue", "POST", { target: "all" })' in text
+        assert (
+            'apiRequest("/api/runtime/clear-queue", "POST", { target: "all" })' in text
+        )

@@ -530,6 +530,7 @@ def test_main_registers_dashboard_page_web_apis():
         ]
         assert f"/{PLUGIN_NAME}/status" in registered_routes
         assert f"/{PLUGIN_NAME}/config" in registered_routes
+        assert f"/{PLUGIN_NAME}/proxy/test" in registered_routes
         assert f"/{PLUGIN_NAME}/login/start" in registered_routes
         assert f"/{PLUGIN_NAME}/runtime/check" in registered_routes
         assert all(route.startswith(f"/{PLUGIN_NAME}/") for route in registered_routes)
