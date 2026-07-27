@@ -931,18 +931,28 @@ class WebAdminServer:
         proxy_config: dict[str, Any], mode: str, timeout: float
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        deadline = started + timeout
         sock = None
+
+        def remaining_timeout() -> float:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise TimeoutError("proxy test timed out")
+            return remaining
+
         try:
             if mode == "connectivity":
                 sock = socket.create_connection(
-                    (proxy_config["host"], proxy_config["port"]), timeout=timeout
+                    (proxy_config["host"], proxy_config["port"]),
+                    timeout=remaining_timeout(),
                 )
             else:
                 if proxy_config["protocol"] == "http":
                     sock = socket.create_connection(
-                        (proxy_config["host"], proxy_config["port"]), timeout=timeout
+                        (proxy_config["host"], proxy_config["port"]),
+                        timeout=remaining_timeout(),
                     )
-                    sock.settimeout(timeout)
+                    sock.settimeout(remaining_timeout())
                     headers = [
                         "CONNECT api.telegram.org:443 HTTP/1.1",
                         "Host: api.telegram.org:443",
@@ -977,9 +987,10 @@ class WebAdminServer:
                         username=proxy_config["username"] or None,
                         password=proxy_config["password"] or None,
                     )
-                    sock.settimeout(timeout)
+                    sock.settimeout(remaining_timeout())
                     sock.connect(("api.telegram.org", 443))
                 context = ssl.create_default_context()
+                sock.settimeout(remaining_timeout())
                 sock = context.wrap_socket(sock, server_hostname="api.telegram.org")
             latency_ms = max(1, round((time.perf_counter() - started) * 1000))
             return {"success": True, "status": "ok", "latency_ms": latency_ms}

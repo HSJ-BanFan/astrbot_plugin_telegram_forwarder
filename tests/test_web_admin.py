@@ -502,7 +502,11 @@ def test_probe_proxy_connectivity_reports_latency(web_admin):
         patch.object(
             web_admin.module.socket, "create_connection", return_value=fake_socket
         ) as create_connection,
-        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.025]),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 1.025],
+        ),
     ):
         result = web_admin.server._probe_proxy_sync(
             {
@@ -534,7 +538,11 @@ def test_probe_proxy_quality_connects_to_telegram_through_authenticated_proxy(
         patch.object(
             web_admin.module.ssl, "create_default_context", return_value=ssl_context
         ),
-        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.042]),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 1.0, 1.042],
+        ),
     ):
         result = web_admin.server._probe_proxy_sync(
             {
@@ -578,7 +586,11 @@ def test_probe_http_proxy_quality_sends_connect_with_basic_auth(web_admin):
         patch.object(
             web_admin.module.ssl, "create_default_context", return_value=ssl_context
         ),
-        patch.object(web_admin.module.time, "perf_counter", side_effect=[1.0, 1.050]),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 1.0, 1.0, 1.050],
+        ),
     ):
         result = web_admin.server._probe_proxy_sync(
             {
@@ -617,6 +629,34 @@ def test_probe_proxy_timeout_returns_timeout_status(web_admin):
                 "password": "",
             },
             "connectivity",
+            8.0,
+        )
+
+    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+
+
+def test_probe_proxy_uses_single_timeout_budget(web_admin):
+    proxy_socket = MagicMock()
+    proxy_socket.recv.return_value = b"HTTP/1.1 200 Connection established\r\n\r\n"
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=proxy_socket
+        ),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 8.5, 9.1],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "quality",
             8.0,
         )
 
