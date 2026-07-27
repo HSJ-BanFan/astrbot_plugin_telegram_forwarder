@@ -259,6 +259,8 @@ export function initLogin() {
 
   const runProxyTest = (button, resultElement, mode) => {
     if (!button || !resultElement) return;
+    if (button.dataset.proxyTestBound === "true") return;
+    button.dataset.proxyTestBound = "true";
     button.addEventListener("click", async () => {
       const originalText = button.textContent;
       button.disabled = true;

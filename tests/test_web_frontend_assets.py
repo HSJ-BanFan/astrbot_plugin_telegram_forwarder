@@ -387,6 +387,8 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         )
         assert 'button.addEventListener("click", async () =>' in login_text
         assert "button.textContent = originalText" in login_text
+        assert 'button.dataset.proxyTestBound === "true"' in login_text
+        assert 'button.dataset.proxyTestBound = "true"' in login_text
         proxy_handler = login_text.split("const runProxyTest =", 1)[1].split(
             "runProxyTest(els.proxyConnectivityBtn", 1
         )[0]
