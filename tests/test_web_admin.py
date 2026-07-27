@@ -345,6 +345,20 @@ def test_proxy_config_migrates_legacy_url(web_admin):
     }
 
 
+@pytest.mark.parametrize(
+    ("url", "protocol"),
+    [
+        ("https://proxy.example.com:8443", "http"),
+        ("socks5h://proxy.example.com:1080", "socks5"),
+        ("socks4a://proxy.example.com:1080", "socks4"),
+    ],
+)
+def test_proxy_config_migrates_legacy_protocol_aliases(web_admin, url, protocol):
+    config = web_admin.server.normalize_proxy_config(None, url)
+
+    assert config["protocol"] == protocol
+
+
 def test_proxy_config_to_url_encodes_credentials(web_admin):
     url = web_admin.server.proxy_config_to_url(
         {
@@ -373,6 +387,25 @@ def test_proxy_config_to_url_brackets_ipv6_host(web_admin):
     assert url == "socks5://[::1]:1080"
 
 
+def test_proxy_config_credentials_preserve_whitespace(web_admin):
+    config = web_admin.server.normalize_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": " user ",
+            "password": " secret ",
+        }
+    )
+
+    assert config["username"] == " user "
+    assert config["password"] == " secret "
+    assert (
+        web_admin.server.proxy_config_to_url(config)
+        == "socks5://%20user%20:%20secret%20@proxy.example.com:12311"
+    )
+
+
 def test_save_config_persists_structured_proxy_and_legacy_url(web_admin):
     web_admin.server._rebuild_client = AsyncMock()
     result = asyncio.run(
@@ -395,6 +428,37 @@ def test_save_config_persists_structured_proxy_and_legacy_url(web_admin):
     assert web_admin.plugin.config["proxy_config"]["host"] == "127.0.0.1"
     assert web_admin.plugin.config["proxy"] == "socks5://admin:secret@127.0.0.1:12311"
     assert result["config"]["proxy_config"]["port"] == 12311
+    web_admin.server._rebuild_client.assert_awaited_once_with()
+
+
+def test_save_config_legacy_proxy_replaces_existing_structured_proxy(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://old.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "old.example.com",
+                "port": 1080,
+                "username": "",
+                "password": "",
+            },
+        }
+    )
+    web_admin.server._rebuild_client = AsyncMock()
+
+    asyncio.run(
+        web_admin.server.save_config(
+            {"config": {"proxy": "https://new.example.com:8443"}}
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"] == {
+        "protocol": "http",
+        "host": "new.example.com",
+        "port": 8443,
+        "username": "",
+        "password": "",
+    }
     web_admin.server._rebuild_client.assert_awaited_once_with()
 
 

@@ -851,14 +851,20 @@ class WebAdminServer:
 
         protocol = str(raw.get("protocol") or "").strip().lower()
         host = str(raw.get("host") or "").strip()
-        username = str(raw.get("username") or "").strip()
-        password = str(raw.get("password") or "").strip()
+        username = str(raw.get("username") or "")
+        password = str(raw.get("password") or "")
         port_value = raw.get("port")
 
         has_structured_proxy = any((host, port_value, username, password))
         if not has_structured_proxy and legacy_proxy:
             parsed = urlparse(str(legacy_proxy).strip())
-            protocol = parsed.scheme.lower()
+            legacy_protocol = parsed.scheme.lower()
+            if legacy_protocol.startswith("http"):
+                protocol = "http"
+            elif legacy_protocol.startswith("socks4"):
+                protocol = "socks4"
+            else:
+                protocol = "socks5"
             host = parsed.hostname or ""
             port_value = parsed.port
             username = unquote(parsed.username) if parsed.username else ""
@@ -1055,6 +1061,9 @@ class WebAdminServer:
             proxy_config = self.normalize_proxy_config(incoming["proxy_config"])
             self.plugin.config["proxy_config"] = proxy_config
             self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
+        elif "proxy" in incoming:
+            proxy_config = self.normalize_proxy_config(None, incoming["proxy"])
+            self.plugin.config["proxy_config"] = proxy_config
 
         if "forward_config" in incoming:
             if not isinstance(incoming["forward_config"], dict):

@@ -785,6 +785,29 @@ def test_parse_structured_socks5_proxy_with_credentials():
     assert proxy == (2, "proxy.example.com", 12311, True, "admin", "secret")
 
 
+def test_parse_structured_proxy_preserves_credential_whitespace():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": " user ",
+            "password": " secret ",
+        }
+    )
+
+    assert proxy == (
+        2,
+        "proxy.example.com",
+        12311,
+        True,
+        " user ",
+        " secret ",
+    )
+
+
 def test_parse_structured_http_proxy_without_credentials():
     client_module = load_client_module()
 
@@ -848,6 +871,32 @@ def test_redact_structured_proxy_hides_credentials():
     assert redacted == "socks5://***@127.0.0.1:12311"
     assert "admin" not in redacted
     assert "secret" not in redacted
+
+
+def test_invalid_structured_proxy_does_not_fall_back_to_direct_connection():
+    telegram_client = MagicMock()
+    client_module = load_client_module(client_factory=telegram_client)
+    tmp_dir = make_test_dir()
+    try:
+        wrapper = client_module.TelegramClientWrapper(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "proxy_config": {
+                    "protocol": "socks5",
+                    "host": "127.0.0.1",
+                    "port": 12311,
+                    "username": "admin",
+                    "password": "",
+                },
+            },
+            tmp_dir,
+        )
+
+        assert wrapper.client is None
+        telegram_client.assert_not_called()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():

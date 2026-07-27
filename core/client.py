@@ -130,8 +130,8 @@ class TelegramClientWrapper:
 
         protocol = str(proxy_config.get("protocol") or "").strip().lower()
         host = str(proxy_config.get("host") or "").strip()
-        username = str(proxy_config.get("username") or "").strip() or None
-        password = str(proxy_config.get("password") or "").strip() or None
+        username = str(proxy_config.get("username") or "") or None
+        password = str(proxy_config.get("password") or "") or None
         try:
             port = int(proxy_config.get("port") or 0)
         except (TypeError, ValueError) as exc:
@@ -501,6 +501,8 @@ class TelegramClientWrapper:
                     )
                 except (TypeError, ValueError, AttributeError) as e:
                     logger.error(f"[Client] 代理配置错误: {e}")
+                    self.client = None
+                    return
             elif proxy_url:
                 try:
                     proxy_setting = self._parse_proxy_url(proxy_url)
