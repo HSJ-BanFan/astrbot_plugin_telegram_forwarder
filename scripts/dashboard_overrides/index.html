@@ -199,7 +199,20 @@
                       <label class="field">API ID<input id="apiIdInput" type="number" inputmode="numeric" /></label>
                       <label class="field">API Hash<input id="apiHashInput" type="password" autocomplete="off" /></label>
                       <label class="field">手机号<input id="phoneInput" type="tel" placeholder="+8613800000000" /></label>
-                      <label class="field">代理<input id="proxyInput" type="text" placeholder="http://127.0.0.1:7890" /></label>
+                      <fieldset class="proxy-fields">
+                        <legend>代理（可选）</legend>
+                        <label class="field">协议
+                          <select id="proxyProtocolInput">
+                            <option value="socks5">SOCKS5</option>
+                            <option value="socks4">SOCKS4</option>
+                            <option value="http">HTTP</option>
+                          </select>
+                        </label>
+                        <label class="field">IP / 域名<input id="proxyHostInput" type="text" placeholder="127.0.0.1" /></label>
+                        <label class="field">端口<input id="proxyPortInput" type="number" inputmode="numeric" min="1" max="65535" placeholder="1080" /></label>
+                        <label class="field">账号<input id="proxyUsernameInput" type="text" autocomplete="username" placeholder="可留空" /></label>
+                        <label class="field">密码<input id="proxyPasswordInput" type="password" autocomplete="current-password" placeholder="可留空" /></label>
+                      </fieldset>
                     </div>
                     <div class="step-actions">
                       <button class="btn btn-primary" id="sendCodeBtn" type="button">保存并发送验证码</button>

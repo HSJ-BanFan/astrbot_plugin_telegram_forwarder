@@ -666,11 +666,18 @@ class PluginCommands:
         if value is None or value == "":
             return "<未设置>"
 
+        if field_name == "proxy_config" and isinstance(value, dict):
+            protocol = str(value.get("protocol") or "socks5")
+            host = str(value.get("host") or "")
+            port = str(value.get("port") or "")
+            auth = "***@" if value.get("username") or value.get("password") else ""
+            return f"{protocol}://{auth}{host}:{port}" if host else "<未设置>"
+
         s = str(value).strip()
         if len(s) <= 4:
             return "*" * len(s)  # 太短直接全遮
 
-        sensitive_fields = {"api_id", "api_hash", "phone", "proxy"}
+        sensitive_fields = {"api_id", "api_hash", "phone", "proxy", "proxy_config"}
 
         if field_name not in sensitive_fields:
             return s
@@ -720,6 +727,7 @@ class PluginCommands:
                 "api_hash",
                 "telegram_session",
                 "proxy",
+                "proxy_config",
                 "debug_enabled_default",
             ]
             root_display = {}

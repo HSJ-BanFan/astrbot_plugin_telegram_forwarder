@@ -330,6 +330,97 @@ def test_save_config_rejects_malformed_merge_rules(web_admin):
     web_admin.plugin.config.save_config.assert_not_called()
 
 
+def test_proxy_config_migrates_legacy_url(web_admin):
+    config = web_admin.server.normalize_proxy_config(
+        None,
+        "socks5://adm%40in:sec%3Aret@proxy.example.com:12311",
+    )
+
+    assert config == {
+        "protocol": "socks5",
+        "host": "proxy.example.com",
+        "port": 12311,
+        "username": "adm@in",
+        "password": "sec:ret",
+    }
+
+
+def test_proxy_config_to_url_encodes_credentials(web_admin):
+    url = web_admin.server.proxy_config_to_url(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": "adm@in",
+            "password": "sec:ret",
+        }
+    )
+
+    assert url == "socks5://adm%40in:sec%3Aret@proxy.example.com:12311"
+
+
+def test_proxy_config_to_url_brackets_ipv6_host(web_admin):
+    url = web_admin.server.proxy_config_to_url(
+        {
+            "protocol": "socks5",
+            "host": "::1",
+            "port": 1080,
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert url == "socks5://[::1]:1080"
+
+
+def test_save_config_persists_structured_proxy_and_legacy_url(web_admin):
+    web_admin.server._rebuild_client = AsyncMock()
+    result = asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "proxy": "socks5://stale:stale@old.example.com:1080",
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "127.0.0.1",
+                        "port": 12311,
+                        "username": "admin",
+                        "password": "secret",
+                    },
+                }
+            }
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"]["host"] == "127.0.0.1"
+    assert web_admin.plugin.config["proxy"] == "socks5://admin:secret@127.0.0.1:12311"
+    assert result["config"]["proxy_config"]["port"] == 12311
+    web_admin.server._rebuild_client.assert_awaited_once_with()
+
+
+def test_save_config_rejects_unpaired_proxy_credentials(web_admin):
+    with pytest.raises(
+        web_admin.module.WebAdminError, match="用户名和密码必须同时填写"
+    ):
+        asyncio.run(
+            web_admin.server.save_config(
+                {
+                    "config": {
+                        "proxy_config": {
+                            "protocol": "socks5",
+                            "host": "127.0.0.1",
+                            "port": 12311,
+                            "username": "admin",
+                            "password": "",
+                        }
+                    }
+                }
+            )
+        )
+
+    web_admin.plugin.config.save_config.assert_not_called()
+
+
 def test_qq_groups_requires_auth(web_admin):
     client = web_admin.server.app.test_client()
 

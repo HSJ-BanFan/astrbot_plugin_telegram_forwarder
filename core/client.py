@@ -9,9 +9,8 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 import socks
 import telethon
-from telethon import TelegramClient
-
 from astrbot.api import AstrBotConfig, logger
+from telethon import TelegramClient
 
 
 # ========== 全局客户端缓存 ==========
@@ -123,6 +122,54 @@ class TelegramClientWrapper:
         if proxy_type == socks.SOCKS4 and username:
             return (proxy_type, parsed.hostname, parsed.port, True, username)
         return (proxy_type, parsed.hostname, parsed.port)
+
+    @staticmethod
+    def _parse_proxy_config(proxy_config: object):
+        if not isinstance(proxy_config, dict):
+            raise TypeError("代理配置必须是对象")
+
+        protocol = str(proxy_config.get("protocol") or "").strip().lower()
+        host = str(proxy_config.get("host") or "").strip()
+        username = str(proxy_config.get("username") or "").strip() or None
+        password = str(proxy_config.get("password") or "").strip() or None
+        try:
+            port = int(proxy_config.get("port") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("代理端口必须是数字") from exc
+
+        if not host and not port and not username and not password:
+            return None
+        if protocol not in {"http", "socks4", "socks5"}:
+            raise ValueError("代理协议必须是 http、socks4 或 socks5")
+        if not host:
+            raise ValueError("代理主机不能为空")
+        if not 1 <= port <= 65535:
+            raise ValueError("代理端口必须在 1 到 65535 之间")
+        if protocol != "socks4" and bool(username) != bool(password):
+            raise ValueError("代理用户名和密码必须同时填写")
+        if password and not username:
+            raise ValueError("代理密码不能在账号为空时单独填写")
+
+        proxy_type = {
+            "http": socks.HTTP,
+            "socks4": socks.SOCKS4,
+            "socks5": socks.SOCKS5,
+        }[protocol]
+        if username and password:
+            return (proxy_type, host, port, True, username, password)
+        if proxy_type == socks.SOCKS4 and username:
+            return (proxy_type, host, port, True, username)
+        return (proxy_type, host, port)
+
+    @staticmethod
+    def _redact_proxy_config(proxy_config: object) -> str:
+        if not isinstance(proxy_config, dict):
+            return ""
+        protocol = str(proxy_config.get("protocol") or "")
+        host = str(proxy_config.get("host") or "")
+        port = str(proxy_config.get("port") or "")
+        auth = "***@" if proxy_config.get("username") else ""
+        return f"{protocol}://{auth}{host}:{port}"
 
     def __init__(self, config: AstrBotConfig, plugin_data_dir: Path):
         """
@@ -438,10 +485,23 @@ class TelegramClientWrapper:
                     del cache[session_path]
 
             # ========== 代理配置解析 ==========
+            proxy_config = self.config.get("proxy_config")
             proxy_url = self.config.get("proxy", "")
             proxy_setting = None
 
-            if proxy_url:
+            has_structured_proxy = isinstance(proxy_config, dict) and any(
+                proxy_config.get(key)
+                for key in ("host", "port", "username", "password")
+            )
+            if has_structured_proxy:
+                try:
+                    proxy_setting = self._parse_proxy_config(proxy_config)
+                    logger.debug(
+                        f"[Client] 使用代理: {self._redact_proxy_config(proxy_config)}"
+                    )
+                except (TypeError, ValueError, AttributeError) as e:
+                    logger.error(f"[Client] 代理配置错误: {e}")
+            elif proxy_url:
                 try:
                     proxy_setting = self._parse_proxy_url(proxy_url)
                     logger.debug(

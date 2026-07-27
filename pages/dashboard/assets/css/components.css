@@ -955,6 +955,36 @@
   grid-template-columns: 1fr;
 }
 
+.proxy-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1.5fr) minmax(110px, 0.75fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+}
+
+.proxy-fields legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .proxy-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .proxy-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .field {
   display: grid;
   gap: 7px;

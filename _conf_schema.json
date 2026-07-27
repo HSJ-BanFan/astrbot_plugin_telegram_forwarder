@@ -39,11 +39,45 @@
         ],
         "hint": "上传 .session 文件以直接登录，避免验证码或人机验证问题，你可以使用本地脚本生成此文件后上传"
     },
-    "proxy": {
-        "description": "代理地址",
-        "type": "string",
-        "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
-        "default": ""
+    "proxy_config": {
+        "description": "代理配置",
+        "type": "object",
+        "hint": "协议、主机、端口与可选认证信息",
+        "items": {
+            "protocol": {
+                "description": "协议",
+                "type": "string",
+                "options": ["http", "socks4", "socks5"],
+                "default": "socks5"
+            },
+            "host": {
+                "description": "IP / 域名",
+                "type": "string",
+                "default": ""
+            },
+            "port": {
+                "description": "端口",
+                "type": "int",
+                "default": 0
+            },
+            "username": {
+                "description": "账号",
+                "type": "string",
+                "default": ""
+            },
+            "password": {
+                "description": "密码",
+                "type": "string",
+                "default": ""
+            }
+        },
+        "default": {
+            "protocol": "socks5",
+            "host": "",
+            "port": 0,
+            "username": "",
+            "password": ""
+        }
     },
     "web_config": {
         "type": "object",

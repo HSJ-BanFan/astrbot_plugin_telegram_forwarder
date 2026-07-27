@@ -127,7 +127,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `phone` | `string` | `""` | 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。若使用命令登录则无需填写。 |
 | `api_id` | `int` | `0` | **(必填)** Telegram API 凭证 ID (从 [my.telegram.org](https://my.telegram.org) 获取，如 `123456`) |
 | `api_hash` | `string` | `""` | **(必填)** Telegram API 凭证 Hash (从 [my.telegram.org](https://my.telegram.org) 获取)。 |
-| `proxy` | `string` | `""` | 代理地址，例如 `http://127.0.0.1:7890`（部分网络环境访问 TG 必填）。 |
+| `proxy_config` | `object` | 见配置页 | 结构化代理：协议、IP/域名、端口及可选账号密码；旧 `proxy` URL 自动兼容。 |
 | `telegram_session` | `file` | `[]` | 上传 `.session` 会话文件（绕过验证码/人机验证的首选方案）。 |
 
 > [!TIP]

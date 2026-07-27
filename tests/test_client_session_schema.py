@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
 
 
@@ -765,6 +767,87 @@ def test_parse_proxy_url_supports_socks4_userid():
     )
 
     assert proxy == (3, "example.com", 12311, True, "legacy")
+
+
+def test_parse_structured_socks5_proxy_with_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret",
+        }
+    )
+
+    assert proxy == (2, "proxy.example.com", 12311, True, "admin", "secret")
+
+
+def test_parse_structured_http_proxy_without_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "http",
+            "host": "127.0.0.1",
+            "port": "7890",
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert proxy == (1, "127.0.0.1", 7890)
+
+
+def test_parse_empty_structured_proxy_returns_none():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "",
+            "port": 0,
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert proxy is None
+
+
+def test_parse_structured_proxy_requires_paired_credentials():
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="用户名和密码必须同时填写"):
+        client_module.TelegramClientWrapper._parse_proxy_config(
+            {
+                "protocol": "socks5",
+                "host": "127.0.0.1",
+                "port": 12311,
+                "username": "admin",
+                "password": "",
+            }
+        )
+
+
+def test_redact_structured_proxy_hides_credentials():
+    client_module = load_client_module()
+
+    redacted = client_module.TelegramClientWrapper._redact_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "127.0.0.1",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret",
+        }
+    )
+
+    assert redacted == "socks5://***@127.0.0.1:12311"
+    assert "admin" not in redacted
+    assert "secret" not in redacted
 
 
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():

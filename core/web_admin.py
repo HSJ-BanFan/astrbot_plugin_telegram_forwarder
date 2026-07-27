@@ -13,7 +13,9 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote, unquote, urlparse
 
+from astrbot.api import logger
 from telethon.errors import (
     FloodWaitError,
     PhoneCodeExpiredError,
@@ -21,8 +23,6 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 from telethon.sessions import StringSession
-
-from astrbot.api import logger
 
 from .client import TelegramClientWrapper
 from .qq_group_cache import QQGroupCache
@@ -836,8 +836,79 @@ class WebAdminServer:
 
     async def get_config(self) -> dict[str, Any]:
         config = self._to_plain(dict(self.plugin.config))
+        config["proxy_config"] = self.normalize_proxy_config(
+            config.get("proxy_config"), config.get("proxy", "")
+        )
         config["web_config"] = self.normalize_web_config(config.get("web_config", {}))
         return {"config": config}
+
+    @staticmethod
+    def normalize_proxy_config(value: Any, legacy_proxy: Any = "") -> dict[str, Any]:
+        if isinstance(value, dict):
+            raw = value
+        else:
+            raw = {}
+
+        protocol = str(raw.get("protocol") or "").strip().lower()
+        host = str(raw.get("host") or "").strip()
+        username = str(raw.get("username") or "").strip()
+        password = str(raw.get("password") or "").strip()
+        port_value = raw.get("port")
+
+        has_structured_proxy = any((host, port_value, username, password))
+        if not has_structured_proxy and legacy_proxy:
+            parsed = urlparse(str(legacy_proxy).strip())
+            protocol = parsed.scheme.lower()
+            host = parsed.hostname or ""
+            port_value = parsed.port
+            username = unquote(parsed.username) if parsed.username else ""
+            password = unquote(parsed.password) if parsed.password else ""
+
+        if not any((host, port_value, username, password)):
+            return {
+                "protocol": "socks5",
+                "host": "",
+                "port": 0,
+                "username": "",
+                "password": "",
+            }
+        if protocol not in {"http", "socks4", "socks5"}:
+            raise WebAdminError("代理协议必须是 http、socks4 或 socks5。")
+        if not host:
+            raise WebAdminError("代理主机不能为空。")
+        try:
+            port = int(port_value or 0)
+        except (TypeError, ValueError) as exc:
+            raise WebAdminError("代理端口必须是数字。") from exc
+        if not 1 <= port <= 65535:
+            raise WebAdminError("代理端口必须在 1 到 65535 之间。")
+        if protocol != "socks4" and bool(username) != bool(password):
+            raise WebAdminError("代理用户名和密码必须同时填写。")
+        if password and not username:
+            raise WebAdminError("代理密码不能在账号为空时单独填写。")
+        return {
+            "protocol": protocol,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+        }
+
+    @staticmethod
+    def proxy_config_to_url(proxy_config: dict[str, Any]) -> str:
+        host = str(proxy_config.get("host") or "")
+        if not host:
+            return ""
+        auth = ""
+        username = str(proxy_config.get("username") or "")
+        password = str(proxy_config.get("password") or "")
+        if username:
+            auth = quote(username, safe="")
+            if password:
+                auth += f":{quote(password, safe='')}"
+            auth += "@"
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
 
     async def list_qq_groups(self, force: bool = False) -> dict[str, Any]:
         return await self.qq_group_cache.list_groups(
@@ -946,6 +1017,7 @@ class WebAdminServer:
             self.plugin.config.get("api_id"),
             self.plugin.config.get("api_hash"),
             self.plugin.config.get("proxy"),
+            self._to_plain(self.plugin.config.get("proxy_config", {})),
         )
         old_web_config = self.normalize_web_config(
             self.plugin.config.get("web_config", {})
@@ -978,6 +1050,11 @@ class WebAdminServer:
             else:
                 value = str(value or "").strip()
             self.plugin.config[key] = value
+
+        if "proxy_config" in incoming:
+            proxy_config = self.normalize_proxy_config(incoming["proxy_config"])
+            self.plugin.config["proxy_config"] = proxy_config
+            self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
 
         if "forward_config" in incoming:
             if not isinstance(incoming["forward_config"], dict):
@@ -1013,6 +1090,7 @@ class WebAdminServer:
             self.plugin.config.get("api_id"),
             self.plugin.config.get("api_hash"),
             self.plugin.config.get("proxy"),
+            self._to_plain(self.plugin.config.get("proxy_config", {})),
         )
         reinitialized_client = False
         if new_client_keys != old_client_keys:

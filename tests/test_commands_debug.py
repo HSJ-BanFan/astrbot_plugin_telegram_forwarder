@@ -131,7 +131,9 @@ class TestPluginCommandsDebug:
         assert "/tg debug <on|off|status>" in results[0]
 
     @pytest.mark.asyncio
-    async def test_debug_returns_uninitialized_message_when_sender_missing(self) -> None:
+    async def test_debug_returns_uninitialized_message_when_sender_missing(
+        self,
+    ) -> None:
         commands = make_commands(qq_sender=None)
         event = make_event()
 
@@ -250,13 +252,37 @@ class TestPluginCommandsDebug:
         assert "True" in results[0]
 
     @pytest.mark.asyncio
+    async def test_get_root_masks_structured_proxy_credentials(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["proxy_config"] = {
+            "protocol": "socks5",
+            "host": "127.0.0.1",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret-password",
+        }
+        event = make_event()
+
+        results = []
+        async for result in commands.get_config(event, "root"):
+            results.append(result)
+
+        assert len(results) == 1
+        assert "proxy_config" in results[0]
+        assert "secret-password" not in results[0]
+        assert "admin" not in results[0]
+        assert "socks5://***@127.0.0.1:12311" in results[0]
+
+    @pytest.mark.asyncio
     async def test_set_root_debug_enabled_default_updates_config(self) -> None:
         commands = make_commands(qq_sender=FakeQQSender())
         commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
         event = make_event()
 
         results = []
-        async for result in commands.set_config(event, "root debug_enabled_default true"):
+        async for result in commands.set_config(
+            event, "root debug_enabled_default true"
+        ):
             results.append(result)
 
         assert commands.config["debug_enabled_default"] is True
@@ -271,7 +297,9 @@ class TestPluginCommandsDebug:
         event = make_event()
 
         results = []
-        async for result in commands.set_config(event, "root debug_enabled_default maybe"):
+        async for result in commands.set_config(
+            event, "root debug_enabled_default maybe"
+        ):
             results.append(result)
 
         assert "❌ 值格式错误" in results[0]
@@ -293,13 +321,13 @@ class TestPluginCommandsClearQueue:
             save=MagicMock(),
         )
         forwarder = SimpleNamespace(storage=storage)
-        commands = commands_module.PluginCommands(MagicMock(), FakeConfig({}), forwarder)
+        commands = commands_module.PluginCommands(
+            MagicMock(), FakeConfig({}), forwarder
+        )
         commands._find_channel_cfg = MagicMock(return_value={"display_name": "demo"})
         event = make_event()
 
         results = await collect_clear_queue(commands, event, "demo")
 
-        assert results == [
-            "❌ 频道 @demo 的配置缺少 channel_username，无法清空队列。"
-        ]
+        assert results == ["❌ 频道 @demo 的配置缺少 channel_username，无法清空队列。"]
         storage.get_channel_data.assert_not_called()
