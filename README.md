@@ -274,9 +274,11 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `pending_retry_max_delay_sec`| `int`| `1800` | 失败重试最大延迟 (秒)。 |
 | `curfew_time` | `string` | `""` | 宵禁时间段 (例如 `23:00-07:00`)，在该时间段内不抓取和发送消息。 |
 | `filter_keywords` | `list` | `[]` | 全局过滤关键词列表。 |
-| `filter_regex` | `string` | `""` | 全局过滤正则表达式。 |
+| `filter_regex` | `string` | `#\s*NSFW\b\|(?:NSFW\|前方高能)\s*提前预警` | 全局过滤正则表达式。默认示例过滤 NSFW 标签和预警文字。 |
 | `monitor_keywords` | `list` | `[]` | 全局监听关键词（命中后立即发送，绕过轮询延迟）。 |
 | `monitor_regex` | `string` | `""` | 全局监听正则表达式。 |
+
+默认合并规则还提供了一个 `xinjingdaily` 示例：当消息命中 `NSFW/前方高能 + 提前预警` 时，将其与 15 秒内紧随的下一条消息标记为同一逻辑组。合并规则本身不执行过滤；发送前由全局 `filter_regex` 命中预警消息，并据此丢弃整个逻辑组，因此后续消息即使只有图片、没有文字或没有 Telegram 遮罩，也会一起过滤。
 
 ---
 

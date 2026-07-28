@@ -467,8 +467,8 @@
             "filter_regex": {
                 "type": "string",
                 "description": "正则过滤",
-                "default": "",
-                "hint": "Python 正则表达式过滤。留空则不启用。"
+                "default": "#\\s*NSFW\\b|(?:NSFW|前方高能)\\s*提前预警",
+                "hint": "Python 正则表达式过滤。默认示例过滤 NSFW 标签和预警文字；与消息合并规则配合时，命中组内任一消息会丢弃整组。"
             },
             "monitor_keywords": {
                 "type": "list",
@@ -564,6 +564,18 @@
                 "rule_class": "SomeACGPreviewPlusOriginal",
                 "params": {
                     "time_window_seconds": 10
+                }
+            },
+            {
+                "__template_key": "default",
+                "name": "心惊报 NSFW 预警关联下一条",
+                "channel": "xinjingdaily",
+                "rule_class": "KeywordNextNMerge",
+                "params": {
+                    "trigger_keywords": [],
+                    "trigger_regex": "(?:NSFW|前方高能)\\s*提前预警",
+                    "next_count": 1,
+                    "time_window_seconds": 15
                 }
             }
         ],
