@@ -119,6 +119,15 @@ def make_commands(
 
 
 class TestPluginCommandsDebug:
+    def test_ai_filter_api_key_is_masked(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+        secret = "sk-secret-content-filter-key"
+
+        masked = commands.mask_sensitive(secret, "ai_filter_api_key")
+
+        assert masked == "[REDACTED]"
+        assert secret not in masked
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("action", [None, "", "  "])
     async def test_debug_without_action_returns_usage(self, action: str | None) -> None:
@@ -308,6 +317,24 @@ class TestPluginCommandsDebug:
         assert "debug_enabled_default" not in commands.config
         commands.config.save_config.assert_not_called()
         commands.context._star_manager.reload.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_global_ai_key_never_echoes_secret(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["forward_config"] = {}
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+        secret = "sk-private-content-filter-key"
+
+        results = []
+        async for result in commands.set_config(
+            event, f"global ai_filter_api_key {secret}"
+        ):
+            results.append(result)
+
+        assert commands.config["forward_config"]["ai_filter_api_key"] == secret
+        assert secret not in "\n".join(results)
+        assert "[REDACTED]" in results[0]
 
 
 class TestPluginCommandsClearQueue:

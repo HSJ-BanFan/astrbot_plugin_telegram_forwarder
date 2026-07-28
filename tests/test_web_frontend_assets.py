@@ -335,6 +335,27 @@ def test_forward_config_exposes_file_direct_link_base_url() -> None:
         assert "普通文件直链基址" in text
 
 
+def test_forward_config_exposes_ai_and_qr_filter_controls() -> None:
+    required = (
+        '"ai_filter_enabled"',
+        '"ai_filter_base_url"',
+        '"ai_filter_api_key"',
+        'type: "password"',
+        '"ai_filter_model"',
+        '"ai_filter_prompt"',
+        '"qr_filter_enabled"',
+        '"qr_filter_mode"',
+        '"qr_risk_keywords"',
+    )
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        config_text = (asset_root / "js" / "config.js").read_text(encoding="utf-8")
+        ui_text = (asset_root / "js" / "ui_config.js").read_text(encoding="utf-8")
+        for marker in required:
+            assert marker in config_text
+        assert 'field.type === "password" ? "password"' in ui_text
+        assert 'field.type === "textarea"' in ui_text
+
+
 def test_status_polling_does_not_rerender_config_surfaces() -> None:
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
         text = (asset_root / "app.js").read_text(encoding="utf-8")

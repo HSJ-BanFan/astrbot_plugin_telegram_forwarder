@@ -41,6 +41,7 @@ DEFAULT_WEB_CONFIG = {
     "token": "",
 }
 WEAK_DEFAULT_WEB_TOKENS = {"123456"}
+AI_KEY_PLACEHOLDER = "[REDACTED]"
 SILENT_OK_WEB_PATHS = {"/api/status"}
 SILENT_OK_WEB_PREFIXES = ("/assets/",)
 WEB_REQUEST_LABELS = {
@@ -846,6 +847,9 @@ class WebAdminServer:
 
     async def get_config(self) -> dict[str, Any]:
         config = self._to_plain(dict(self.plugin.config))
+        forward_config = config.get("forward_config")
+        if isinstance(forward_config, dict) and forward_config.get("ai_filter_api_key"):
+            forward_config["ai_filter_api_key"] = AI_KEY_PLACEHOLDER
         config["proxy_config"] = self.normalize_proxy_config(
             config.get("proxy_config"), config.get("proxy", "")
         )
@@ -1169,7 +1173,21 @@ class WebAdminServer:
             if not isinstance(incoming["forward_config"], dict):
                 raise WebAdminError("forward_config 必须是对象。")
             forward_config = dict(incoming["forward_config"])
-            for list_key in ("forward_types", "filter_keywords", "monitor_keywords"):
+            old_forward_config = self.plugin.config.get("forward_config", {})
+            if (
+                forward_config.get("ai_filter_api_key") == AI_KEY_PLACEHOLDER
+                and isinstance(old_forward_config, dict)
+                and old_forward_config.get("ai_filter_api_key")
+            ):
+                forward_config["ai_filter_api_key"] = old_forward_config[
+                    "ai_filter_api_key"
+                ]
+            for list_key in (
+                "forward_types",
+                "filter_keywords",
+                "monitor_keywords",
+                "qr_risk_keywords",
+            ):
                 if list_key in forward_config:
                     forward_config[list_key] = self._as_string_list(
                         forward_config.get(list_key)

@@ -673,11 +673,21 @@ class PluginCommands:
             auth = "***@" if value.get("username") or value.get("password") else ""
             return f"{protocol}://{auth}{host}:{port}" if host else "<未设置>"
 
+        if field_name == "ai_filter_api_key":
+            return "[REDACTED]"
+
         s = str(value).strip()
         if len(s) <= 4:
             return "*" * len(s)  # 太短直接全遮
 
-        sensitive_fields = {"api_id", "api_hash", "phone", "proxy", "proxy_config"}
+        sensitive_fields = {
+            "api_id",
+            "api_hash",
+            "phone",
+            "proxy",
+            "proxy_config",
+            "ai_filter_api_key",
+        }
 
         if field_name not in sensitive_fields:
             return s
@@ -838,6 +848,17 @@ class PluginCommands:
             val = "已启用" if cfg.get(key) else "未设置"
             lines.append(f"• {name:<12} : {val}")
 
+        if is_global:
+            lines.extend(
+                [
+                    f"• {'AI 内容过滤':<12} : {'开启' if cfg.get('ai_filter_enabled') else '关闭'}",
+                    f"• {'AI 接口':<12} : {'已配置' if cfg.get('ai_filter_base_url') else '未设置'}",
+                    f"• {'AI API Key':<12} : {'已设置' if cfg.get('ai_filter_api_key') else '未设置'}",
+                    f"• {'AI 模型':<12} : {cfg.get('ai_filter_model') or '<未设置>'}",
+                    f"• {'本地二维码过滤':<12} : {'开启' if cfg.get('qr_filter_enabled') else '关闭'}",
+                ]
+            )
+
         # ─── 继承全局的开关字段 ───
         inherit_fields = [
             "exclude_text_on_media",
@@ -940,6 +961,20 @@ class PluginCommands:
                 ),
                 ("filter_keywords", "全局过滤关键词（包含任意一个即丢弃，逗号分隔）"),
                 ("filter_regex", "全局正则过滤（Python re 语法）"),
+                ("ai_filter_enabled", "AI 内容过滤开关（true/false）"),
+                ("ai_filter_base_url", "OpenAI 兼容 Base URL"),
+                (
+                    "ai_filter_allow_private_endpoint",
+                    "允许受信任的本地/私网 AI 端点（true/false）",
+                ),
+                ("ai_filter_api_key", "AI API Key（查询配置时不会显示明文）"),
+                ("ai_filter_model", "支持图片输入的模型名"),
+                ("ai_filter_prompt", "AI 内容过滤提示词（代码会追加固定 JSON 约束）"),
+                ("ai_filter_timeout", "AI 接口总超时秒数"),
+                ("ai_filter_max_calls_per_cycle", "单轮 AI 分析上限"),
+                ("qr_filter_enabled", "本地二维码过滤开关（true/false）"),
+                ("qr_filter_mode", "二维码过滤模式（风险二维码/全部二维码）"),
+                ("qr_risk_keywords", "二维码风险词（逗号分隔）"),
                 ("monitor_keywords", "全局监听关键词（命中任一立即触发）"),
                 ("monitor_regex", "全局监听正则（命中立即触发）"),
                 ("curfew_time", "宵禁时间段（格式 23:00-07:00，支持跨天，留空禁用）"),
@@ -1430,6 +1465,26 @@ class PluginCommands:
             "curfew_time": str,
             "filter_regex": str,
             "monitor_regex": str,
+            "ai_filter_enabled": lambda v: (
+                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
+            ),
+            "ai_filter_base_url": str,
+            "ai_filter_allow_private_endpoint": lambda v: (
+                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
+            ),
+            "ai_filter_api_key": str,
+            "ai_filter_model": str,
+            "ai_filter_prompt": str,
+            "ai_filter_timeout": int,
+            "ai_filter_max_calls_per_cycle": int,
+            "qr_filter_enabled": lambda v: (
+                v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
+            ),
+            "qr_filter_mode": str,
+            "qr_risk_keywords": lambda v: [
+                x.strip() for x in v.split(",") if x.strip()
+            ],
+            "content_filter_max_image_mb": int,
             "exclude_text_on_media": lambda v: (
                 v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
             ),
@@ -1480,6 +1535,7 @@ class PluginCommands:
             "forward_types",
             "filter_keywords",
             "monitor_keywords",
+            "qr_risk_keywords",
             "target_qq_sessions",
         ):
             value = []
@@ -1527,10 +1583,20 @@ class PluginCommands:
                 return "<未设置>"
             return str(v)
 
+        old_display = (
+            self.mask_sensitive(old, field)
+            if field == "ai_filter_api_key"
+            else pretty(old)
+        )
+        new_display = (
+            self.mask_sensitive(value, field)
+            if field == "ai_filter_api_key"
+            else pretty(value)
+        )
         yield event.plain_result(
             f"✅ 已修改 {target_name} 的 {field}\n"
-            f"  旧值：{pretty(old)}\n"
-            f"  新值：{pretty(value)}\n"
+            f"  旧值：{old_display}\n"
+            f"  新值：{new_display}\n"
             "配置已保存。下次调度自动生效，也可 /tg check 立即触发。"
         )
 

@@ -2,7 +2,6 @@ import json
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -47,3 +46,19 @@ def test_default_examples_do_not_include_local_filter_configuration():
 
     assert schema["forward_config"]["items"]["filter_keywords"]["default"] == []
     assert pattern == r"#\s*NSFW\b|(?:NSFW|前方高能)\s*提前预警"
+
+
+def test_default_content_safety_config_is_disabled_and_complete():
+    schema = load_schema()
+    items = schema["forward_config"]["items"]
+
+    assert items["ai_filter_enabled"]["default"] is False
+    assert items["qr_filter_enabled"]["default"] is False
+    assert items["ai_filter_base_url"]["default"] == ""
+    assert items["ai_filter_api_key"]["default"] == ""
+    assert items["ai_filter_model"]["default"] == ""
+    assert "NSFW" in items["ai_filter_prompt"]["default"]
+    assert "二维码" in items["ai_filter_prompt"]["default"]
+    assert "\\n" not in items["ai_filter_prompt"]["default"]
+    assert items["qr_filter_mode"]["default"] == "风险二维码"
+    assert "网贷" in items["qr_risk_keywords"]["default"]

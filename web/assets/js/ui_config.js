@@ -260,7 +260,15 @@ function renderField(field, value, attrName) {
       </div>
     `;
   }
-  const inputType = field.type === "int" || field.type === "float" ? "number" : "text";
+  if (field.type === "textarea") {
+    return `
+      <div class="settings-card wide">
+        <h3>${escapeHtml(field.label)}</h3>
+        <textarea ${attr} rows="8">${escapeHtml(value ?? "")}</textarea>
+      </div>
+    `;
+  }
+  const inputType = field.type === "int" || field.type === "float" ? "number" : field.type === "password" ? "password" : "text";
   const step = field.type === "float" ? ' step="0.1"' : "";
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : "";
   return `
@@ -341,7 +349,7 @@ export function collectForwardConfig() {
       const parsed = Number.parseFloat(el.value);
       cfg[field.key] = Number.isFinite(parsed) ? parsed : field.defaultValue;
     } else {
-      cfg[field.key] = el.value.trim();
+      cfg[field.key] = field.type === "password" ? el.value : el.value.trim();
     }
   });
   store.state.config.forward_config = cfg;

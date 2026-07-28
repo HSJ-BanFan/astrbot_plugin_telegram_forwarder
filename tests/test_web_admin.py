@@ -485,6 +485,53 @@ def test_save_config_rejects_unpaired_proxy_credentials(web_admin):
     web_admin.plugin.config.save_config.assert_not_called()
 
 
+def test_get_config_masks_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-real-secret-key",
+        "ai_filter_enabled": True,
+    }
+
+    result = asyncio.run(web_admin.server.get_config())
+
+    fwd = result["config"]["forward_config"]
+    assert fwd["ai_filter_api_key"] == "[REDACTED]"
+    assert fwd["ai_filter_enabled"] is True
+
+
+def test_export_config_masks_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-export-secret",
+    }
+
+    result = asyncio.run(web_admin.server.export_config())
+
+    assert result["config"]["forward_config"]["ai_filter_api_key"] == "[REDACTED]"
+
+
+def test_save_config_placeholder_preserves_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-old-secret",
+        "ai_filter_enabled": False,
+    }
+
+    asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "forward_config": {
+                        "ai_filter_api_key": "[REDACTED]",
+                        "ai_filter_enabled": True,
+                    }
+                }
+            }
+        )
+    )
+
+    fwd = web_admin.plugin.config["forward_config"]
+    assert fwd["ai_filter_api_key"] == "sk-old-secret"
+    assert fwd["ai_filter_enabled"] is True
+
+
 def test_proxy_test_endpoint_requires_auth(web_admin):
     client = web_admin.server.app.test_client()
 
