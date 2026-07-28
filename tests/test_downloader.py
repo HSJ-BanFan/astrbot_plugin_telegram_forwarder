@@ -68,3 +68,19 @@ async def test_download_media_timeout_retries_and_returns(tmp_path):
 
     assert result == []
     assert client.download_media.await_count == 3
+
+
+def test_download_timeout_scales_with_file_size(tmp_path):
+    module = load_downloader_module()
+    downloader = module.MediaDownloader(MagicMock(), tmp_path)
+
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=2 * 1024**2))) == 30
+    )
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=25 * 1024**2))) == 90
+    )
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=500 * 1024**2)))
+        == 300
+    )

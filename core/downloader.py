@@ -30,7 +30,7 @@ class MediaDownloader:
             return max(0.01, float(self.download_timeout_sec))
         file_size = int(getattr(getattr(msg, "file", None), "size", 0) or 0)
         extra_steps = file_size // (10 * 1024 * 1024)
-        return min(600.0, 120.0 + extra_steps * 30.0)
+        return min(300.0, 30.0 + extra_steps * 30.0)
 
     async def download_media(self, msg: Message, max_size_mb: float = 0) -> list[str]:
         """
