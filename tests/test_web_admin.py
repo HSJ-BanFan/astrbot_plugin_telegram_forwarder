@@ -272,18 +272,34 @@ def test_query_token_is_not_accepted(web_admin):
 
 
 def test_status_uses_cached_telegram_state_without_rpc(web_admin):
-    wrapper = web_admin.plugin.client_wrapper
-    wrapper.client.is_user_authorized = AsyncMock()
-    wrapper.client.get_me = AsyncMock()
-    wrapper.is_connected.return_value = True
-    wrapper.is_authorized.return_value = True
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(),
+        get_me=AsyncMock(),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.forwarder = SimpleNamespace(
+        storage=SimpleNamespace(get_all_pending=MagicMock(return_value=[])),
+        stats={},
+        _send_dispatch_lock=asyncio.Lock(),
+        _global_send_lock=asyncio.Lock(),
+        _channel_locks={},
+    )
+    web_admin.plugin.scheduler = SimpleNamespace(
+        running=True,
+        get_jobs=MagicMock(return_value=[]),
+    )
 
     result = asyncio.run(web_admin.server.get_status())
 
     assert result["telegram"]["connected"] is True
     assert result["telegram"]["authorized"] is True
-    wrapper.client.is_user_authorized.assert_not_awaited()
-    wrapper.client.get_me.assert_not_awaited()
+    client.is_user_authorized.assert_not_awaited()
+    client.get_me.assert_not_awaited()
 
 
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):
