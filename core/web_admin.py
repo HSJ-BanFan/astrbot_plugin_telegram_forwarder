@@ -743,8 +743,24 @@ class WebAdminServer:
         wrapper._authorized = False
         wrapper._init_client()
 
+    def _cached_login_status(self) -> dict[str, Any]:
+        wrapper = self.plugin.client_wrapper
+        client = getattr(wrapper, "client", None) if wrapper else None
+        return {
+            "connected": bool(wrapper and wrapper.is_connected()),
+            "authorized": bool(wrapper and wrapper.is_authorized()),
+            "login_in_progress": bool(self._login_data),
+            "need_password": bool(self._login_data.get("need_password")),
+            "replace_existing": bool(self._login_data.get("replace_existing")),
+            "code_sent": bool(self._login_data.get("phone_code_hash")),
+            "phone": self._login_data.get("phone")
+            or self.plugin.config.get("phone", ""),
+            "created_at": self._login_data.get("created_at"),
+            "me": None if client is None else {"cached": True},
+        }
+
     async def get_status(self) -> dict[str, Any]:
-        login_status = await self.get_login_status()
+        login_status = self._cached_login_status()
         forwarder = self.plugin.forwarder
         all_pending = forwarder.storage.get_all_pending()
         queue_by_channel: dict[str, int] = {}

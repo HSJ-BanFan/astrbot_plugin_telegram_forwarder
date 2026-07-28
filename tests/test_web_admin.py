@@ -271,6 +271,21 @@ def test_query_token_is_not_accepted(web_admin):
     assert protected.status_code == 401
 
 
+def test_status_uses_cached_telegram_state_without_rpc(web_admin):
+    wrapper = web_admin.plugin.client_wrapper
+    wrapper.client.is_user_authorized = AsyncMock()
+    wrapper.client.get_me = AsyncMock()
+    wrapper.is_connected.return_value = True
+    wrapper.is_authorized.return_value = True
+
+    result = asyncio.run(web_admin.server.get_status())
+
+    assert result["telegram"]["connected"] is True
+    assert result["telegram"]["authorized"] is True
+    wrapper.client.is_user_authorized.assert_not_awaited()
+    wrapper.client.get_me.assert_not_awaited()
+
+
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):
     rule = {
         "__template_key": "custom",
