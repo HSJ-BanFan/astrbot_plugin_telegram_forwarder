@@ -12,11 +12,25 @@ class MediaDownloader:
     """
 
     def __init__(
-        self, client, plugin_data_dir: Path, max_file_size: int = 500 * 1024 * 1024
+        self,
+        client,
+        plugin_data_dir: Path,
+        max_file_size: int = 500 * 1024 * 1024,
+        download_timeout_sec: float | None = None,
+        retry_delay_sec: float = 2.0,
     ):
         self.client = client
         self.plugin_data_dir = plugin_data_dir
         self.max_file_size = max_file_size
+        self.download_timeout_sec = download_timeout_sec
+        self.retry_delay_sec = max(0.0, float(retry_delay_sec))
+
+    def _download_timeout(self, msg: Message) -> float:
+        if self.download_timeout_sec is not None:
+            return max(0.01, float(self.download_timeout_sec))
+        file_size = int(getattr(getattr(msg, "file", None), "size", 0) or 0)
+        extra_steps = file_size // (10 * 1024 * 1024)
+        return min(600.0, 120.0 + extra_steps * 30.0)
 
     async def download_media(self, msg: Message, max_size_mb: float = 0) -> list[str]:
         """
@@ -85,6 +99,7 @@ class MediaDownloader:
 
             retry_count = 3
             for attempt in range(retry_count):
+                timeout_sec = self._download_timeout(msg)
                 try:
                     if not self.client.is_connected():
                         logger.warning(
@@ -95,10 +110,13 @@ class MediaDownloader:
                         except Exception as e:
                             logger.error(f"[Downloader] 重连失败: {e}")
 
-                    path = await self.client.download_media(
-                        msg,
-                        file=self.plugin_data_dir,
-                        progress_callback=progress_callback,
+                    path = await asyncio.wait_for(
+                        self.client.download_media(
+                            msg,
+                            file=self.plugin_data_dir,
+                            progress_callback=progress_callback,
+                        ),
+                        timeout=timeout_sec,
                     )
                     if path:
                         local_files.append(path)
@@ -106,12 +124,20 @@ class MediaDownloader:
                 except asyncio.CancelledError:
                     logger.warning(f"[Downloader] 消息 {msg.id} 的下载被取消")
                     raise
+                except TimeoutError:
+                    logger.warning(
+                        f"[Downloader] 消息 {msg.id} 下载超时 (尝试 {attempt + 1}/{retry_count}, timeout={timeout_sec:.0f}s)"
+                    )
+                    if attempt < retry_count - 1:
+                        await asyncio.sleep(self.retry_delay_sec)
+                    else:
+                        logger.error(f"[Downloader] 消息 {msg.id} 下载最终超时")
                 except Exception as e:
                     logger.warning(
                         f"[Downloader] 消息 {msg.id} 下载失败 (尝试 {attempt + 1}/{retry_count}): {e}"
                     )
                     if attempt < retry_count - 1:
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(self.retry_delay_sec)
                     else:
                         logger.error(f"[Downloader] 消息 {msg.id} 下载最终失败")
 
