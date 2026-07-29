@@ -1927,6 +1927,91 @@ class TestQQBatchBuilder:
         )
         assert result.target_failures == {}
 
+    @pytest.mark.asyncio
+    async def test_build_skips_caption_when_media_download_fails(
+        self, sender, qq_module
+    ):
+        """有图/视频但下载失败时，不得只转发 caption 纯文字。"""
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        msg = type(
+            "Msg",
+            (),
+            {
+                "id": 311789,
+                "text": "via my nbkls",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": object(),
+                "photo": object(),
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[msg]],
+            src_channel="xinjingdaily",
+            display_name="心惊报",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert result.processed_batches == []
+        assert result.target_failures == {0: "media_download_failed"}
+        # 不得残留纯文字节点
+        assert not any(
+            hasattr(component, "text") and "via my nbkls" in component.text
+            for batch in result.processed_batches
+            for node in batch.get("nodes_data", [])
+            for component in node
+        )
+
+    @pytest.mark.asyncio
+    async def test_build_keeps_pure_text_when_no_media(self, sender, qq_module):
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        msg = type(
+            "Msg",
+            (),
+            {
+                "id": 42,
+                "text": "hello plain",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": None,
+                "photo": None,
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[msg]],
+            src_channel="demo",
+            display_name="demo",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert len(result.processed_batches) == 1
+        texts = [
+            component.text
+            for node in result.processed_batches[0]["nodes_data"]
+            for component in node
+            if hasattr(component, "text")
+        ]
+        assert any("hello plain" in text for text in texts)
+        assert result.target_failures == {}
+
 
 class TestReplyPreviewIntegration:
     @pytest.mark.asyncio

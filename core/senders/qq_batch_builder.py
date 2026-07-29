@@ -76,6 +76,36 @@ class BuildBatchesResult:
     target_failures: dict[int, str] = field(default_factory=dict)
 
 
+def message_expects_downloadable_media(msg: Message) -> bool:
+    """消息是否携带应下载的图片/视频/音频/文件媒体。
+
+    下载失败时不应退化为只发 caption；贴纸等 QQ 无法展示的类型不在此列。
+    """
+    if not getattr(msg, "media", None):
+        return False
+    if getattr(msg, "sticker", None):
+        return False
+    skip_attr_names = {
+        "DocumentAttributeAnimated",
+        "DocumentAttributeCustomEmoji",
+    }
+    document = getattr(getattr(msg, "media", None), "document", None)
+    if document is not None and any(
+        getattr(attr, "type", None) == "animated"
+        or type(attr).__name__ in skip_attr_names
+        for attr in getattr(document, "attributes", []) or []
+    ):
+        return False
+    return bool(
+        getattr(msg, "photo", None)
+        or getattr(msg, "video", None)
+        or getattr(msg, "audio", None)
+        or getattr(msg, "voice", None)
+        or getattr(msg, "document", None)
+        or getattr(msg, "file", None)
+    )
+
+
 async def build_processed_batches(
     *,
     sender: "QQSender",
@@ -118,6 +148,7 @@ async def build_processed_batches(
     for batch_index, msgs in enumerate(real_batches):
         all_local_files = []
         all_nodes_data = []
+        media_download_failed = False
         try:
             reply_preview_cache = await sender._prefetch_reply_previews(
                 msgs, src_channel, strip_links=strip_links
@@ -133,9 +164,17 @@ async def build_processed_batches(
                 media_components = []
                 has_any_attachment = False
                 msg_max_size = getattr(msg, "_max_file_size", 0)
+                expects_media = message_expects_downloadable_media(msg)
                 files = await sender.downloader.download_media(
                     msg, max_size_mb=msg_max_size
                 )
+                if expects_media and not files:
+                    media_download_failed = True
+                    logger.warning(
+                        f"[QQSender] 消息 {getattr(msg, 'id', '?')} 媒体下载失败，"
+                        "跳过整条（不发送纯文字 caption）"
+                    )
+                    continue
                 for fpath in files:
                     all_local_files.append(fpath)
                     has_any_attachment = True
@@ -204,6 +243,8 @@ async def build_processed_batches(
                         contains_audio=sender._batch_contains_audio(all_nodes_data),
                     ).as_batch_data()
                 )
+            elif media_download_failed:
+                target_failures.setdefault(batch_index, "media_download_failed")
             else:
                 target_failures.setdefault(batch_index, "preprocess_empty")
         except Exception as e:
