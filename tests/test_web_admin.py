@@ -1203,3 +1203,46 @@ def test_static_assets_serving(web_admin):
         assert client.get(path).status_code == 200, (
             f"Static asset {path} failed to resolve"
         )
+
+
+def test_normalize_proxy_config_rejects_invalid_legacy_url(web_admin):
+    with pytest.raises(web_admin.module.WebAdminError, match="代理 URL 格式无效"):
+        web_admin.server.normalize_proxy_config(None, "socks5://proxy.example.com:not-a-port")
+
+
+def test_probe_http_proxy_quality_applies_deadline_on_fragmented_recv(web_admin):
+    proxy_socket = MagicMock()
+    # drip-fed CONNECT response; each recv must re-apply remaining timeout
+    proxy_socket.recv.side_effect = [
+        b"HTTP/1.1 200 Connection",
+        b" established\r\n\r\n",
+    ]
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+    with (
+        patch.object(web_admin.module.socket, "create_connection", return_value=proxy_socket),
+        patch.object(web_admin.module.ssl, "create_default_context", return_value=ssl_context),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            # started, create_connection, settimeout before send,
+            # recv1 remaining, recv2 remaining, wrap settimeout, latency
+            side_effect=[1.0, 1.0, 1.0, 1.1, 1.2, 1.3, 1.050],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "quality",
+            8.0,
+        )
+    assert result["success"] is True
+    assert proxy_socket.recv.call_count == 2
+    # settimeout called before each recv (plus earlier pre-send / wrap)
+    assert proxy_socket.settimeout.call_count >= 3

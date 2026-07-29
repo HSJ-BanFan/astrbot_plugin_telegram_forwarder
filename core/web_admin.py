@@ -887,7 +887,12 @@ class WebAdminServer:
 
         has_structured_proxy = any((host, port_value, username, password))
         if not has_structured_proxy and legacy_proxy:
-            parsed = urlparse(str(legacy_proxy).strip())
+            try:
+                parsed = urlparse(str(legacy_proxy).strip())
+                # urlparse 对非法端口 / 残缺 IPv6 可能在访问 .port 时抛 ValueError
+                _ = parsed.port
+            except ValueError as exc:
+                raise WebAdminError("代理 URL 格式无效。") from exc
             legacy_protocol = parsed.scheme.lower()
             if legacy_protocol.startswith("http"):
                 protocol = "http"
