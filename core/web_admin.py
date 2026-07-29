@@ -132,6 +132,7 @@ class WebAdminServer:
         self.loop = loop
         self._login_data: dict[str, Any] = {}
         self._login_wrapper: TelegramClientWrapper | None = None
+        self._telegram_me_cache: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
         self._http_server = None
         self._runtime_operations: list[dict[str, Any]] = []
@@ -745,10 +746,13 @@ class WebAdminServer:
 
     def _cached_login_status(self) -> dict[str, Any]:
         wrapper = self.plugin.client_wrapper
-        client = getattr(wrapper, "client", None) if wrapper else None
+        authorized = bool(wrapper and wrapper.is_authorized())
+        me = self._telegram_me_cache if authorized else None
+        if not authorized:
+            self._telegram_me_cache = None
         return {
             "connected": bool(wrapper and wrapper.is_connected()),
-            "authorized": bool(wrapper and wrapper.is_authorized()),
+            "authorized": authorized,
             "login_in_progress": bool(self._login_data),
             "need_password": bool(self._login_data.get("need_password")),
             "replace_existing": bool(self._login_data.get("replace_existing")),
@@ -756,11 +760,51 @@ class WebAdminServer:
             "phone": self._login_data.get("phone")
             or self.plugin.config.get("phone", ""),
             "created_at": self._login_data.get("created_at"),
-            "me": None if client is None else {"cached": True},
+            "me": me,
         }
+
+    async def _refresh_telegram_me(self) -> dict[str, Any] | None:
+        """登录成功后刷新一次账号资料，供 /api/status 无 RPC 轮询复用。"""
+        wrapper = self.plugin.client_wrapper
+        client = getattr(wrapper, "client", None) if wrapper else None
+        if not wrapper or not client:
+            self._telegram_me_cache = None
+            return None
+        try:
+            if not wrapper.is_connected():
+                connected = await wrapper.ensure_connected()
+                if not connected:
+                    return self._telegram_me_cache
+            authorized = bool(await client.is_user_authorized())
+            if not authorized:
+                self._telegram_me_cache = None
+                wrapper._authorized = False
+                return None
+            wrapper._authorized = True
+            me = await client.get_me()
+            profile = {
+                "id": getattr(me, "id", None),
+                "username": getattr(me, "username", None),
+                "first_name": getattr(me, "first_name", None),
+                "last_name": getattr(me, "last_name", None),
+                "phone": getattr(me, "phone", None),
+            }
+            self._telegram_me_cache = profile
+            return profile
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] refresh telegram me failed: {exc}")
+            return self._telegram_me_cache
 
     async def get_status(self) -> dict[str, Any]:
         login_status = self._cached_login_status()
+        # 已授权但还没拿到昵称/ID 时补刷一次；之后轮询只读缓存，避免打 Telegram RPC。
+        if login_status.get("authorized") and not (
+            isinstance(login_status.get("me"), dict) and login_status["me"].get("id")
+        ):
+            me = await self._refresh_telegram_me()
+            login_status = self._cached_login_status()
+            if me is not None:
+                login_status["me"] = me
         forwarder = self.plugin.forwarder
         all_pending = forwarder.storage.get_all_pending()
         queue_by_channel: dict[str, int] = {}
@@ -954,7 +998,6 @@ class WebAdminServer:
         url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
 
-    @staticmethod
     @staticmethod
     def _probe_proxy_sync(
         proxy_config: dict[str, Any], mode: str, timeout: float
@@ -1527,7 +1570,12 @@ class WebAdminServer:
                     self.plugin.config.save_config()
                     await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 self._login_data.clear()
-                return {"authorized": True, "message": "登录成功。"}
+                me = await self._refresh_telegram_me()
+                return {
+                    "authorized": True,
+                    "message": "登录成功。",
+                    "me": me,
+                }
             return {"authorized": False, "message": "验证码已提交，但账号仍未授权。"}
         except SessionPasswordNeededError:
             self._login_data["need_password"] = True
@@ -1571,7 +1619,12 @@ class WebAdminServer:
                     self.plugin.config.save_config()
                     await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 self._login_data.clear()
-                return {"authorized": True, "message": "两步验证通过，登录完成。"}
+                me = await self._refresh_telegram_me()
+                return {
+                    "authorized": True,
+                    "message": "两步验证通过，登录完成。",
+                    "me": me,
+                }
             return {"authorized": False, "message": "密码已提交，但账号仍未授权。"}
         except FloodWaitError as exc:
             seconds = getattr(exc, "seconds", 0) or 0
@@ -1591,6 +1644,7 @@ class WebAdminServer:
             "need_password": False,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
+        # 重新登录流程中仍保留当前授权缓存，直到新账号成功替换。
         return {"message": "已进入重新登录流程，当前已登录账号会保留到新账号登录成功。"}
 
     async def runtime_check(self) -> dict[str, Any]:

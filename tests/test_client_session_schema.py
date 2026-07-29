@@ -1037,6 +1037,6 @@ def test_start_routes_connection_through_ensure_connected():
 
     wrapper.ensure_connected.assert_awaited_once_with()
     client.connect.assert_not_awaited()
-    client.get_dialogs.assert_awaited_once_with(limit=None)
+    client.get_dialogs.assert_awaited_once_with(limit=20)
     assert wrapper._authorized is True
     auth_cache.clear()

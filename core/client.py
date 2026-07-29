@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 import re
 import shutil
 import sqlite3
@@ -11,6 +12,25 @@ import socks
 import telethon
 from astrbot.api import AstrBotConfig, logger
 from telethon import TelegramClient
+
+
+def _silence_telethon_loggers() -> None:
+    """AstrBot root logger 为 DEBUG 时，Telethon 网络层会刷屏；统一压到 WARNING。"""
+    for name in (
+        "telethon",
+        "telethon.network",
+        "telethon.network.mtprotosender",
+        "telethon.network.connection",
+        "telethon.client",
+        "telethon.client.updates",
+        "telethon.client.downloads",
+        "telethon.extensions",
+        "telethon.crypto",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_silence_telethon_loggers()
 
 
 # ========== 全局客户端缓存 ==========
@@ -426,8 +446,9 @@ class TelegramClientWrapper:
             auth_cache[self._session_path()] = True
             # 某些会话（例如 bot 会话）可能无权限调用 get_dialogs，
             # 此时不应影响“已授权”状态判定。
+            # 不要 limit=None：全量对话框会触发大量 GetChannelDifference，日志/网络双刷屏。
             try:
-                await self.client.get_dialogs(limit=None)
+                await self.client.get_dialogs(limit=20)
             except Exception as e:
                 logger.debug(f"[Client] skip get_dialogs after auth: {e}")
             return True, False
@@ -645,8 +666,9 @@ class TelegramClientWrapper:
             auth_cache[session_path] = True
 
             # ========== 同步对话框 ==========
+            # 仅轻量预热实体缓存；全量同步会拖慢启动并刷 Telethon DEBUG。
             logger.debug("[Client] 正在同步对话框...")
-            await self.client.get_dialogs(limit=None)
+            await self.client.get_dialogs(limit=20)
             logger.debug("[Client] 对话框同步完成")
 
         except Exception as e:

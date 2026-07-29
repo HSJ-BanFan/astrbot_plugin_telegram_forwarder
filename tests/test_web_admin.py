@@ -293,13 +293,57 @@ def test_status_uses_cached_telegram_state_without_rpc(web_admin):
         running=True,
         get_jobs=MagicMock(return_value=[]),
     )
+    web_admin.server._telegram_me_cache = {
+        "id": 12345,
+        "username": "demo_user",
+        "first_name": "Demo",
+        "last_name": None,
+        "phone": "8613800000000",
+    }
 
     result = asyncio.run(web_admin.server.get_status())
 
     assert result["telegram"]["connected"] is True
     assert result["telegram"]["authorized"] is True
+    assert result["telegram"]["me"]["id"] == 12345
+    assert result["telegram"]["me"]["username"] == "demo_user"
+    assert result["telegram"]["me"].get("cached") is not True
     client.is_user_authorized.assert_not_awaited()
     client.get_me.assert_not_awaited()
+
+
+def test_refresh_telegram_me_updates_status_cache(web_admin):
+    me = SimpleNamespace(
+        id=99,
+        username="nick",
+        first_name="小明",
+        last_name="",
+        phone="8613111111111",
+    )
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(return_value=me),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        _authorized=False,
+    )
+    web_admin.plugin.client_wrapper = wrapper
+
+    profile = asyncio.run(web_admin.server._refresh_telegram_me())
+
+    assert profile == {
+        "id": 99,
+        "username": "nick",
+        "first_name": "小明",
+        "last_name": "",
+        "phone": "8613111111111",
+    }
+    assert web_admin.server._telegram_me_cache == profile
+    client.get_me.assert_awaited_once()
 
 
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):

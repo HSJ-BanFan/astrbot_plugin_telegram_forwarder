@@ -420,6 +420,11 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         assert "withButtonLoading" not in proxy_handler
         assert "loadAll" not in proxy_handler
         assert "showToast" not in proxy_handler
+        assert 'dataset.loginBound !== "true"' in login_text
+        assert 'dataset.loginBound = "true"' in login_text
+        assert '["昵称"' in login_text or '["昵称",' in login_text
+        assert '["姓名"' not in login_text
+        assert "正在准备重新登录" in login_text
 
 
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:

@@ -148,8 +148,9 @@ export function renderLogin() {
       ? `@${me.username}`
       : me?.phone || "已授权账号"
     : "尚未登录 Telegram";
+  const nickname = [me?.first_name, me?.last_name].filter(Boolean).join(" ") || "-";
   const accountDetail = telegram.authorized
-    ? [me?.first_name, me?.last_name].filter(Boolean).join(" ") || me?.phone || "Session 可用"
+    ? (nickname !== "-" ? nickname : me?.phone || "Session 可用")
     : telegram.login_in_progress
       ? telegram.replace_existing && !telegram.phone
         ? "准备重新登录，当前账号仍然保留"
@@ -158,7 +159,7 @@ export function renderLogin() {
   const loginRows = telegram.authorized
     ? [
         ["账号", accountTitle],
-        ["姓名", [me?.first_name, me?.last_name].filter(Boolean).join(" ") || "-"],
+        ["昵称", nickname],
         ["手机号", me?.phone || telegram.phone || "-"],
         ["用户 ID", me?.id || "-"],
         ["连接状态", telegram.connected ? "已连接" : "未连接"],
@@ -225,17 +226,20 @@ export async function importSessionFromFile(file) {
 }
 
 export function initLogin() {
-  if (els.authForm) {
+  if (els.authForm && els.authForm.dataset.loginBound !== "true") {
+    els.authForm.dataset.loginBound = "true";
     els.authForm.addEventListener("submit", loginWithToken);
   }
-  if (els.logoutBtn) {
+  if (els.logoutBtn && els.logoutBtn.dataset.loginBound !== "true") {
+    els.logoutBtn.dataset.loginBound = "true";
     els.logoutBtn.addEventListener("click", () => {
       safeStorageRemove("telegram_forwarder_token");
       window.location.reload();
     });
   }
 
-  if (els.sendCodeBtn) {
+  if (els.sendCodeBtn && els.sendCodeBtn.dataset.loginBound !== "true") {
+    els.sendCodeBtn.dataset.loginBound = "true";
     els.sendCodeBtn.addEventListener("click", () =>
       withButtonLoading(els.sendCodeBtn, "正在发送验证码...", async () => {
         await saveConfig({ quiet: true });
@@ -288,7 +292,8 @@ export function initLogin() {
   runProxyTest(els.proxyConnectivityBtn, els.proxyConnectivityResult, "connectivity");
   runProxyTest(els.proxyQualityBtn, els.proxyQualityResult, "quality");
 
-  if (els.submitCodeBtn) {
+  if (els.submitCodeBtn && els.submitCodeBtn.dataset.loginBound !== "true") {
+    els.submitCodeBtn.dataset.loginBound = "true";
     els.submitCodeBtn.addEventListener("click", () =>
       withButtonLoading(els.submitCodeBtn, "正在验证验证码...", async () => {
         const result = await apiRequest("/api/login/code", "POST", { code: els.codeInput.value.trim() });
@@ -298,7 +303,8 @@ export function initLogin() {
     );
   }
 
-  if (els.submitPasswordBtn) {
+  if (els.submitPasswordBtn && els.submitPasswordBtn.dataset.loginBound !== "true") {
+    els.submitPasswordBtn.dataset.loginBound = "true";
     els.submitPasswordBtn.addEventListener("click", () =>
       withButtonLoading(els.submitPasswordBtn, "正在登录...", async () => {
         const result = await apiRequest("/api/login/password", "POST", { password: els.passwordInput.value });
@@ -308,19 +314,22 @@ export function initLogin() {
     );
   }
 
-  if (els.resetLoginBtn) {
+  if (els.resetLoginBtn && els.resetLoginBtn.dataset.loginBound !== "true") {
+    els.resetLoginBtn.dataset.loginBound = "true";
     els.resetLoginBtn.addEventListener("click", () => {
-      withButtonLoading(els.resetLoginBtn, "正在准备...", () => apiRequest("/api/login/reset", "POST"), "已进入重新登录流程。");
+      withButtonLoading(els.resetLoginBtn, "正在准备重新登录...", () => apiRequest("/api/login/reset", "POST"), "已进入重新登录流程。");
     });
   }
 
-  if (els.exportSessionBtn) {
+  if (els.exportSessionBtn && els.exportSessionBtn.dataset.loginBound !== "true") {
+    els.exportSessionBtn.dataset.loginBound = "true";
     els.exportSessionBtn.addEventListener("click", () =>
       withButtonLoading(els.exportSessionBtn, "正在导出...", exportSession, "登录信息已导出。")
     );
   }
 
-  if (els.importSessionBtn && els.sessionImportFile) {
+  if (els.importSessionBtn && els.sessionImportFile && els.importSessionBtn.dataset.loginBound !== "true") {
+    els.importSessionBtn.dataset.loginBound = "true";
     els.importSessionBtn.addEventListener("click", () => {
       els.sessionImportFile.value = "";
       els.sessionImportFile.click();
@@ -333,5 +342,8 @@ export function initLogin() {
   }
 
   // subscribe to store changes to update login rendering
-  store.subscribe(renderLogin);
+  if (!store._loginRenderBound) {
+    store._loginRenderBound = true;
+    store.subscribe(renderLogin);
+  }
 }
