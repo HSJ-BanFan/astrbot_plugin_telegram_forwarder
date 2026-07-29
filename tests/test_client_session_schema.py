@@ -856,6 +856,21 @@ def test_parse_structured_proxy_requires_paired_credentials():
         )
 
 
+def test_parse_structured_socks4_rejects_password():
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="socks4 不支持密码"):
+        client_module.TelegramClientWrapper._parse_proxy_config(
+            {
+                "protocol": "socks4",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "user",
+                "password": "secret",
+            }
+        )
+
+
 def test_redact_structured_proxy_hides_credentials():
     client_module = load_client_module()
 

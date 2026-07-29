@@ -1270,6 +1270,13 @@ class Forwarder:
             logical_sent_count = 0
             processed_keys: set[tuple[str, int]] = set()
             pending_idx = 0
+            # AI 过滤预算按“整个 send 周期”初始化一次，避免每轮 try/retry 重置。
+            self._content_safety_calls_remaining = self._positive_int(
+                self.config.get("forward_config", {}).get(
+                    "ai_filter_max_calls_per_cycle", 5
+                ),
+                5,
+            )
 
             while logical_sent_count < batch_limit and pending_idx < len(valid_pending):
                 # 1. 提取下一组元数据进行尝试
@@ -1341,12 +1348,6 @@ class Forwarder:
                     channel_to_ids[c].append(mid)
 
                 raw_fetched_messages = []
-                self._content_safety_calls_remaining = self._positive_int(
-                    self.config.get("forward_config", {}).get(
-                        "ai_filter_max_calls_per_cycle", 5
-                    ),
-                    5,
-                )
                 skipped_grouped_ids = set()  # (频道, grouped_id)
                 individually_skipped_keys = set()
 

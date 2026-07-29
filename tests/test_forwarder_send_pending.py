@@ -510,6 +510,22 @@ async def test_content_safety_budget_keeps_local_qr_filter_active():
     assert passed_config["qr_filter_enabled"] is True
 
 
+def test_ai_budget_initialized_once_per_send_cycle_not_inside_retry_loop():
+    """AI 调用预算应在 send 外层循环前初始化一次，避免每轮 try 重置。"""
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "forwarder.py"
+    ).read_text(encoding="utf-8")
+    # Isolate the send_pending_messages body roughly around budget usage.
+    marker = "self._content_safety_calls_remaining = self._positive_int("
+    assert source.count(marker) == 1
+    # Budget assignment must appear before the outer while that drives retries.
+    assign_pos = source.index(marker)
+    while_pos = source.index(
+        "while logical_sent_count < batch_limit and pending_idx < len(valid_pending):"
+    )
+    assert assign_pos < while_pos
+
+
 def test_normalize_target_list_strips_skips_none_and_dedupes():
     forwarder_module = load_forwarder_module()
 

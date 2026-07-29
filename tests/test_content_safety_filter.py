@@ -94,7 +94,15 @@ def test_openai_url_normalization():
 
 @pytest.mark.parametrize(
     "base_url",
-    ["", "ftp://example.com/v1", "file:///etc/passwd", "https://127.0.0.1/v1"],
+    [
+        "",
+        "ftp://example.com/v1",
+        "file:///etc/passwd",
+        "https://127.0.0.1/v1",
+        "https://localhost/v1",
+        "http://localhost:11434/v1",
+        "https://metadata.google.internal/v1",
+    ],
 )
 def test_openai_url_rejects_unsafe_endpoints_by_default(base_url):
     module = load_module()
@@ -108,6 +116,9 @@ def test_openai_url_allows_private_endpoint_only_when_enabled():
 
     assert module.openai_chat_url("http://127.0.0.1:11434/v1", True) == (
         "http://127.0.0.1:11434/v1/chat/completions"
+    )
+    assert module.openai_chat_url("http://localhost:11434/v1", True) == (
+        "http://localhost:11434/v1/chat/completions"
     )
 
 

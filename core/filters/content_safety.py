@@ -64,12 +64,30 @@ def openai_chat_url(base_url: str, allow_private_endpoint: bool = False) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("AI Base URL 必须是完整的 HTTP(S) 地址")
+    hostname = parsed.hostname.lower()
+    blocked_hostnames = {
+        "localhost",
+        "metadata",
+        "metadata.google.internal",
+        "metadata.google",
+    }
+    if not allow_private_endpoint and (
+        hostname in blocked_hostnames or hostname.endswith(".localhost")
+    ):
+        raise ValueError("AI Base URL 不允许使用本地/元数据主机名，请显式开启私网端点")
     try:
         address = ipaddress.ip_address(parsed.hostname)
     except ValueError:
         address = None
     if address is not None and not allow_private_endpoint:
-        raise ValueError("AI Base URL 不允许使用 IP 地址，请显式开启私网端点")
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+        ):
+            raise ValueError("AI Base URL 不允许使用私网/环回 IP，请显式开启私网端点")
     if url.endswith("/chat/completions"):
         return url
     return f"{url}/chat/completions"

@@ -406,6 +406,10 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
             'resultElement.textContent = success ? `${result.latency_ms} ms` : "超时"'
             in login_text
         )
+        assert (
+            'resultElement.textContent = error.message || "超时"' in login_text
+        )
+        assert 'error.message.includes("填写")' not in login_text
         assert 'button.addEventListener("click", async () =>' in login_text
         assert "button.textContent = originalText" in login_text
         assert 'button.dataset.proxyTestBound === "true"' in login_text

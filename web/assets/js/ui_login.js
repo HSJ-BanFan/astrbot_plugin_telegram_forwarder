@@ -277,7 +277,7 @@ export function initLogin() {
         resultElement.textContent = success ? `${result.latency_ms} ms` : "超时";
       } catch (error) {
         resultElement.classList.add("timeout");
-        resultElement.textContent = error.message.includes("填写") ? error.message : "超时";
+        resultElement.textContent = error.message || "超时";
       } finally {
         button.disabled = false;
         button.textContent = originalText;

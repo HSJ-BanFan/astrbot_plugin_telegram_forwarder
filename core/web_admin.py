@@ -918,7 +918,10 @@ class WebAdminServer:
             raise WebAdminError("代理端口必须是数字。") from exc
         if not 1 <= port <= 65535:
             raise WebAdminError("代理端口必须在 1 到 65535 之间。")
-        if protocol != "socks4" and bool(username) != bool(password):
+        if protocol == "socks4":
+            if password:
+                raise WebAdminError("socks4 不支持密码，请仅填写用户名或改用 socks5。")
+        elif bool(username) != bool(password):
             raise WebAdminError("代理用户名和密码必须同时填写。")
         if password and not username:
             raise WebAdminError("代理密码不能在账号为空时单独填写。")

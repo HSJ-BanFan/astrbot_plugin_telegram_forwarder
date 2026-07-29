@@ -149,6 +149,7 @@ async def build_processed_batches(
         all_local_files = []
         all_nodes_data = []
         media_download_failed = False
+        batch_header_added = False
         try:
             reply_preview_cache = await sender._prefetch_reply_previews(
                 msgs, src_channel, strip_links=strip_links
@@ -190,18 +191,18 @@ async def build_processed_batches(
                 if reply_preview and not should_exclude_text:
                     text_parts.insert(0, reply_preview)
 
-                # 头部只应该在一个逻辑展示块里出现一次。
-                # 单频道时在每个批次的第一条消息前添加头部；混合大合并时则只在整个合并序列的第一条前添加，
-                # 否则会在 QQ 端看到重复的 From 前缀，影响可读性。
+                # 头部只在“第一条真正发出的消息”前加一次。
+                # 不能用原始 i==0：首条若因媒体下载失败被跳过，后续成功消息仍需 From 头。
                 add_header_this_time = False
                 if not should_exclude_text:
                     if involved_channels and len(involved_channels) > 1:
-                        if not header_added and i == 0:
+                        if not header_added:
                             add_header_this_time = True
                             header_added = True
-                    else:
-                        if i == 0:
-                            add_header_this_time = True
+                            batch_header_added = True
+                    elif not batch_header_added:
+                        add_header_this_time = True
+                        batch_header_added = True
 
                 if add_header_this_time:
                     if text_parts:
