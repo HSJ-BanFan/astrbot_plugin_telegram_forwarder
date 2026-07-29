@@ -514,6 +514,9 @@ class TelegramClientWrapper:
                     )
                 except (ValueError, AttributeError) as e:
                     logger.error(f"[Client] 代理 URL 格式错误: {e}")
+                    # 有代理配置却无效时 fail-closed，禁止静默直连。
+                    self.client = None
+                    return
 
             # ========== 创建 Telegram 客户端 ==========
             client_kwargs = {}

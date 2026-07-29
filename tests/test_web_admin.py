@@ -490,6 +490,7 @@ def test_save_config_legacy_proxy_replaces_existing_structured_proxy(web_admin):
         "username": "",
         "password": "",
     }
+    assert web_admin.plugin.config["proxy"] == "http://new.example.com:8443"
     web_admin.server._rebuild_client.assert_awaited_once_with()
 
 
@@ -667,7 +668,9 @@ def test_probe_http_proxy_quality_sends_connect_with_basic_auth(web_admin):
         patch.object(
             web_admin.module.time,
             "perf_counter",
-            side_effect=[1.0, 1.0, 1.0, 1.0, 1.050],
+            # started, create_connection timeout, settimeout before send,
+            # loop settimeout, final wrap settimeout, latency
+            side_effect=[1.0, 1.0, 1.0, 1.0, 1.0, 1.050],
         ),
     ):
         result = web_admin.server._probe_proxy_sync(
@@ -686,6 +689,7 @@ def test_probe_http_proxy_quality_sends_connect_with_basic_auth(web_admin):
     request = proxy_socket.sendall.call_args.args[0]
     assert b"CONNECT api.telegram.org:443 HTTP/1.1" in request
     assert b"Proxy-Authorization: Basic YWRtaW46c2VjcmV0" in request
+    assert b"Basic ***" not in request
     ssl_context.wrap_socket.assert_called_once_with(
         proxy_socket, server_hostname="api.telegram.org"
     )

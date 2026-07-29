@@ -958,7 +958,12 @@
 .proxy-fields {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1.5fr) minmax(110px, 0.75fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  grid-template-columns:
+    minmax(120px, 0.75fr)
+    minmax(180px, 1.5fr)
+    minmax(110px, 0.75fr)
+    minmax(150px, 1fr)
+    minmax(150px, 1fr);
   gap: 12px;
   margin: 0;
   padding: 12px;

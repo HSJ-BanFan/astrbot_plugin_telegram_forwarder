@@ -950,6 +950,7 @@ class WebAdminServer:
         return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
 
     @staticmethod
+    @staticmethod
     def _probe_proxy_sync(
         proxy_config: dict[str, Any], mode: str, timeout: float
     ) -> dict[str, Any]:
@@ -989,6 +990,7 @@ class WebAdminServer:
                     sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
                     response = b""
                     while b"\r\n\r\n" not in response and len(response) < 16384:
+                        sock.settimeout(remaining_timeout())
                         chunk = sock.recv(4096)
                         if not chunk:
                             break
@@ -1187,6 +1189,8 @@ class WebAdminServer:
         elif "proxy" in incoming:
             proxy_config = self.normalize_proxy_config(None, incoming["proxy"])
             self.plugin.config["proxy_config"] = proxy_config
+            # legacy-only 保存也要回写规范化后的 proxy URL，避免协议别名残留。
+            self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
 
         if "forward_config" in incoming:
             if not isinstance(incoming["forward_config"], dict):

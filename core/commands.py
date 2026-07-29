@@ -669,11 +669,26 @@ class PluginCommands:
         if field_name == "proxy_config" and isinstance(value, dict):
             protocol = str(value.get("protocol") or "socks5")
             host = str(value.get("host") or "")
-            port = str(value.get("port") or "")
+            port = value.get("port")
+            port_text = f":{port}" if port not in (None, "", 0, "0") else ""
             auth = "***@" if value.get("username") or value.get("password") else ""
-            return f"{protocol}://{auth}{host}:{port}" if host else "<未设置>"
+            return f"{protocol}://{auth}{host}{port_text}" if host else "<未设置>"
 
         if field_name == "ai_filter_api_key":
+            return "[REDACTED]"
+
+        if field_name == "proxy":
+            # 旧 proxy URL 可能含账号密码，必须确定性整段脱敏，不能随机遮一部分。
+            from urllib.parse import urlparse
+
+            raw = str(value).strip()
+            if not raw:
+                return "<未设置>"
+            parsed = urlparse(raw)
+            if parsed.scheme and parsed.hostname:
+                port = f":{parsed.port}" if parsed.port else ""
+                auth = "***@" if (parsed.username or parsed.password) else ""
+                return f"{parsed.scheme}://{auth}{parsed.hostname}{port}"
             return "[REDACTED]"
 
         s = str(value).strip()
