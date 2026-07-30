@@ -12,14 +12,28 @@ from ..common.text_tools import normalize_telegram_channel_name
 
 
 class TGChannelCache:
-    def __init__(self, plugin: Any, ttl_seconds: int = 90):
+    def __init__(
+        self,
+        plugin: Any,
+        ttl_seconds: int = 3600,
+        *,
+        # 给足扫描上限；真正截止靠 refresh_timeout=120s。
+        max_dialogs: int = 2000,
+        refresh_timeout: float = 120.0,
+        failure_cooldown: float = 20.0,
+    ):
         self.plugin = plugin
         self.ttl_seconds = ttl_seconds
+        self.max_dialogs = max(1, int(max_dialogs))
+        self.refresh_timeout = max(1.0, float(refresh_timeout))
+        self.failure_cooldown = max(0.5, float(failure_cooldown))
         self._lock = asyncio.Lock()
         self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
         self._channels: list[dict[str, Any]] = []
         self._available = False
         self._message = "Telegram client is unavailable."
+        self._pending_configured_refs: list[str] = []
 
     async def list_channels(
         self,
@@ -27,9 +41,16 @@ class TGChannelCache:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        configured = [
+            normalize_telegram_channel_name(str(raw or ""))
+            for raw in (configured_channel_refs or [])
+        ]
+        configured = [item for item in configured if item]
+        self._pending_configured_refs = configured
+
         if force or not self._is_fresh():
-            await self._refresh(force=force)
-        channels = self._merge_configured_channels(configured_channel_refs or [])
+            await self._refresh(force=force, configured_channel_refs=configured)
+        channels = self._merge_configured_channels(configured)
         return {
             "channels": channels,
             "available": self._available,
@@ -37,11 +58,24 @@ class TGChannelCache:
         }
 
     def _is_fresh(self) -> bool:
-        return (time.time() - self._last_refresh_at) < self.ttl_seconds
+        now = time.time()
+        if self._available and self._channels:
+            return (now - self._last_refresh_at) < self.ttl_seconds
+        # 失败/空结果：短冷却，避免 90s 内卡死在“加载失败”
+        anchor = self._last_failure_at or self._last_refresh_at
+        if anchor <= 0:
+            return False
+        return (now - anchor) < self.failure_cooldown
 
-    async def _refresh(self, *, force: bool = False) -> None:
+    async def _refresh(
+        self,
+        *,
+        force: bool = False,
+        configured_channel_refs: list[str] | None = None,
+    ) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and self._channels:
+            if not force and self._is_fresh() and (self._channels or self._last_failure_at):
+                # 冷却期内直接返回；仍允许 merge configured。
                 return
 
             client = getattr(
@@ -59,37 +93,113 @@ class TGChannelCache:
                 self._set_unavailable("Telegram client is not authorized.")
                 return
 
+            configured = configured_channel_refs or self._pending_configured_refs or []
             channels_by_ref: dict[str, dict[str, Any]] = {}
+
+            # 1) 先解析已配置频道：快、且对选择器最有用；不依赖全量对话框。
+            resolve_budget = min(30.0, max(5.0, self.refresh_timeout * 0.25))
+            resolved = await self._resolve_configured_entities(
+                client, configured, timeout=resolve_budget
+            )
+            channels_by_ref.update(resolved)
+
+            # 2) 再轻量扫对话框补全可选频道；忙时允许失败，不覆盖已解析结果。
             try:
-                dialogs = await self._load_dialogs(client)
+                dialogs = await asyncio.wait_for(
+                    self._load_dialogs(client),
+                    timeout=self.refresh_timeout,
+                )
+                for dialog in dialogs:
+                    entity = getattr(dialog, "entity", dialog)
+                    if not self._is_channel_like(dialog, entity):
+                        continue
+                    channel = self._normalize_channel(dialog, entity)
+                    channel_ref = channel["channel_ref"]
+                    if not channel_ref:
+                        continue
+                    # live 结果优先；已有 resolved/live 不覆盖
+                    existing = channels_by_ref.get(channel_ref)
+                    if existing and existing.get("source") in {"live", "resolved"}:
+                        continue
+                    channels_by_ref[channel_ref] = channel
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[WebAdmin] Telegram channel dialog scan timed out after %.1fs",
+                    self.refresh_timeout,
+                )
             except Exception as exc:
                 logger.warning("[WebAdmin] Failed to load Telegram channels: %s", exc)
-                self._channels = []
-                self._available = False
-                self._message = f"Failed to load Telegram channels: {exc}"
+
+            if channels_by_ref:
+                self._channels = self._sort_channels(channels_by_ref.values())
+                self._available = True
+                self._message = ""
                 self._last_refresh_at = time.time()
+                self._last_failure_at = 0.0
                 return
 
-            for dialog in dialogs:
-                entity = getattr(dialog, "entity", dialog)
-                if not self._is_channel_like(dialog, entity):
-                    continue
-                channel = self._normalize_channel(dialog, entity)
-                channel_ref = channel["channel_ref"]
-                if not channel_ref or channel_ref in channels_by_ref:
-                    continue
-                channels_by_ref[channel_ref] = channel
+            # 全失败：短冷却，前端可稍后重试；仍只展示 configured 占位。
+            self._channels = []
+            self._available = False
+            self._message = "Telegram 频道列表加载超时，可稍后手动刷新。"
+            self._last_failure_at = time.time()
+            self._last_refresh_at = self._last_failure_at
 
-            self._channels = self._sort_channels(channels_by_ref.values())
-            self._available = True
-            self._message = ""
-            self._last_refresh_at = time.time()
+    async def _resolve_configured_entities(
+        self,
+        client: Any,
+        configured_channel_refs: list[str],
+        *,
+        timeout: float,
+    ) -> dict[str, dict[str, Any]]:
+        if not configured_channel_refs or not hasattr(client, "get_entity"):
+            return {}
+
+        async def one(ref: str) -> tuple[str, dict[str, Any] | None]:
+            try:
+                entity = await asyncio.wait_for(client.get_entity(ref), timeout=10.0)
+            except Exception as exc:
+                logger.debug("[WebAdmin] resolve configured channel %s failed: %s", ref, exc)
+                return ref, None
+            channel = self._normalize_channel(SimpleDialog(entity), entity)
+            channel["source"] = "resolved"
+            # 保持用户配置的 channel_ref，避免 username/id 形态漂移
+            channel["channel_ref"] = ref
+            if not channel.get("username") and not ref.lstrip("-").isdigit():
+                channel["username"] = ref.lstrip("@")
+            return ref, channel
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    *(one(ref) for ref in configured_channel_refs),
+                    return_exceptions=True,
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[WebAdmin] configured channel resolve timed out after %.1fs", timeout)
+            return {}
+        except Exception as exc:
+            logger.debug("[WebAdmin] configured channel resolve failed: %s", exc)
+            return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        for item in results:
+            if not isinstance(item, tuple) or len(item) != 2:
+                continue
+            ref, channel = item
+            if channel:
+                out[str(ref)] = channel
+        return out
 
     def _set_unavailable(self, message: str) -> None:
         self._channels = []
         self._available = False
         self._message = message
-        self._last_refresh_at = time.time()
+        now = time.time()
+        self._last_failure_at = now
+        self._last_refresh_at = now
 
     async def _is_client_connected(self, client: Any) -> bool:
         checker = getattr(client, "is_connected", None)
@@ -128,18 +238,28 @@ class TGChannelCache:
             return False
 
     async def _load_dialogs(self, client: Any) -> list[Any]:
+        # 优先 get_dialogs(limit=N)：比无界 iter 更快结束，也更不容易和下载任务抢连接。
+        if hasattr(client, "get_dialogs"):
+            try:
+                result = client.get_dialogs(limit=self.max_dialogs)
+                if inspect.isawaitable(result):
+                    result = await result
+                return list(result or [])[: self.max_dialogs]
+            except TypeError:
+                # 某些 mock/旧签名不接受 limit
+                result = client.get_dialogs()
+                if inspect.isawaitable(result):
+                    result = await result
+                return list(result or [])[: self.max_dialogs]
+
         if hasattr(client, "iter_dialogs"):
             dialogs: list[Any] = []
             iterator = client.iter_dialogs()
             async for dialog in iterator:
                 dialogs.append(dialog)
+                if len(dialogs) >= self.max_dialogs:
+                    break
             return dialogs
-
-        if hasattr(client, "get_dialogs"):
-            result = client.get_dialogs()
-            if inspect.isawaitable(result):
-                result = await result
-            return list(result or [])
 
         return []
 
@@ -227,11 +347,22 @@ class TGChannelCache:
 
     @staticmethod
     def _sort_channels(channels: Any) -> list[dict[str, Any]]:
+        source_rank = {"live": 0, "resolved": 1, "configured": 2}
         return sorted(
             [copy.deepcopy(item) for item in channels],
             key=lambda item: (
-                str(item.get("source", "")) != "live",
+                source_rank.get(str(item.get("source", "")), 9),
                 str(item.get("title", "")).lower(),
                 str(item.get("channel_ref", "")).lower(),
             ),
         )
+
+
+class SimpleDialog:
+    """Minimal dialog-like object for entity-only normalization."""
+
+    def __init__(self, entity: Any):
+        self.entity = entity
+        self.title = getattr(entity, "title", None)
+        self.is_channel = True
+        self.is_user = False

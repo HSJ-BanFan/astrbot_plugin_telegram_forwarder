@@ -71,9 +71,15 @@ async function bridgeRequest(path, method = "GET", body = null, timeout = 30000)
   })(), timeout);
 }
 
+// Dashboard bridge 默认 30s；聚合首屏在 Telegram 繁忙时可能逼近上限，给更宽裕预算。
 export async function apiRequest(path, method = 'GET', body = null, timeout = 30000) {
   if (isDashboardPage()) {
-    return bridgeRequest(path, method, body, timeout);
+    const endpoint = String(path || "");
+    const effectiveTimeout =
+      timeout === 30000 && (endpoint.includes("/api/dashboard") || endpoint.endsWith("dashboard"))
+        ? 45000
+        : timeout;
+    return bridgeRequest(path, method, body, effectiveTimeout);
   }
 
   const headers = {

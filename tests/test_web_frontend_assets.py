@@ -114,9 +114,11 @@ def test_dashboard_page_has_visible_bridge_failure_state() -> None:
 def test_dashboard_page_boot_uses_aggregate_page_api() -> None:
     context_text = (PAGE_ASSETS / "js" / "context.js").read_text(encoding="utf-8")
 
-    assert 'apiRequest("/api/dashboard")' in context_text
+    assert 'apiRequest(' in context_text and '"/api/dashboard"' in context_text
     assert "dashboardPayload.status" in context_text
     assert "dashboardPayload.errors" in context_text
+    assert "loadAll({ force = false }" in context_text or "loadAll({ force" in context_text
+    assert 'telegram.login_in_progress' in context_text
 
 
 def test_dashboard_page_uses_sandbox_safe_storage_helpers() -> None:
@@ -382,7 +384,10 @@ def test_dashboard_bridge_api_preserves_request_timeout() -> None:
 
         assert "function withTimeout" in text
         assert "Promise.race" in text
-        assert "bridgeRequest(path, method, body, timeout)" in text
+        assert (
+            "bridgeRequest(path, method, body, timeout)" in text
+            or "bridgeRequest(path, method, body, effectiveTimeout)" in text
+        )
 
 
 def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> None:

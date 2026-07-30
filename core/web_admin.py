@@ -341,22 +341,22 @@ class WebAdminServer:
         @app.get("/api/qq/groups")
         @require_auth
         def api_qq_groups():
-            return run_api(self.list_qq_groups())
+            return run_api(self.list_qq_groups(), timeout=130.0)
 
         @app.post("/api/qq/groups/refresh")
         @require_auth
         def api_qq_groups_refresh():
-            return run_api(self.list_qq_groups(force=True))
+            return run_api(self.list_qq_groups(force=True), timeout=130.0)
 
         @app.get("/api/tg/channels")
         @require_auth
         def api_tg_channels():
-            return run_api(self.list_tg_channels())
+            return run_api(self.list_tg_channels(), timeout=130.0)
 
         @app.post("/api/tg/channels/refresh")
         @require_auth
         def api_tg_channels_refresh():
-            return run_api(self.list_tg_channels(force=True))
+            return run_api(self.list_tg_channels(force=True), timeout=130.0)
 
         @app.post("/api/config")
         @require_auth
@@ -763,14 +763,15 @@ class WebAdminServer:
             "me": me,
         }
 
-    async def _refresh_telegram_me(self) -> dict[str, Any] | None:
+    async def _refresh_telegram_me(self, timeout: float = 5.0) -> dict[str, Any] | None:
         """登录成功后刷新一次账号资料，供 /api/status 无 RPC 轮询复用。"""
         wrapper = self.plugin.client_wrapper
         client = getattr(wrapper, "client", None) if wrapper else None
         if not wrapper or not client:
             self._telegram_me_cache = None
             return None
-        try:
+
+        async def _load() -> dict[str, Any] | None:
             if not wrapper.is_connected():
                 connected = await wrapper.ensure_connected()
                 if not connected:
@@ -791,17 +792,23 @@ class WebAdminServer:
             }
             self._telegram_me_cache = profile
             return profile
+
+        try:
+            return await asyncio.wait_for(_load(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("[WebAdmin] refresh telegram me timed out")
+            return self._telegram_me_cache
         except Exception as exc:
             logger.debug(f"[WebAdmin] refresh telegram me failed: {exc}")
             return self._telegram_me_cache
 
     async def get_status(self) -> dict[str, Any]:
         login_status = self._cached_login_status()
-        # 已授权但还没拿到昵称/ID 时补刷一次；之后轮询只读缓存，避免打 Telegram RPC。
+        # 已授权但还没拿到昵称/ID 时补刷一次；必须短超时，避免 Dashboard 首屏卡死。
         if login_status.get("authorized") and not (
             isinstance(login_status.get("me"), dict) and login_status["me"].get("id")
         ):
-            me = await self._refresh_telegram_me()
+            me = await self._refresh_telegram_me(timeout=3.0)
             login_status = self._cached_login_status()
             if me is not None:
                 login_status["me"] = me

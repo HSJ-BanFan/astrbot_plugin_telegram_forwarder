@@ -1290,3 +1290,32 @@ def test_probe_http_proxy_quality_applies_deadline_on_fragmented_recv(web_admin)
     assert proxy_socket.recv.call_count == 2
     # settimeout called before each recv (plus earlier pre-send / wrap)
     assert proxy_socket.settimeout.call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_refresh_telegram_me_times_out_without_hanging(web_admin):
+    async def slow_get_me():
+        await asyncio.sleep(1.0)
+        return SimpleNamespace(id=1, username="x", first_name="a", last_name="", phone="")
+
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(side_effect=slow_get_me),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        ensure_connected=AsyncMock(return_value=True),
+        _authorized=True,
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = None
+
+    started = asyncio.get_event_loop().time()
+    profile = await web_admin.server._refresh_telegram_me(timeout=0.05)
+    elapsed = asyncio.get_event_loop().time() - started
+
+    assert profile is None
+    assert elapsed < 0.5

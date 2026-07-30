@@ -241,6 +241,7 @@ export function initLogin() {
   if (els.sendCodeBtn && els.sendCodeBtn.dataset.loginBound !== "true") {
     els.sendCodeBtn.dataset.loginBound = "true";
     els.sendCodeBtn.addEventListener("click", () =>
+      // 登录相关动作后强制刷一次状态（含 me 缓存），保证昵称/步骤及时更新。
       withButtonLoading(els.sendCodeBtn, "正在发送验证码...", async () => {
         await saveConfig({ quiet: true });
         const result = await apiRequest("/api/login/start", "POST", {
@@ -249,7 +250,7 @@ export function initLogin() {
         });
         if (els.loginMessage) els.loginMessage.textContent = result.message || "";
         return result;
-      }, "验证码已发送。")
+      }, "验证码已发送。", { refresh: "status" })
     );
   }
 
@@ -299,7 +300,7 @@ export function initLogin() {
         const result = await apiRequest("/api/login/code", "POST", { code: els.codeInput.value.trim() });
         if (els.loginMessage) els.loginMessage.textContent = result.message || "";
         return result;
-      }, "验证码已提交。")
+      }, "验证码已提交。", { refresh: "status" })
     );
   }
 
@@ -310,14 +311,20 @@ export function initLogin() {
         const result = await apiRequest("/api/login/password", "POST", { password: els.passwordInput.value });
         if (els.loginMessage) els.loginMessage.textContent = result.message || "";
         return result;
-      }, "密码已提交。")
+      }, "密码已提交。", { refresh: "status" })
     );
   }
 
   if (els.resetLoginBtn && els.resetLoginBtn.dataset.loginBound !== "true") {
     els.resetLoginBtn.dataset.loginBound = "true";
     els.resetLoginBtn.addEventListener("click", () => {
-      withButtonLoading(els.resetLoginBtn, "正在准备重新登录...", () => apiRequest("/api/login/reset", "POST"), "已进入重新登录流程。");
+      withButtonLoading(
+        els.resetLoginBtn,
+        "正在准备重新登录...",
+        () => apiRequest("/api/login/reset", "POST"),
+        "已进入重新登录流程。",
+        { refresh: "status" }
+      );
     });
   }
 
@@ -337,7 +344,13 @@ export function initLogin() {
     els.sessionImportFile.addEventListener("change", () => {
       const file = els.sessionImportFile.files?.[0];
       if (!file) return;
-      withButtonLoading(els.importSessionBtn, "正在导入...", () => importSessionFromFile(file), "登录信息已导入。");
+      withButtonLoading(
+        els.importSessionBtn,
+        "正在导入...",
+        () => importSessionFromFile(file),
+        "登录信息已导入。",
+        { refresh: "status" }
+      );
     });
   }
 

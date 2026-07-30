@@ -18,11 +18,19 @@ except Exception:  # pragma: no cover - import guard for non-AstrBot test runtim
 
 
 class QQGroupCache:
-    def __init__(self, plugin: Any, ttl_seconds: int = 90):
+    def __init__(
+        self,
+        plugin: Any,
+        ttl_seconds: int = 3600,
+        *,
+        failure_cooldown: float = 20.0,
+    ):
         self.plugin = plugin
         self.ttl_seconds = ttl_seconds
+        self.failure_cooldown = max(0.5, float(failure_cooldown))
         self._lock = asyncio.Lock()
         self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
         self._groups: list[dict[str, Any]] = []
         self._available = False
         self._message = "QQ platform is unavailable."
@@ -43,11 +51,18 @@ class QQGroupCache:
         }
 
     def _is_fresh(self) -> bool:
-        return (time.time() - self._last_refresh_at) < self.ttl_seconds
+        now = time.time()
+        if self._available and self._groups:
+            return (now - self._last_refresh_at) < self.ttl_seconds
+        # 失败/空结果：短冷却，避免长时间卡在 unavailable
+        anchor = self._last_failure_at or self._last_refresh_at
+        if anchor <= 0:
+            return False
+        return (now - anchor) < self.failure_cooldown
 
     async def _refresh(self, *, force: bool = False) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and self._groups:
+            if not force and self._is_fresh() and (self._groups or self._last_failure_at):
                 return
 
             groups_by_id: dict[str, dict[str, Any]] = {}
@@ -74,15 +89,19 @@ class QQGroupCache:
 
             self._groups = self._sort_groups(groups_by_id.values())
             self._available = saw_client
+            now = time.time()
             if saw_client:
                 self._message = ""
+                self._last_failure_at = 0.0
             elif saw_platform:
                 self._message = (
                     "QQ platform found, but no callable client is available."
                 )
+                self._last_failure_at = now
             else:
                 self._message = "QQ platform is unavailable."
-            self._last_refresh_at = time.time()
+                self._last_failure_at = now
+            self._last_refresh_at = now
 
     def _iter_qq_platforms(self) -> list[tuple[Any, str]]:
         platforms = get_platform_instances(getattr(self.plugin, "context", None))

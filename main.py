@@ -4,6 +4,7 @@ import hashlib
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from astrbot.api import AstrBotConfig, logger, star
@@ -37,7 +38,11 @@ def _get_plugin_data_dir() -> Path:
 class Main(star.Star):
     """Telegram 转发插件主类。"""
 
-    STARTUP_GRACE_SECONDS = 30
+    # 重启后先暖缓存，再开始抓取/下载，避免一启动就和 Web 抢 Telethon。
+    STARTUP_GRACE_SECONDS = 60
+    # 频道/群组列表缓存 1 小时；获取超时 120s（慢链路也能扫全）。
+    CACHE_REFRESH_SECONDS = 3600
+    CACHE_WARM_TIMEOUT_SECONDS = 130
 
     def _resolve_uploaded_session_path(self, uploaded_session_path: str) -> str | None:
         plugin_dir = self.plugin_data_dir.resolve()
@@ -174,6 +179,7 @@ class Main(star.Star):
         self.config = config
         self.bot = None
         self._runtime_bootstrap_task = None
+        self._cache_warm_task = None
         self._web_loop = None
         self.web_admin_server = None
 
@@ -369,10 +375,15 @@ class Main(star.Star):
             logger.error(f"[DashboardPage] API 调用失败: {exc}", exc_info=True)
             return self._dashboard_error(exc)
 
-    async def _dashboard_section(self, name: str, operation, default, errors: dict):
+    async def _dashboard_section(self, name: str, operation, default, errors: dict, timeout: float = 8.0):
         try:
-            data = await operation()
+            data = await asyncio.wait_for(operation(), timeout=timeout)
             return default if data is None else data
+        except asyncio.TimeoutError:
+            message = f"{name} 加载超时"
+            logger.warning(f"[DashboardPage] {message}")
+            errors[name] = message
+            return default
         except Exception as exc:
             logger.warning(
                 f"[DashboardPage] {name} 数据加载失败: {exc}",
@@ -384,26 +395,54 @@ class Main(star.Star):
     async def dashboard_page_dashboard(self):
         server = self._ensure_web_admin_server()
         errors = {}
+        force = False
+        try:
+            raw_force = None
+            if hasattr(request, "args") and request.args is not None:
+                raw_force = request.args.get("force")
+            if raw_force is None and hasattr(request, "query") and request.query is not None:
+                raw_force = request.query.get("force")
+            if raw_force is None:
+                # Dashboard bridge 可能把 force 放在 GET body/params 里
+                try:
+                    payload = await self._dashboard_payload()
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict):
+                    raw_force = payload.get("force")
+            force = str(raw_force or "").strip().lower() in {"1", "true", "yes"}
+        except Exception:
+            force = False
+
+        async def _qq():
+            return await server.list_qq_groups(force=force)
+
+        async def _tg():
+            return await server.list_tg_channels(force=force)
+
+        # 分段超时：配置直接读；群/频道 force 刷新给 120s 获取预算。
         status, config_data, qq_groups, tg_channels = await asyncio.gather(
-            self._dashboard_section("status", server.get_status, {}, errors),
+            self._dashboard_section("status", server.get_status, {}, errors, timeout=5.0),
             self._dashboard_section(
-                "config", server.get_config, {"config": {}}, errors
+                "config", server.get_config, {"config": {}}, errors, timeout=3.0
             ),
             self._dashboard_section(
                 "qq_groups",
-                server.list_qq_groups,
+                _qq,
                 {"groups": [], "available": False, "message": "QQ 群列表加载失败。"},
                 errors,
+                timeout=120.0 if force else 10.0,
             ),
             self._dashboard_section(
                 "tg_channels",
-                server.list_tg_channels,
+                _tg,
                 {
                     "channels": [],
                     "available": False,
                     "message": "Telegram 频道列表加载失败。",
                 },
                 errors,
+                timeout=120.0 if force else 10.0,
             ),
         )
         return self._dashboard_ok(
@@ -533,6 +572,90 @@ class Main(star.Star):
         except Exception as e:
             logger.error(f"Telegram Forwarder Web 管理页面启动失败: {e}")
 
+    def _configured_qq_group_ids(self) -> list[str]:
+        server = self.web_admin_server
+        if server is not None and hasattr(server, "_configured_qq_group_ids"):
+            return list(server._configured_qq_group_ids())
+        return []
+
+    def _configured_tg_channel_refs(self) -> list[str]:
+        server = self.web_admin_server
+        if server is not None and hasattr(server, "_configured_tg_channel_refs"):
+            return list(server._configured_tg_channel_refs())
+        refs: list[str] = []
+        for channel_cfg in self.config.get("source_channels", []) or []:
+            if not isinstance(channel_cfg, dict):
+                continue
+            name = str(channel_cfg.get("channel_username") or "").strip()
+            if name:
+                refs.append(name)
+        return refs
+
+    async def warm_runtime_caches(self, *, force: bool = False) -> dict[str, Any]:
+        """启动/定时预热 Web 必要缓存：账号资料、QQ 群、TG 频道。
+
+        不触发抓取/下载。前端默认读这些缓存；需要最新数据时再点刷新。
+        """
+        server = self._ensure_web_admin_server()
+        result: dict[str, Any] = {
+            "me": None,
+            "qq_groups": None,
+            "tg_channels": None,
+            "errors": {},
+        }
+
+        async def _section(name: str, operation):
+            try:
+                return await asyncio.wait_for(
+                    operation(), timeout=self.CACHE_WARM_TIMEOUT_SECONDS
+                )
+            except Exception as exc:
+                logger.warning(f"[Main] 预热缓存 {name} 失败: {exc}")
+                result["errors"][name] = str(exc)
+                return None
+
+        me, qq_groups, tg_channels = await asyncio.gather(
+            _section("me", lambda: server._refresh_telegram_me(timeout=8.0)),
+            _section(
+                "qq_groups",
+                lambda: server.qq_group_cache.list_groups(
+                    self._configured_qq_group_ids(), force=force
+                ),
+            ),
+            _section(
+                "tg_channels",
+                lambda: server.tg_channel_cache.list_channels(
+                    self._configured_tg_channel_refs(), force=force
+                ),
+            ),
+        )
+        result["me"] = me
+        result["qq_groups"] = qq_groups
+        result["tg_channels"] = tg_channels
+        if not result["errors"]:
+            logger.info("[Main] 运行时缓存预热完成。")
+        else:
+            logger.warning(
+                f"[Main] 运行时缓存预热完成（部分失败）: {list(result['errors'])}"
+            )
+        return result
+
+    def _schedule_cache_refresh_job(self) -> None:
+        if not self.scheduler:
+            return
+        self.scheduler.add_job(
+            self.warm_runtime_caches,
+            "interval",
+            seconds=self.CACHE_REFRESH_SECONDS,
+            max_instances=1,
+            coalesce=True,
+            kwargs={"force": True},
+            id="telegram_forwarder_cache_refresh",
+            replace_existing=True,
+            next_run_time=datetime.now()
+            + timedelta(seconds=self.CACHE_REFRESH_SECONDS),
+        )
+
     async def activate_runtime_after_authorized(self, startup_grace: int | None = None):
         """Start or refresh runtime jobs after Telegram authorization succeeds."""
         if not self.client_wrapper.is_authorized():
@@ -540,6 +663,17 @@ class Main(star.Star):
 
         if startup_grace is None:
             startup_grace = self.STARTUP_GRACE_SECONDS
+
+        # 先暖缓存，再启动抓取/发送，避免重启瞬间抢 Telethon。
+        if not self._cache_warm_task or self._cache_warm_task.done():
+
+            async def _warm_then_log():
+                try:
+                    await self.warm_runtime_caches(force=True)
+                except Exception as exc:
+                    logger.warning(f"[Main] 启动缓存预热失败: {exc}")
+
+            self._cache_warm_task = asyncio.create_task(_warm_then_log())
 
         if hasattr(self.forwarder, "qq_sender") and (
             not self._runtime_bootstrap_task or self._runtime_bootstrap_task.done()
@@ -586,6 +720,8 @@ class Main(star.Star):
             replace_existing=True,
         )
 
+        self._schedule_cache_refresh_job()
+
         if not self.scheduler.running:
             self.scheduler.start()
 
@@ -595,6 +731,9 @@ class Main(star.Star):
         )
         logger.info(
             f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
+        )
+        logger.info(
+            f" - 缓存刷新: 每 {self.CACHE_REFRESH_SECONDS}s 执行一次（启动先预热，前端默认读缓存）"
         )
         source_channels = self.config.get("source_channels", [])
         channel_names: list[str] = []
