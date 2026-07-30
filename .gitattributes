@@ -2,3 +2,20 @@
 # (a byte-exact CI gate) never sees CRLF false drift on Windows (core.autocrlf).
 * text=auto eol=lf
 *.png binary
+
+# AstrBot installs plugins from the GitHub source zip (codeload / git archive).
+# Keep runtime install packages free of long-path / non-runtime developer assets
+# so Windows MAX_PATH (260) unzip failures like #49 do not recur.
+# Runtime MUST keep: main.py, core/, common/, web/, pages/, .astrbot-plugin/,
+# requirements.txt, metadata.yaml, _conf_schema.json, logo.png, relogin.py.
+docs/ export-ignore
+tests/ export-ignore
+scripts/ export-ignore
+.github/ export-ignore
+resources/ export-ignore
+CLAUDE.md export-ignore
+**/CLAUDE.md export-ignore
+pyrightconfig.example.json export-ignore
+.context/ export-ignore
+.claude/ export-ignore
+.superpowers/ export-ignore

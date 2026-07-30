@@ -30,6 +30,7 @@ pyrightconfig.json
 
 # AI tooling local state
 .claude
+.context/
 .understand-anything
 .omo/
 .worktrees/
