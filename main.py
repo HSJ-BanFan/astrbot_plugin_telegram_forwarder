@@ -643,6 +643,9 @@ class Main(star.Star):
     def _schedule_cache_refresh_job(self) -> None:
         if not self.scheduler:
             return
+        # 已有任务时保留原 next_run_time，避免每次 activate 都把小时刷新再推后。
+        if self.scheduler.get_job("telegram_forwarder_cache_refresh"):
+            return
         self.scheduler.add_job(
             self.warm_runtime_caches,
             "interval",
@@ -651,7 +654,7 @@ class Main(star.Star):
             coalesce=True,
             kwargs={"force": True},
             id="telegram_forwarder_cache_refresh",
-            replace_existing=True,
+            replace_existing=False,
             next_run_time=datetime.now()
             + timedelta(seconds=self.CACHE_REFRESH_SECONDS),
         )
@@ -785,6 +788,13 @@ class Main(star.Star):
             self._runtime_bootstrap_task.cancel()
             try:
                 await self._runtime_bootstrap_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._cache_warm_task and not self._cache_warm_task.done():
+            self._cache_warm_task.cancel()
+            try:
+                await self._cache_warm_task
             except asyncio.CancelledError:
                 pass
 

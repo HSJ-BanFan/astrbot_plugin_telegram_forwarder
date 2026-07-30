@@ -52,9 +52,9 @@ class QQGroupCache:
 
     def _is_fresh(self) -> bool:
         now = time.time()
-        if self._available and self._groups:
+        # 成功刷新（含空列表）走 TTL；失败走短冷却。
+        if self._available and self._last_refresh_at > 0 and self._last_failure_at <= 0:
             return (now - self._last_refresh_at) < self.ttl_seconds
-        # 失败/空结果：短冷却，避免长时间卡在 unavailable
         anchor = self._last_failure_at or self._last_refresh_at
         if anchor <= 0:
             return False
@@ -62,7 +62,7 @@ class QQGroupCache:
 
     async def _refresh(self, *, force: bool = False) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and (self._groups or self._last_failure_at):
+            if not force and self._is_fresh():
                 return
 
             groups_by_id: dict[str, dict[str, Any]] = {}

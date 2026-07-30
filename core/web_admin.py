@@ -471,6 +471,7 @@ class WebAdminServer:
                     self.host,
                     self.port,
                     self.app,
+                    threaded=True,
                     request_handler=self._request_handler_cls,
                 )
                 logger.info(

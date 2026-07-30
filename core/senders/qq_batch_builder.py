@@ -193,16 +193,14 @@ async def build_processed_batches(
 
                 # 头部只在“第一条真正发出的消息”前加一次。
                 # 不能用原始 i==0：首条若因媒体下载失败被跳过，后续成功消息仍需 From 头。
+                # 也不能在“仅 header 节点”被丢弃前就把 flag 置 True。
                 add_header_this_time = False
                 if not should_exclude_text:
                     if involved_channels and len(involved_channels) > 1:
                         if not header_added:
                             add_header_this_time = True
-                            header_added = True
-                            batch_header_added = True
                     elif not batch_header_added:
                         add_header_this_time = True
-                        batch_header_added = True
 
                 if add_header_this_time:
                     if text_parts:
@@ -222,6 +220,10 @@ async def build_processed_batches(
                 if not should_exclude_text and text_parts and _node_special_media:
                     if current_node_components:
                         all_nodes_data.append(current_node_components)
+                        if add_header_this_time:
+                            header_added = True
+                            batch_header_added = True
+                        add_header_this_time = False
                     current_node_components = []
 
                 current_node_components.extend(media_components)
@@ -234,6 +236,9 @@ async def build_processed_batches(
                     )
                     if not is_only_header:
                         all_nodes_data.append(current_node_components)
+                        if add_header_this_time:
+                            header_added = True
+                            batch_header_added = True
 
             if all_nodes_data:
                 processed_batches.append(

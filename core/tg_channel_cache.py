@@ -95,6 +95,7 @@ class TGChannelCache:
 
             configured = configured_channel_refs or self._pending_configured_refs or []
             channels_by_ref: dict[str, dict[str, Any]] = {}
+            started_at = time.time()
 
             # 1) 先解析已配置频道：快、且对选择器最有用；不依赖全量对话框。
             resolve_budget = min(30.0, max(5.0, self.refresh_timeout * 0.25))
@@ -103,11 +104,12 @@ class TGChannelCache:
             )
             channels_by_ref.update(resolved)
 
-            # 2) 再轻量扫对话框补全可选频道；忙时允许失败，不覆盖已解析结果。
+            # 2) 再扫对话框补全；总时长不超过 refresh_timeout，避免叠成 150s。
+            remaining = max(1.0, self.refresh_timeout - (time.time() - started_at))
             try:
                 dialogs = await asyncio.wait_for(
                     self._load_dialogs(client),
-                    timeout=self.refresh_timeout,
+                    timeout=remaining,
                 )
                 for dialog in dialogs:
                     entity = getattr(dialog, "entity", dialog)
@@ -125,7 +127,7 @@ class TGChannelCache:
             except asyncio.TimeoutError:
                 logger.warning(
                     "[WebAdmin] Telegram channel dialog scan timed out after %.1fs",
-                    self.refresh_timeout,
+                    remaining,
                 )
             except Exception as exc:
                 logger.warning("[WebAdmin] Failed to load Telegram channels: %s", exc)
@@ -242,15 +244,12 @@ class TGChannelCache:
         if hasattr(client, "get_dialogs"):
             try:
                 result = client.get_dialogs(limit=self.max_dialogs)
-                if inspect.isawaitable(result):
-                    result = await result
-                return list(result or [])[: self.max_dialogs]
             except TypeError:
-                # 某些 mock/旧签名不接受 limit
+                # 仅对“不接受 limit”的签名回退；await 中的 TypeError 不重试。
                 result = client.get_dialogs()
-                if inspect.isawaitable(result):
-                    result = await result
-                return list(result or [])[: self.max_dialogs]
+            if inspect.isawaitable(result):
+                result = await result
+            return list(result or [])[: self.max_dialogs]
 
         if hasattr(client, "iter_dialogs"):
             dialogs: list[Any] = []
