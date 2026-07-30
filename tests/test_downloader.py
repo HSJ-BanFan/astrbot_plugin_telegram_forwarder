@@ -104,7 +104,6 @@ def _image_bytes(image) -> bytes:
 
 @pytest.mark.asyncio
 async def test_contains_qr_code_detects_qr_image(tmp_path):
-    import numpy as np
     import zxingcpp
     from PIL import Image
 
@@ -113,8 +112,9 @@ async def test_contains_qr_code_detects_qr_image(tmp_path):
         "https://example.com", zxingcpp.BarcodeFormat.QRCode
     )
     # zxing-cpp>=3 uses size_hint (not scale=) and returns zxingcpp.Image.
+    # Image supports __array_interface__, so Pillow can consume it without numpy.
     qr_image = barcode.to_image(size_hint=200)
-    image_bytes = _image_bytes(Image.fromarray(np.asarray(qr_image)))
+    image_bytes = _image_bytes(Image.fromarray(qr_image))
     client = MagicMock()
     client.download_media = AsyncMock(return_value=image_bytes)
     downloader = module.MediaDownloader(client, tmp_path)

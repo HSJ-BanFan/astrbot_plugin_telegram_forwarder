@@ -379,12 +379,17 @@ def test_raw_json_parse_failure_rejects_action() -> None:
 
 
 def test_dashboard_bridge_api_preserves_request_timeout() -> None:
-    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
-        text = (asset_root / "js" / "api.js").read_text(encoding="utf-8")
+    # Dashboard override (and generated pages/dashboard copy) uses effectiveTimeout.
+    page_text = (PAGE_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
+    assert "function withTimeout" in page_text
+    assert "Promise.race" in page_text
+    assert "bridgeRequest(path, method, body, effectiveTimeout)" in page_text
 
-        assert "function withTimeout" in text
-        assert "Promise.race" in text
-        assert "bridgeRequest(path, method, body, effectiveTimeout)" in text
+    # Standalone web api keeps the plain timeout form.
+    web_text = (WEB_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
+    assert "function withTimeout" in web_text
+    assert "Promise.race" in web_text
+    assert "bridgeRequest(path, method, body, timeout)" in web_text
 
 
 def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> None:
