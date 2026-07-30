@@ -1319,3 +1319,58 @@ async def test_refresh_telegram_me_times_out_without_hanging(web_admin):
 
     assert profile is None
     assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_import_session_clears_stale_me_cache(web_admin, tmp_path):
+    old_profile = {
+        "id": 111,
+        "username": "old_user",
+        "first_name": "Old",
+        "last_name": "",
+        "phone": "8613000000000",
+    }
+    new_me = SimpleNamespace(
+        id=222,
+        username="new_user",
+        first_name="New",
+        last_name="",
+        phone="8613111111111",
+    )
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(return_value=new_me),
+    )
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        ensure_connected=AsyncMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=True,
+        _mark_authorized_if_needed=AsyncMock(),
+        _session_path=MagicMock(return_value=str(tmp_path / "user_session")),
+    )
+
+    def _init_client():
+        wrapper.client = client
+
+    wrapper._init_client = _init_client
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.activate_runtime_after_authorized = AsyncMock(return_value=True)
+    web_admin.server._telegram_me_cache = old_profile
+    web_admin.server._write_string_session = MagicMock()
+    web_admin.server._discard_login_attempt = AsyncMock()
+    web_admin.server._session_files = MagicMock(return_value=[])
+
+    result = await web_admin.server.import_session(
+        {"string_session": "AQAD-fake-session", "phone": "8613111111111"}
+    )
+
+    assert result["authorized"] is True
+    assert web_admin.server._telegram_me_cache is not None
+    assert web_admin.server._telegram_me_cache["id"] == 222
+    assert web_admin.server._telegram_me_cache["username"] == "new_user"
+    client.get_me.assert_awaited()

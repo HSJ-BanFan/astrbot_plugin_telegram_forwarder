@@ -686,7 +686,11 @@ class PluginCommands:
                 return "<未设置>"
             parsed = urlparse(raw)
             if parsed.scheme and parsed.hostname:
-                port = f":{parsed.port}" if parsed.port else ""
+                try:
+                    port = f":{parsed.port}" if parsed.port else ""
+                except ValueError:
+                    # 非法端口（如 :bad）不能让 /tg get root 直接炸
+                    return "[REDACTED]"
                 auth = "***@" if (parsed.username or parsed.password) else ""
                 return f"{parsed.scheme}://{auth}{parsed.hostname}{port}"
             return "[REDACTED]"

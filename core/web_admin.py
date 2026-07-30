@@ -724,9 +724,12 @@ class WebAdminServer:
         self.plugin.config.save_config()
         official_wrapper.client = None
         official_wrapper._authorized = False
+        # 替换正式会话后清空旧 me 缓存，避免 status 显示上一个账号。
+        self._telegram_me_cache = None
         official_wrapper._init_client()
         await official_wrapper.ensure_connected()
         await official_wrapper._mark_authorized_if_needed()
+        await self._refresh_telegram_me()
         await self.plugin.activate_runtime_after_authorized(startup_grace=0)
         await self._discard_login_attempt(remove_files=True)
 
@@ -1439,12 +1442,15 @@ class WebAdminServer:
         # cast 避免 pyright 把 client 收窄固定为 None（_init_client 会重建实例）
         wrapper.client = cast(Any, None)
         wrapper._authorized = False
+        # 导入会话后必须清空旧账号 me 缓存，否则 /api/status 可能继续显示上一个用户。
+        self._telegram_me_cache = None
         wrapper._init_client()
         authorized = False
         if wrapper.client and await wrapper.ensure_connected():
             authorized = bool(await wrapper.client.is_user_authorized())
             if authorized:
                 await wrapper._mark_authorized_if_needed()
+                await self._refresh_telegram_me()
                 await self.plugin.activate_runtime_after_authorized(startup_grace=0)
 
         await self._discard_login_attempt(remove_files=True)

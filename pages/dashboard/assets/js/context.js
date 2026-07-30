@@ -61,7 +61,12 @@ function applyDashboardPayload(dashboardPayload) {
 
 export async function loadQQGroups({ force = false } = {}) {
   try {
-    const data = await apiRequest(force ? "/api/qq/groups/refresh" : "/api/qq/groups", force ? "POST" : "GET");
+    const data = await apiRequest(
+      force ? "/api/qq/groups/refresh" : "/api/qq/groups",
+      force ? "POST" : "GET",
+      null,
+      force ? 130000 : 30000
+    );
     store.updateState({
       qqGroups: Array.isArray(data.groups) ? data.groups : [],
       qqGroupsAvailable: Boolean(data.available),
@@ -80,7 +85,12 @@ export async function loadQQGroups({ force = false } = {}) {
 
 export async function loadTGChannels({ force = false } = {}) {
   try {
-    const data = await apiRequest(force ? "/api/tg/channels/refresh" : "/api/tg/channels", force ? "POST" : "GET");
+    const data = await apiRequest(
+      force ? "/api/tg/channels/refresh" : "/api/tg/channels",
+      force ? "POST" : "GET",
+      null,
+      force ? 130000 : 30000
+    );
     store.updateState({
       tgChannels: Array.isArray(data.channels) ? data.channels : [],
       tgChannelsAvailable: Boolean(data.available),
@@ -97,9 +107,14 @@ export async function loadTGChannels({ force = false } = {}) {
   }
 }
 
-export async function loadAll() {
+export async function loadAll({ force = false } = {}) {
   if (isDashboardPage()) {
-    const dashboardPayload = await apiRequest("/api/dashboard");
+    const dashboardPayload = await apiRequest(
+      "/api/dashboard",
+      "GET",
+      force ? { force: 1 } : {},
+      force ? 130000 : 45000
+    );
     applyDashboardPayload(dashboardPayload);
     syncRuntimeStatusRefresh();
     if (renderAllCallback) renderAllCallback();
@@ -109,8 +124,8 @@ export async function loadAll() {
   const [status, configData] = await Promise.all([
     apiRequest("/api/status"),
     apiRequest("/api/config"),
-    loadQQGroups(),
-    loadTGChannels(),
+    loadQQGroups({ force }),
+    loadTGChannels({ force }),
   ]);
   store.updateState({
     status: status,
@@ -133,10 +148,14 @@ export async function loadStatusOnly() {
 }
 
 export function runtimeNeedsStatusRefresh() {
-  const runtime = store.state.status?.runtime || {};
+  const status = store.state.status || {};
+  const runtime = status.runtime || {};
+  const telegram = status.telegram || {};
   const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
+  // 登录流程需要自动刷新；业务 busy 也需要。其它页面不定时刷。
   return Boolean(
-    runtime.active_web_operations ||
+    telegram.login_in_progress ||
+      runtime.active_web_operations ||
       runtime.capture_busy ||
       runtime.send_busy ||
       runtime.global_send_busy ||
@@ -195,6 +214,8 @@ export async function withAction(action, doneMessage, options = {}) {
     const refresh = options.refresh ?? "all";
     if (refresh === "status") {
       await loadStatusOnly();
+    } else if (refresh === "force") {
+      await loadAll({ force: true });
     } else if (refresh !== false && refresh !== "none") {
       await loadAll();
     }
@@ -204,12 +225,12 @@ export async function withAction(action, doneMessage, options = {}) {
   }
 }
 
-export async function withButtonLoading(button, label, action, doneMessage) {
+export async function withButtonLoading(button, label, action, doneMessage, options = {}) {
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = label;
   try {
-    return await withAction(action, doneMessage);
+    return await withAction(action, doneMessage, options);
   } finally {
     button.disabled = false;
     button.textContent = originalText;

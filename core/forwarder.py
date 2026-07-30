@@ -680,6 +680,13 @@ class Forwarder:
             and global_cfg.get("filter_spoiler_messages", False)
         )
 
+        filter_qr_code_images = channel_cfg.get(
+            "filter_qr_code_images", "继承全局"
+        ) == "开启" or (
+            channel_cfg.get("filter_qr_code_images", "继承全局") == "继承全局"
+            and global_cfg.get("filter_qr_code_images", False)
+        )
+
         # 3.9 Markdown 链接剥离规则
         strip_global = global_cfg.get("strip_markdown_links", False)
         strip_channel_raw = channel_cfg.get("strip_markdown_links", "继承全局")
@@ -713,6 +720,7 @@ class Forwarder:
             "priority": priority,
             "exclude_text_on_media": exclude_text_on_media,
             "filter_spoiler_messages": filter_spoiler_messages,
+            "filter_qr_code_images": filter_qr_code_images,
             "strip_markdown_links": strip_markdown_links,
             "start_time": channel_cfg.get("start_time", ""),
             "msg_limit": channel_cfg.get("msg_limit", 20),
@@ -1455,6 +1463,20 @@ class Forwarder:
                                     skipped_grouped_ids.add(
                                         (channel, meta["grouped_id"])
                                     )
+                                continue
+
+                            if effective_cfg.get(
+                                "filter_qr_code_images", False
+                            ) and await self.downloader.contains_qr_code(m):
+                                logger.info(
+                                    f"[Filter] 消息 {m.id} 的图片包含二维码，已跳过。"
+                                )
+                                individually_skipped_keys.add((channel, m.id))
+                                if meta and meta.get("grouped_id"):
+                                    skipped_grouped_ids.add(
+                                        (channel, meta["grouped_id"])
+                                    )
+                                continue
                     except Exception as e:
                         error_msg = str(e)
                         if "database disk image is malformed" in error_msg:

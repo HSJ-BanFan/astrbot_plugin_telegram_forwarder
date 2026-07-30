@@ -121,12 +121,19 @@ def make_commands(
 class TestPluginCommandsDebug:
     def test_ai_filter_api_key_is_masked(self):
         commands = make_commands(qq_sender=FakeQQSender())
-        secret = "sk-secret-content-filter-key"
+        secret = "«redacted:sk-…»"
 
         masked = commands.mask_sensitive(secret, "ai_filter_api_key")
 
         assert masked == "[REDACTED]"
         assert secret not in masked
+
+    def test_proxy_url_with_invalid_port_is_redacted(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+
+        masked = commands.mask_sensitive("http://proxy.example:bad", "proxy")
+
+        assert masked == "[REDACTED]"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("action", [None, "", "  "])

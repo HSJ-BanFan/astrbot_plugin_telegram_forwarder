@@ -271,7 +271,9 @@ export function closeSidebar() {
 
 function bindMainEvents() {
   if (els.refreshBtn) {
-    els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
+    els.refreshBtn.addEventListener("click", () =>
+      withAction(() => loadAll({ force: true }), "已强制刷新缓存。", { refresh: false })
+    );
   }
   if (els.saveBtn) {
     els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));
