@@ -111,9 +111,14 @@ async def test_contains_qr_code_detects_qr_image(tmp_path):
     barcode = zxingcpp.create_barcode(
         "https://example.com", zxingcpp.BarcodeFormat.QRCode
     )
-    # zxing-cpp>=3 uses size_hint (not scale=) and returns zxingcpp.Image.
-    # Image supports __array_interface__, so Pillow can consume it without numpy.
-    qr_image = barcode.to_image(size_hint=200)
+    # zxing-cpp API differs by version:
+    # - older/CI wheels: to_image(scale=...)
+    # - newer: to_image(size_hint=...)
+    try:
+        qr_image = barcode.to_image(scale=4)
+    except TypeError:
+        qr_image = barcode.to_image(size_hint=200)
+    # zxing Image exposes __array_interface__; no numpy required.
     image_bytes = _image_bytes(Image.fromarray(qr_image))
     client = MagicMock()
     client.download_media = AsyncMock(return_value=image_bytes)
