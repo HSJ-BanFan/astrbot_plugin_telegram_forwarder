@@ -8,4 +8,4 @@ repo: https://github.com/HSJ-BanFan/astrbot_plugin_telegram_forwarder
 support_platforms:
   - aiocqhttp
   - telegram
-astrbot_version: ">=4.13.0,<5"
+astrbot_version: ">=4.26.0,<5"
