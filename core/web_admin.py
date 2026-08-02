@@ -42,6 +42,7 @@ DEFAULT_WEB_CONFIG = {
 }
 WEAK_DEFAULT_WEB_TOKENS = {"123456"}
 AI_KEY_PLACEHOLDER = "[REDACTED]"
+PROXY_PASSWORD_PLACEHOLDER = "[REDACTED]"
 SILENT_OK_WEB_PATHS = {"/api/status"}
 SILENT_OK_WEB_PREFIXES = ("/assets/",)
 WEB_REQUEST_LABELS = {
@@ -930,8 +931,16 @@ class WebAdminServer:
         forward_config = config.get("forward_config")
         if isinstance(forward_config, dict) and forward_config.get("ai_filter_api_key"):
             forward_config["ai_filter_api_key"] = AI_KEY_PLACEHOLDER
-        config["proxy_config"] = self.normalize_proxy_config(
+        proxy_config = self.normalize_proxy_config(
             config.get("proxy_config"), config.get("proxy", "")
+        )
+        public_proxy_config = dict(proxy_config)
+        if public_proxy_config.get("password"):
+            public_proxy_config["password"] = PROXY_PASSWORD_PLACEHOLDER
+        config["proxy_config"] = public_proxy_config
+        # 旧版 proxy URL 仍供兼容读取，但 Web 响应不得重复暴露其中的认证信息。
+        config["proxy"] = self.proxy_config_to_url(
+            {**proxy_config, "username": "", "password": ""}
         )
         config["web_config"] = self.normalize_web_config(config.get("web_config", {}))
         return {"config": config}
@@ -958,12 +967,16 @@ class WebAdminServer:
             except ValueError as exc:
                 raise WebAdminError("代理 URL 格式无效。") from exc
             legacy_protocol = parsed.scheme.lower()
-            if legacy_protocol.startswith("http"):
+            if legacy_protocol in {"http", "https"}:
                 protocol = "http"
-            elif legacy_protocol.startswith("socks4"):
+            elif legacy_protocol in {"socks4", "socks4a"}:
                 protocol = "socks4"
-            else:
+            elif legacy_protocol in {"socks5", "socks5h"}:
                 protocol = "socks5"
+            else:
+                raise WebAdminError(
+                    "代理协议必须是 http、https、socks4(a) 或 socks5(h)。"
+                )
             host = parsed.hostname or ""
             port_value = parsed.port
             username = unquote(parsed.username) if parsed.username else ""
@@ -1017,6 +1030,19 @@ class WebAdminServer:
             auth += "@"
         url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
+
+    def _restore_proxy_password_placeholder(self, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        restored = dict(value)
+        if restored.get("password") != PROXY_PASSWORD_PLACEHOLDER:
+            return restored
+        current = self.normalize_proxy_config(
+            self.plugin.config.get("proxy_config"),
+            self.plugin.config.get("proxy", ""),
+        )
+        restored["password"] = current.get("password", "")
+        return restored
 
     @staticmethod
     def _probe_proxy_sync(
@@ -1101,7 +1127,9 @@ class WebAdminServer:
         mode = str(payload.get("mode") or "").strip().lower()
         if mode not in {"connectivity", "quality"}:
             raise WebAdminError("代理测试类型无效。")
-        proxy_config = self.normalize_proxy_config(payload.get("proxy_config"))
+        proxy_config = self.normalize_proxy_config(
+            self._restore_proxy_password_placeholder(payload.get("proxy_config"))
+        )
         if not proxy_config["host"]:
             raise WebAdminError("请先填写代理 IP / 域名和端口。")
         timeout = 8.0
@@ -1251,7 +1279,9 @@ class WebAdminServer:
             self.plugin.config[key] = value
 
         if "proxy_config" in incoming:
-            proxy_config = self.normalize_proxy_config(incoming["proxy_config"])
+            proxy_config = self.normalize_proxy_config(
+                self._restore_proxy_password_placeholder(incoming["proxy_config"])
+            )
             self.plugin.config["proxy_config"] = proxy_config
             self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
         elif "proxy" in incoming:

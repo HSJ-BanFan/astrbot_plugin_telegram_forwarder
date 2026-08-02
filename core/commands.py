@@ -684,15 +684,18 @@ class PluginCommands:
             raw = str(value).strip()
             if not raw:
                 return "<未设置>"
-            parsed = urlparse(raw)
-            if parsed.scheme and parsed.hostname:
-                try:
-                    port = f":{parsed.port}" if parsed.port else ""
-                except ValueError:
-                    # 非法端口（如 :bad）不能让 /tg get root 直接炸
-                    return "[REDACTED]"
-                auth = "***@" if (parsed.username or parsed.password) else ""
-                return f"{parsed.scheme}://{auth}{parsed.hostname}{port}"
+            try:
+                parsed = urlparse(raw)
+                hostname = parsed.hostname
+                parsed_port = parsed.port
+                has_auth = bool(parsed.username or parsed.password)
+            except ValueError:
+                # 非法端口、残缺 IPv6 等畸形 URL 不能让 /tg get root 直接炸。
+                return "[REDACTED]"
+            if parsed.scheme and hostname:
+                port = f":{parsed_port}" if parsed_port else ""
+                auth = "***@" if has_auth else ""
+                return f"{parsed.scheme}://{auth}{hostname}{port}"
             return "[REDACTED]"
 
         s = str(value).strip()

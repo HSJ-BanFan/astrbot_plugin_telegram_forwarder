@@ -135,6 +135,13 @@ class TestPluginCommandsDebug:
 
         assert masked == "[REDACTED]"
 
+    def test_proxy_url_with_unclosed_ipv6_is_redacted(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+
+        masked = commands.mask_sensitive("http://[::1", "proxy")
+
+        assert masked == "[REDACTED]"
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("action", [None, "", "  "])
     async def test_debug_without_action_returns_usage(self, action: str | None) -> None:

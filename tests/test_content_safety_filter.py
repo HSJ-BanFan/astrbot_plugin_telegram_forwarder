@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import json
+import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "core" / "filters" / "content_safety.py"
 MODULE_NAME = "astrbot_plugin_telegram_forwarder.core.filters.content_safety"
+
+
+async def resolve_public_example(_hostname: str, _port: int):
+    return [(socket.AF_INET, "93.184.216.34")]
 
 
 def load_module():
@@ -100,6 +105,7 @@ def test_openai_url_normalization():
         "file:///etc/passwd",
         "https://127.0.0.1/v1",
         "https://localhost/v1",
+        "https://localhost./v1",
         "http://localhost:11434/v1",
         "https://metadata.google.internal/v1",
     ],
@@ -212,7 +218,8 @@ def test_ai_request_contains_text_image_and_forced_json_contract():
     session_context = MagicMock()
     session_context.__aenter__.return_value = session
     content_filter = module.ContentSafetyFilter(
-        session_factory=lambda **_: session_context
+        session_factory=lambda **_: session_context,
+        address_resolver=resolve_public_example,
     )
     config = {
         "ai_filter_enabled": True,
@@ -247,7 +254,8 @@ def test_ai_failure_is_fail_open_without_secret_logging():
     session_context = MagicMock()
     session_context.__aenter__.return_value = session
     content_filter = module.ContentSafetyFilter(
-        session_factory=lambda **_: session_context
+        session_factory=lambda **_: session_context,
+        address_resolver=resolve_public_example,
     )
     config = {
         "ai_filter_enabled": True,
@@ -271,7 +279,8 @@ def test_ai_invalid_timeout_uses_default_instead_of_crashing():
     session_context = MagicMock()
     session_context.__aenter__.return_value = session
     content_filter = module.ContentSafetyFilter(
-        session_factory=lambda **_: session_context
+        session_factory=lambda **_: session_context,
+        address_resolver=resolve_public_example,
     )
     config = {
         "ai_filter_enabled": True,
@@ -284,6 +293,30 @@ def test_ai_invalid_timeout_uses_default_instead_of_crashing():
     result = asyncio.run(content_filter.check_ai("text", None, config))
 
     assert result == {"filter": False, "msg": "AI 过滤不可用，已放行"}
+
+
+def test_ai_rejects_domain_that_resolves_to_private_address():
+    module = load_module()
+
+    async def resolve_private(_hostname: str, _port: int):
+        return [(socket.AF_INET, "127.0.0.1")]
+
+    session_factory = MagicMock()
+    content_filter = module.ContentSafetyFilter(
+        session_factory=session_factory,
+        address_resolver=resolve_private,
+    )
+    config = {
+        "ai_filter_enabled": True,
+        "ai_filter_base_url": "https://private.example/v1",
+        "ai_filter_api_key": "test-key",
+        "ai_filter_model": "model",
+    }
+
+    result = asyncio.run(content_filter.check_ai("text", None, config))
+
+    assert result == {"filter": False, "msg": "AI 过滤不可用，已放行"}
+    session_factory.assert_not_called()
 
 
 def test_combined_filter_short_circuits_ai_when_qr_matches():

@@ -750,6 +750,21 @@ def test_parse_proxy_url_without_credentials_keeps_short_tuple():
     assert proxy == (2, "example.com", 12311)
 
 
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "ftp://example.com:1080",
+        "http+unix://example.com:1080",
+        "socks6://example.com:1080",
+    ],
+)
+def test_parse_proxy_url_rejects_unknown_protocol(proxy_url):
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="代理协议"):
+        client_module.TelegramClientWrapper._parse_proxy_url(proxy_url)
+
+
 def test_parse_proxy_url_supports_socks4():
     client_module = load_client_module()
 

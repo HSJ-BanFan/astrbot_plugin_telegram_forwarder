@@ -3,11 +3,13 @@ import base64
 import io
 import ipaddress
 import json
-from collections.abc import Callable
+import socket
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 import aiohttp
+
 from astrbot.api import logger
 
 JSON_CONTRACT = """
@@ -37,6 +39,41 @@ DEFAULT_QR_RISK_KEYWORDS = [
     "裸聊",
 ]
 
+ResolvedAddress = tuple[int, str]
+AddressResolver = Callable[[str, int], Awaitable[list[ResolvedAddress]]]
+
+
+class _PinnedResolver(aiohttp.abc.AbstractResolver):
+    """Resolve one validated hostname only to the addresses checked by us."""
+
+    def __init__(self, hostname: str, addresses: list[ResolvedAddress]):
+        self.hostname = hostname.rstrip(".").lower()
+        self.addresses = addresses
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: int = socket.AF_INET,
+    ) -> list[dict[str, Any]]:
+        if host.rstrip(".").lower() != self.hostname:
+            raise OSError("unexpected hostname during pinned endpoint resolution")
+        return [
+            {
+                "hostname": host,
+                "host": address,
+                "port": port,
+                "family": address_family,
+                "proto": 0,
+                "flags": 0,
+            }
+            for address_family, address in self.addresses
+            if family in {socket.AF_UNSPEC, address_family}
+        ]
+
+    async def close(self) -> None:
+        return None
+
 
 def parse_ai_decision(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
@@ -64,7 +101,7 @@ def openai_chat_url(base_url: str, allow_private_endpoint: bool = False) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("AI Base URL 必须是完整的 HTTP(S) 地址")
-    hostname = parsed.hostname.lower()
+    hostname = parsed.hostname.rstrip(".").lower()
     blocked_hostnames = {
         "localhost",
         "metadata",
@@ -76,7 +113,7 @@ def openai_chat_url(base_url: str, allow_private_endpoint: bool = False) -> str:
     ):
         raise ValueError("AI Base URL 不允许使用本地/元数据主机名，请显式开启私网端点")
     try:
-        address = ipaddress.ip_address(parsed.hostname)
+        address = ipaddress.ip_address(hostname)
     except ValueError:
         address = None
     if address is not None and not allow_private_endpoint:
@@ -121,9 +158,55 @@ class ContentSafetyFilter:
         *,
         qr_decoder: Callable[[bytes], list[str]] | None = None,
         session_factory: Callable[..., Any] = aiohttp.ClientSession,
+        address_resolver: AddressResolver | None = None,
     ):
         self.qr_decoder = qr_decoder or self._decode_qr
         self.session_factory = session_factory
+        self.address_resolver = address_resolver or self._resolve_addresses
+
+    @staticmethod
+    async def _resolve_addresses(hostname: str, port: int) -> list[ResolvedAddress]:
+        loop = asyncio.get_running_loop()
+        entries = await loop.getaddrinfo(
+            hostname,
+            port,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+        addresses: list[ResolvedAddress] = []
+        seen: set[ResolvedAddress] = set()
+        for family, _socktype, _proto, _canonname, sockaddr in entries:
+            item = (family, str(sockaddr[0]))
+            if item not in seen:
+                seen.add(item)
+                addresses.append(item)
+        return addresses
+
+    async def _pinned_connector_for_url(
+        self,
+        request_url: str,
+        allow_private_endpoint: bool,
+    ) -> aiohttp.TCPConnector | None:
+        if allow_private_endpoint:
+            return None
+        parsed = urlparse(request_url)
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("AI Base URL 缺少主机名")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = await self.address_resolver(hostname, port)
+        if not addresses:
+            raise ValueError("AI Base URL 域名未解析到可用地址")
+        for _family, raw_address in addresses:
+            address = ipaddress.ip_address(raw_address)
+            if not address.is_global:
+                raise ValueError(
+                    "AI Base URL 不允许解析到私网/环回地址，请显式开启私网端点"
+                )
+        return aiohttp.TCPConnector(
+            resolver=_PinnedResolver(hostname, addresses),
+            use_dns_cache=True,
+        )
 
     @staticmethod
     def _decode_qr(image_bytes: bytes) -> list[str] | None:
@@ -214,14 +297,23 @@ class ContentSafetyFilter:
             )
         except (TypeError, ValueError):
             timeout_seconds = 20
+        connector = None
         try:
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-            async with self.session_factory(timeout=timeout) as session:
+            allow_private_endpoint = bool(
+                config.get("ai_filter_allow_private_endpoint", False)
+            )
+            request_url = openai_chat_url(base_url, allow_private_endpoint)
+            connector = await self._pinned_connector_for_url(
+                request_url,
+                allow_private_endpoint,
+            )
+            session_kwargs: dict[str, Any] = {"timeout": timeout}
+            if connector is not None:
+                session_kwargs["connector"] = connector
+            async with self.session_factory(**session_kwargs) as session:
                 async with session.post(
-                    openai_chat_url(
-                        base_url,
-                        bool(config.get("ai_filter_allow_private_endpoint", False)),
-                    ),
+                    request_url,
                     headers={"Authorization": f"Bearer {api_key}"},
                     json=payload,
                     allow_redirects=False,
@@ -234,3 +326,6 @@ class ContentSafetyFilter:
         except Exception as exc:
             logger.warning(f"[ContentSafety] AI 过滤不可用: {type(exc).__name__}")
             return {"filter": False, "msg": "AI 过滤不可用，已放行"}
+        finally:
+            if connector is not None and not connector.closed:
+                await connector.close()

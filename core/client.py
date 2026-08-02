@@ -126,12 +126,14 @@ class TelegramClientWrapper:
             raise ValueError("代理 URL 必须包含主机和端口")
 
         scheme = parsed.scheme.lower()
-        if scheme.startswith("http"):
+        if scheme in {"http", "https"}:
             proxy_type = socks.HTTP
-        elif scheme.startswith("socks4"):
+        elif scheme in {"socks4", "socks4a"}:
             proxy_type = socks.SOCKS4
-        else:
+        elif scheme in {"socks5", "socks5h"}:
             proxy_type = socks.SOCKS5
+        else:
+            raise ValueError("代理协议必须是 http、https、socks4(a) 或 socks5(h)")
 
         username = unquote(parsed.username) if parsed.username is not None else None
         password = unquote(parsed.password) if parsed.password is not None else None

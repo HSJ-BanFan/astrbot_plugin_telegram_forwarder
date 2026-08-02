@@ -436,6 +436,19 @@ def test_proxy_config_migrates_legacy_protocol_aliases(web_admin, url, protocol)
     assert config["protocol"] == protocol
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://proxy.example.com:1080",
+        "http+unix://proxy.example.com:1080",
+        "socks6://proxy.example.com:1080",
+    ],
+)
+def test_proxy_config_rejects_unknown_legacy_protocol(web_admin, url):
+    with pytest.raises(web_admin.module.WebAdminError, match="代理协议"):
+        web_admin.server.normalize_proxy_config(None, url)
+
+
 def test_proxy_config_to_url_encodes_credentials(web_admin):
     url = web_admin.server.proxy_config_to_url(
         {
@@ -574,6 +587,102 @@ def test_get_config_masks_ai_filter_key(web_admin):
     fwd = result["config"]["forward_config"]
     assert fwd["ai_filter_api_key"] == "[REDACTED]"
     assert fwd["ai_filter_enabled"] is True
+
+
+def test_get_config_masks_proxy_password_and_legacy_credentials(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+
+    result = asyncio.run(web_admin.server.get_config())["config"]
+
+    assert result["proxy_config"]["username"] == "admin"
+    assert result["proxy_config"]["password"] == "[REDACTED]"
+    assert result["proxy"] == "socks5://proxy.example.com:1080"
+    assert "admin:secret" not in str(result)
+
+
+def test_save_config_proxy_placeholder_preserves_existing_password(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+
+    result = asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "proxy.example.com",
+                        "port": 1080,
+                        "username": "admin",
+                        "password": "[REDACTED]",
+                    }
+                }
+            }
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"]["password"] == "secret"
+    assert web_admin.plugin.config["proxy"] == (
+        "socks5://admin:secret@proxy.example.com:1080"
+    )
+    assert result["config"]["proxy_config"]["password"] == "[REDACTED]"
+    assert result["config"]["proxy"] == "socks5://proxy.example.com:1080"
+
+
+def test_proxy_test_placeholder_uses_existing_password(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+    web_admin.server._probe_proxy_sync = MagicMock(
+        return_value={"success": True, "status": "ok", "latency_ms": 1}
+    )
+
+    asyncio.run(
+        web_admin.server.test_proxy(
+            {
+                "mode": "connectivity",
+                "proxy_config": {
+                    "protocol": "socks5",
+                    "host": "proxy.example.com",
+                    "port": 1080,
+                    "username": "admin",
+                    "password": "[REDACTED]",
+                },
+            }
+        )
+    )
+
+    proxy_config = web_admin.server._probe_proxy_sync.call_args.args[0]
+    assert proxy_config["password"] == "secret"
 
 
 def test_export_config_masks_ai_filter_key(web_admin):
