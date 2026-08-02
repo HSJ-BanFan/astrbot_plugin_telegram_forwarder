@@ -119,9 +119,9 @@ class TGChannelCache:
                     channel_ref = channel["channel_ref"]
                     if not channel_ref:
                         continue
-                    # live 结果优先；已有 resolved/live 不覆盖
+                    # live 结果应覆盖 resolved 占位；仅保留已经写入的 live 结果。
                     existing = channels_by_ref.get(channel_ref)
-                    if existing and existing.get("source") in {"live", "resolved"}:
+                    if existing and existing.get("source") == "live":
                         continue
                     channels_by_ref[channel_ref] = channel
             except asyncio.TimeoutError:
@@ -163,7 +163,11 @@ class TGChannelCache:
             except Exception as exc:
                 logger.debug("[WebAdmin] resolve configured channel %s failed: %s", ref, exc)
                 return ref, None
-            channel = self._normalize_channel(SimpleDialog(entity), entity)
+            dialog = SimpleDialog(entity)
+            if not self._is_channel_like(dialog, entity):
+                logger.debug("[WebAdmin] configured Telegram ref is not a channel: %s", ref)
+                return ref, None
+            channel = self._normalize_channel(dialog, entity)
             channel["source"] = "resolved"
             # 保持用户配置的 channel_ref，避免 username/id 形态漂移
             channel["channel_ref"] = ref
@@ -371,5 +375,11 @@ class SimpleDialog:
     def __init__(self, entity: Any):
         self.entity = entity
         self.title = getattr(entity, "title", None)
-        self.is_channel = True
-        self.is_user = False
+        class_name = entity.__class__.__name__.lower()
+        self.is_user = bool(getattr(entity, "is_user", False)) or "user" in class_name
+        self.is_channel = not self.is_user and (
+            bool(getattr(entity, "is_channel", False))
+            or "channel" in class_name
+            or bool(getattr(entity, "broadcast", False))
+            or bool(getattr(entity, "megagroup", False))
+        )

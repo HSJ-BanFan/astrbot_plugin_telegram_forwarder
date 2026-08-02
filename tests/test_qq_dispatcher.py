@@ -64,6 +64,25 @@ class TestIsProbablyDelivered:
         assert m._is_probably_delivered("retcode_1200") is False
 
 
+class TestBigMergeRetryPolicy:
+    def test_policy_clamps_untrusted_config_values(self):
+        m = load_dispatcher_module()
+
+        assert m._resolve_big_merge_retry_policy(
+            {
+                "qq_big_merge_max_attempts": 999999,
+                "qq_big_merge_retry_delay": 999999,
+            }
+        ) == (m.MAX_BIG_MERGE_ATTEMPTS, m.MAX_BIG_MERGE_RETRY_DELAY)
+
+    def test_policy_replaces_non_finite_delay(self):
+        m = load_dispatcher_module()
+
+        assert m._resolve_big_merge_retry_policy(
+            {"qq_big_merge_retry_delay": float("nan")}
+        ) == (m.DEFAULT_BIG_MERGE_MAX_ATTEMPTS, m.DEFAULT_BIG_MERGE_RETRY_DELAY)
+
+
 class TestDispatchSimplePath:
     @pytest.mark.asyncio
     async def test_single_target_success_records_success(self, monkeypatch):

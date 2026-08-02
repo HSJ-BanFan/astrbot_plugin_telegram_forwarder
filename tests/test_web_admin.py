@@ -314,6 +314,38 @@ def test_status_uses_cached_telegram_state_without_rpc(web_admin):
     client.get_me.assert_not_awaited()
 
 
+def test_status_with_empty_profile_cache_does_not_trigger_rpc(web_admin):
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(),
+        get_me=AsyncMock(),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.forwarder = SimpleNamespace(
+        storage=SimpleNamespace(get_all_pending=MagicMock(return_value=[])),
+        stats={},
+        _send_dispatch_lock=asyncio.Lock(),
+        _global_send_lock=asyncio.Lock(),
+        _channel_locks={},
+    )
+    web_admin.plugin.scheduler = SimpleNamespace(
+        running=True,
+        get_jobs=MagicMock(return_value=[]),
+    )
+    web_admin.server._telegram_me_cache = None
+
+    result = asyncio.run(web_admin.server.get_status())
+
+    assert result["telegram"]["authorized"] is True
+    assert result["telegram"]["me"] is None
+    client.is_user_authorized.assert_not_awaited()
+    client.get_me.assert_not_awaited()
+
+
 def test_refresh_telegram_me_updates_status_cache(web_admin):
     me = SimpleNamespace(
         id=99,
@@ -961,6 +993,28 @@ def test_qq_groups_returns_live_groups(web_admin):
     ]
 
 
+def test_qq_group_api_failure_uses_failure_cooldown(web_admin):
+    failing_client = SimpleNamespace(
+        call_action=AsyncMock(side_effect=RuntimeError("QQ API unavailable"))
+    )
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(
+            platform_insts=[FakeQQPlatform(failing_client, "qq-platform")]
+        )
+    )
+    client = web_admin.server.app.test_client()
+
+    first = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    second = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = first.get_json()["data"]
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert payload["available"] is False
+    assert payload["message"] == "QQ group list request failed."
+    assert failing_client.call_action.await_count == 1
+
+
 def test_qq_groups_prefers_aiocqhttp_adapter_when_available(web_admin, monkeypatch):
     class PreferredQQPlatform(FakeQQPlatform):
         pass
@@ -1488,7 +1542,9 @@ async def test_import_session_clears_stale_me_cache(web_admin, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_clear_login_session_removes_files_and_me_cache(web_admin, tmp_path):
+async def test_clear_login_session_removes_files_and_me_cache(
+    web_admin, tmp_path, monkeypatch
+):
     session_file = tmp_path / "user_session.session"
     session_file.write_text("dead-session", encoding="utf-8")
     client = SimpleNamespace(
@@ -1508,6 +1564,12 @@ async def test_clear_login_session_removes_files_and_me_cache(web_admin, tmp_pat
     web_admin.server._login_data = {"phone": "+861000"}
     web_admin.server._discard_login_attempt = AsyncMock()
 
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    to_thread = AsyncMock(side_effect=run_inline)
+    monkeypatch.setattr(web_admin.module.asyncio, "to_thread", to_thread)
+
     result = await web_admin.server.clear_login_session()
 
     assert result["cleared"] is True
@@ -1518,6 +1580,7 @@ async def test_clear_login_session_removes_files_and_me_cache(web_admin, tmp_pat
     assert wrapper._authorized is False
     wrapper._init_client.assert_called_once()
     web_admin.server._discard_login_attempt.assert_awaited()
+    to_thread.assert_awaited_once()
 
 
 @pytest.mark.asyncio

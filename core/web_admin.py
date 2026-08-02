@@ -818,14 +818,8 @@ class WebAdminServer:
 
     async def get_status(self) -> dict[str, Any]:
         login_status = self._cached_login_status()
-        # 已授权但还没拿到昵称/ID 时补刷一次；必须短超时，避免 Dashboard 首屏卡死。
-        if login_status.get("authorized") and not (
-            isinstance(login_status.get("me"), dict) and login_status["me"].get("id")
-        ):
-            me = await self._refresh_telegram_me(timeout=3.0)
-            login_status = self._cached_login_status()
-            if me is not None:
-                login_status["me"] = me
+        # 状态轮询只读内存缓存，避免 Dashboard 定时请求持续占用 Telegram RPC。
+        # 登录、导入 session、启动预热和后台刷新负责更新该缓存。
         forwarder = self.plugin.forwarder
         all_pending = forwarder.storage.get_all_pending()
         queue_by_channel: dict[str, int] = {}
@@ -1565,30 +1559,12 @@ class WebAdminServer:
             "two different ip" in text or "simultaneously" in text
         )
 
-    async def clear_login_session(self) -> dict[str, Any]:
-        """清空本地 Telegram 登录信息（退出登录）。
-
-        会备份并删除正式 session 文件、断开客户端、清空 me 缓存。
-        用于 AuthKey 冲突或需要彻底换号/重登的场景。
-        """
-        await self._discard_login_attempt(remove_files=True)
-        self._login_data.clear()
-
-        wrapper = self.plugin.client_wrapper
-        session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
-        backup_dir = os.path.join(
-            wrapper.plugin_data_dir,
-            f"user_session_clear_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-        )
+    def _backup_and_remove_session_files_sync(
+        self,
+        session_path: str,
+        backup_dir: str,
+    ) -> bool:
         backed_up = False
-        try:
-            if wrapper.client and wrapper.client.is_connected():
-                await wrapper.disconnect(timeout=5.0)
-        except Exception as exc:
-            logger.debug(f"[WebAdmin] disconnect before clear session failed: {exc}")
-
-        await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
-
         for path in self._session_files(session_path):
             if not os.path.exists(path):
                 continue
@@ -1609,6 +1585,35 @@ class WebAdminServer:
                 os.remove(path)
             except Exception as exc:
                 logger.warning(f"[WebAdmin] remove session file failed {path}: {exc}")
+        return backed_up
+
+    async def clear_login_session(self) -> dict[str, Any]:
+        """清空本地 Telegram 登录信息（退出登录）。
+
+        会备份并删除正式 session 文件、断开客户端、清空 me 缓存。
+        用于 AuthKey 冲突或需要彻底换号/重登的场景。
+        """
+        await self._discard_login_attempt(remove_files=True)
+        self._login_data.clear()
+
+        wrapper = self.plugin.client_wrapper
+        session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
+        backup_dir = os.path.join(
+            wrapper.plugin_data_dir,
+            f"user_session_clear_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        )
+        try:
+            if wrapper.client and wrapper.client.is_connected():
+                await wrapper.disconnect(timeout=5.0)
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] disconnect before clear session failed: {exc}")
+
+        await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+        backed_up = await asyncio.to_thread(
+            self._backup_and_remove_session_files_sync,
+            session_path,
+            backup_dir,
+        )
 
         self._telegram_me_cache = None
         wrapper.client = cast(Any, None)

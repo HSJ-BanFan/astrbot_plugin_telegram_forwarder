@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import math
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ PROBABLE_DELIVERY_ERROR_TYPES = {"sendmsg_confirmation_timeout"}
 BIG_MERGE_RETRYABLE_ERROR_TYPES = {"resid_forward_empty"}
 DEFAULT_BIG_MERGE_MAX_ATTEMPTS = 2
 DEFAULT_BIG_MERGE_RETRY_DELAY = 2.0
+MAX_BIG_MERGE_ATTEMPTS = 5
+MAX_BIG_MERGE_RETRY_DELAY = 60.0
 
 
 def _resolve_big_merge_retry_policy(forward_cfg: dict) -> tuple[int, float]:
@@ -42,8 +45,7 @@ def _resolve_big_merge_retry_policy(forward_cfg: dict) -> tuple[int, float]:
         max_attempts = int(raw_attempts)
     except (TypeError, ValueError):
         max_attempts = DEFAULT_BIG_MERGE_MAX_ATTEMPTS
-    if max_attempts < 1:
-        max_attempts = 1
+    max_attempts = min(MAX_BIG_MERGE_ATTEMPTS, max(1, max_attempts))
 
     raw_delay = forward_cfg.get(
         "qq_big_merge_retry_delay", DEFAULT_BIG_MERGE_RETRY_DELAY
@@ -52,8 +54,9 @@ def _resolve_big_merge_retry_policy(forward_cfg: dict) -> tuple[int, float]:
         retry_delay = float(raw_delay)
     except (TypeError, ValueError):
         retry_delay = DEFAULT_BIG_MERGE_RETRY_DELAY
-    if retry_delay < 0:
-        retry_delay = 0.0
+    if not math.isfinite(retry_delay):
+        retry_delay = DEFAULT_BIG_MERGE_RETRY_DELAY
+    retry_delay = min(MAX_BIG_MERGE_RETRY_DELAY, max(0.0, retry_delay))
     return max_attempts, retry_delay
 
 

@@ -2239,10 +2239,10 @@ class TestQQBatchBuilder:
         assert result.target_failures == {}
 
     @pytest.mark.asyncio
-    async def test_build_keeps_header_when_first_media_download_fails(
+    async def test_build_retries_whole_batch_when_one_media_download_fails(
         self, sender, qq_module
     ):
-        """首条媒体下载失败后，后续成功消息仍应带 From 头。"""
+        """部分媒体失败时不得发送并确认同一逻辑批次的剩余消息。"""
 
         async def download_media(msg, max_size_mb=0):
             if getattr(msg, "id", None) == 1:
@@ -2250,6 +2250,7 @@ class TestQQBatchBuilder:
             return ["/tmp/photo2.jpg"]
 
         sender.downloader.download_media = AsyncMock(side_effect=download_media)
+        sender._cleanup_files = MagicMock()
         sender._dispatch_media_file = lambda path: [
             qq_module.Image.fromFileSystem(path)
         ]
@@ -2298,17 +2299,9 @@ class TestQQBatchBuilder:
             exclude_text_on_media=False,
         )
 
-        assert len(result.processed_batches) == 1
-        texts = [
-            component.text
-            for node in result.processed_batches[0]["nodes_data"]
-            for component in node
-            if hasattr(component, "text")
-        ]
-        assert any("From @心惊报:" in text for text in texts)
-        assert any("via ok" in text for text in texts)
-        assert not any("via fail" in text for text in texts)
-        assert result.target_failures == {}
+        assert result.processed_batches == []
+        assert result.target_failures == {0: "media_download_failed"}
+        sender._cleanup_files.assert_called_once_with(["/tmp/photo2.jpg"])
 
 
 class TestReplyPreviewIntegration:

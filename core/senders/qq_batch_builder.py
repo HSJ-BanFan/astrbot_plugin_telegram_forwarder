@@ -150,6 +150,7 @@ async def build_processed_batches(
         all_nodes_data = []
         media_download_failed = False
         batch_header_added = False
+        header_added_before_batch = header_added
         try:
             reply_preview_cache = await sender._prefetch_reply_previews(
                 msgs, src_channel, strip_links=strip_links
@@ -240,7 +241,13 @@ async def build_processed_batches(
                             header_added = True
                             batch_header_added = True
 
-            if all_nodes_data:
+            if media_download_failed:
+                # 一个逻辑批次必须原子发送。若只发送成功构建的部分，发送汇总会把
+                # 整个 batch_index 标为成功，失败媒体随后将从 pending 中永久丢失。
+                sender._cleanup_files(all_local_files)
+                header_added = header_added_before_batch
+                target_failures.setdefault(batch_index, "media_download_failed")
+            elif all_nodes_data:
                 processed_batches.append(
                     ProcessedBatch(
                         batch_index=batch_index,
@@ -249,8 +256,6 @@ async def build_processed_batches(
                         contains_audio=sender._batch_contains_audio(all_nodes_data),
                     ).as_batch_data()
                 )
-            elif media_download_failed:
-                target_failures.setdefault(batch_index, "media_download_failed")
             else:
                 target_failures.setdefault(batch_index, "preprocess_empty")
         except Exception as e:

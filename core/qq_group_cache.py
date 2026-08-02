@@ -68,6 +68,7 @@ class QQGroupCache:
             groups_by_id: dict[str, dict[str, Any]] = {}
             saw_platform = False
             saw_client = False
+            saw_successful_call = False
 
             for platform, platform_id in self._iter_qq_platforms():
                 saw_platform = True
@@ -80,6 +81,7 @@ class QQGroupCache:
                 except Exception as exc:
                     logger.warning("[WebAdmin] Failed to load QQ groups: %s", exc)
                     continue
+                saw_successful_call = True
                 for raw_group in self._extract_group_list(result):
                     group = self._normalize_group(raw_group, platform_id)
                     group_id = group["group_id"]
@@ -88,11 +90,14 @@ class QQGroupCache:
                     groups_by_id[group_id] = group
 
             self._groups = self._sort_groups(groups_by_id.values())
-            self._available = saw_client
+            self._available = saw_successful_call
             now = time.time()
-            if saw_client:
+            if saw_successful_call:
                 self._message = ""
                 self._last_failure_at = 0.0
+            elif saw_client:
+                self._message = "QQ group list request failed."
+                self._last_failure_at = now
             elif saw_platform:
                 self._message = (
                     "QQ platform found, but no callable client is available."
