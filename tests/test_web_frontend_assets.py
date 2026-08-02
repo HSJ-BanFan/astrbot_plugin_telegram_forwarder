@@ -478,6 +478,8 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         assert '"clearSessionBtn"' in app_text
         assert 'apiRequest("/api/login/clear-session", "POST")' in login_text
         assert "正在清空登录信息" in login_text
+        assert "window.confirm" in login_text
+        assert "确认清空本地 Telegram 登录信息" in login_text
         assert "function loginRefreshMode" in login_text
         assert 'result?.authorized ? "force" : "status"' in login_text
         assert 'loadAll({ force: true })' in login_text

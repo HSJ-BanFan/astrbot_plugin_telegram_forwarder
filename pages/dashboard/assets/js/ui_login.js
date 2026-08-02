@@ -363,7 +363,14 @@ export function initLogin() {
 
   if (els.clearSessionBtn && els.clearSessionBtn.dataset.loginBound !== "true") {
     els.clearSessionBtn.dataset.loginBound = "true";
-    els.clearSessionBtn.addEventListener("click", () =>
+    els.clearSessionBtn.addEventListener("click", () => {
+      if (
+        !window.confirm(
+          "确认清空本地 Telegram 登录信息？清空后需重新验证码登录或导入会话。"
+        )
+      ) {
+        return;
+      }
       withButtonLoading(
         els.clearSessionBtn,
         "正在清空登录信息...",
@@ -377,8 +384,8 @@ export function initLogin() {
         },
         "已清空登录信息。",
         { refresh: "force" }
-      )
-    );
+      );
+    });
   }
 
   // subscribe to store changes to update login rendering

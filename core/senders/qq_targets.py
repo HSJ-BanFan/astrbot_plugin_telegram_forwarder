@@ -129,10 +129,32 @@ def is_sendmsg_confirmation_timeout(error: Exception) -> bool:
     return event_ret.get("result") == 0 and not event_ret.get("errMsg")
 
 
+def is_resid_forward_empty_message(error: Exception) -> bool:
+    """判断是否为 NapCat 合并转发 res_id 已生成但最终 message 为空。
+
+    这类错误适合对整组合并做有限次重试。通用 retcode=1200（含 rich-media
+    上传失败、确认超时等）不得当作此标签，避免误重发已可能送达的内容。
+    """
+
+    if is_sendmsg_confirmation_timeout(error):
+        return False
+
+    blob = f"{_error_message(error)}\n{error!s}"
+    if "res_id" not in blob:
+        return False
+    # 典型文案：发送转发消息（res_id：... 失败
+    if "发送转发消息" in blob and "失败" in blob:
+        return True
+    lowered = blob.lower()
+    return "empty message" in lowered or "message 为空" in blob
+
+
 def classify_send_error(error: Exception) -> str:
     """把已知发送异常归类为稳定的错误标签。"""
     if is_sendmsg_confirmation_timeout(error):
         return "sendmsg_confirmation_timeout"
+    if is_resid_forward_empty_message(error):
+        return "resid_forward_empty"
 
     message = _error_message(error)
     rendered = str(error)

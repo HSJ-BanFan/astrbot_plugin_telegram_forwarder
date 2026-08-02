@@ -1412,6 +1412,40 @@ async def test_clear_login_session_removes_files_and_me_cache(web_admin, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_clear_login_session_keeps_file_when_backup_fails(
+    web_admin, tmp_path, monkeypatch
+):
+    session_file = tmp_path / "user_session.session"
+    session_file.write_text("dead-session", encoding="utf-8")
+    client = SimpleNamespace(is_connected=MagicMock(return_value=False))
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=False),
+        is_authorized=MagicMock(return_value=False),
+        disconnect=AsyncMock(),
+        _authorized=False,
+        _init_client=MagicMock(),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 1}
+    web_admin.server._login_data = {"phone": "+861000"}
+    web_admin.server._discard_login_attempt = AsyncMock()
+
+    def boom_copy(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(web_admin.module.shutil, "copyfile", boom_copy)
+
+    result = await web_admin.server.clear_login_session()
+
+    assert result["cleared"] is True
+    assert result["backup_dir"] == ""
+    assert session_file.exists()
+    assert session_file.read_text(encoding="utf-8") == "dead-session"
+
+
+@pytest.mark.asyncio
 async def test_login_start_auto_clears_on_auth_key_duplicated(web_admin, tmp_path):
     class AuthKeyDuplicatedError(Exception):
         pass

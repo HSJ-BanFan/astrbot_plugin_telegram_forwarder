@@ -1563,13 +1563,18 @@ class WebAdminServer:
             if not os.path.exists(path):
                 continue
             os.makedirs(backup_dir, exist_ok=True)
+            file_backed_up = False
             try:
                 shutil.copyfile(path, os.path.join(backup_dir, os.path.basename(path)))
                 backed_up = True
+                file_backed_up = True
             except Exception as exc:
-                logger.debug(
+                # 备份失败时保留原 session，避免 AuthKey 自动清理路径无恢复副本。
+                logger.warning(
                     f"[WebAdmin] backup session before clear failed {path}: {exc}"
                 )
+            if not file_backed_up:
+                continue
             try:
                 os.remove(path)
             except Exception as exc:

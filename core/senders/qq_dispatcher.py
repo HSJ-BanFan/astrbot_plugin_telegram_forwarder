@@ -22,8 +22,9 @@ from .qq_types import SendMessageFn
 
 PROBABLE_DELIVERY_ERROR_TYPES = {"sendmsg_confirmation_timeout"}
 # NapCat 合并转发常见瞬时失败：已生成 res_id 但最终 message 为空。
-# 仅对此类错误重试大合并；其它错误立即降级，避免拖长发送窗口。
-BIG_MERGE_RETRYABLE_ERROR_TYPES = {"retcode_1200"}
+# 仅对此类错误重试大合并；通用 retcode_1200（rich-media / 其它 1200）立即降级，
+# 避免把“可能已送达或文件上传失败”的情况整包重发。
+BIG_MERGE_RETRYABLE_ERROR_TYPES = {"resid_forward_empty"}
 DEFAULT_BIG_MERGE_MAX_ATTEMPTS = 2
 DEFAULT_BIG_MERGE_RETRY_DELAY = 2.0
 
@@ -455,7 +456,11 @@ async def dispatch_processed_batches_to_targets(
                             f"停止本目标剩余 {remaining} 个节点"
                         )
                         break
-                    await asyncio.sleep(5)
+                    # 与 send_each_batch 一致：失败用固定冷却，成功用 chunk_delay。
+                    if chunk_failed:
+                        await asyncio.sleep(5)
+                    elif chunk_idx < total_chunks:
+                        await asyncio.sleep(chunk_delay)
             else:
                 # 普通发送（逐个小相册 / 单条）
                 consecutive_failures = 0
