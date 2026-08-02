@@ -167,3 +167,23 @@ async def test_tg_channel_cache_failure_uses_short_cooldown():
     cache._last_failure_at -= 1.5
     cache._last_refresh_at = cache._last_failure_at
     assert cache._is_fresh() is False
+
+
+def test_tg_channel_cache_invalidate_clears_freshness():
+    module = load_tg_channel_cache_module()
+    cache = module.TGChannelCache(
+        SimpleNamespace(client_wrapper=None),
+        ttl_seconds=90,
+        failure_cooldown=30.0,
+    )
+    cache._available = False
+    cache._channels = [{"channel_ref": "x"}]
+    cache._last_failure_at = time.time()
+    cache._last_refresh_at = cache._last_failure_at
+    assert cache._is_fresh() is True
+    cache.invalidate()
+    assert cache._channels == []
+    assert cache._available is False
+    assert cache._last_refresh_at == 0.0
+    assert cache._last_failure_at == 0.0
+    assert cache._is_fresh() is False

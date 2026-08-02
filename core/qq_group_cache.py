@@ -103,6 +103,14 @@ class QQGroupCache:
                 self._last_failure_at = now
             self._last_refresh_at = now
 
+    def invalidate(self) -> None:
+        """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
+        self._groups = []
+        self._available = False
+        self._message = "QQ group cache invalidated."
+        self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
+
     def _iter_qq_platforms(self) -> list[tuple[Any, str]]:
         platforms = get_platform_instances(getattr(self.plugin, "context", None))
         adapter_matches: list[tuple[Any, str]] = []

@@ -110,6 +110,42 @@
               </div>
             </div>
 
+            <div class="panel overview-stats-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>转发统计</h2>
+                  <p id="statsResetHint">进程内累计计数；插件重启后清零。</p>
+                </div>
+                <small class="stats-reset-meta" id="statsLastReset">-</small>
+              </div>
+              <div class="stats-grid">
+                <div class="stats-card" data-tone="success">
+                  <span class="stats-label">成功转发</span>
+                  <strong id="statsForwardSuccess">0</strong>
+                </div>
+                <div class="stats-card" data-tone="danger">
+                  <span class="stats-label">失败</span>
+                  <strong id="statsForwardFailed">0</strong>
+                </div>
+                <div class="stats-card" data-tone="sky">
+                  <span class="stats-label">已 ACK</span>
+                  <strong id="statsAcked">0</strong>
+                </div>
+                <div class="stats-card" data-tone="amber">
+                  <span class="stats-label">延后重试</span>
+                  <strong id="statsDeferred">0</strong>
+                </div>
+                <div class="stats-card" data-tone="violet">
+                  <span class="stats-label">尝试发送</span>
+                  <strong id="statsForwardAttempts">0</strong>
+                </div>
+                <div class="stats-card" data-tone="blue">
+                  <span class="stats-label">发送失败保留</span>
+                  <strong id="statsFailedKeep">0</strong>
+                </div>
+              </div>
+            </div>
+
             <div class="overview-main">
               <div class="panel runtime-panel">
                 <div class="panel-head">
@@ -269,7 +305,9 @@
                 <div class="action-row">
                   <button class="btn btn-soft" id="exportSessionBtn" type="button">导出登录信息</button>
                   <button class="btn btn-primary" id="importSessionBtn" type="button">导入登录信息</button>
+                  <button class="btn btn-soft danger" id="clearSessionBtn" type="button">清空登录信息</button>
                 </div>
+                <p class="field-hint" id="clearSessionHint">会话冲突或无法发验证码时，可清空本地登录（退出登录）后再重新发送验证码或导入。</p>
                 <input id="sessionImportFile" type="file" accept="application/json,.json" hidden />
               </div>
             </div>

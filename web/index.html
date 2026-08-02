@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telegram Forwarder</title>
-    <link rel="stylesheet" href="/assets/style.css?v=9a702dcacb" />
-    <script src="/assets/js/gsap.min.js?v=9a702dcacb"></script>
+    <link rel="stylesheet" href="/assets/style.css?v=a5d29724c3" />
+    <script src="/assets/js/gsap.min.js?v=a5d29724c3"></script>
   </head>
   <body>
     <div class="bg-aurora" aria-hidden="true"><i></i><i></i></div>
@@ -124,6 +124,42 @@
                   <span class="metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg></span>
                 </div>
                 <strong id="queueCount">-</strong>
+              </div>
+            </div>
+
+            <div class="panel overview-stats-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>转发统计</h2>
+                  <p id="statsResetHint">进程内累计计数；插件重启后清零。</p>
+                </div>
+                <small class="stats-reset-meta" id="statsLastReset">-</small>
+              </div>
+              <div class="stats-grid">
+                <div class="stats-card" data-tone="success">
+                  <span class="stats-label">成功转发</span>
+                  <strong id="statsForwardSuccess">0</strong>
+                </div>
+                <div class="stats-card" data-tone="danger">
+                  <span class="stats-label">失败</span>
+                  <strong id="statsForwardFailed">0</strong>
+                </div>
+                <div class="stats-card" data-tone="sky">
+                  <span class="stats-label">已 ACK</span>
+                  <strong id="statsAcked">0</strong>
+                </div>
+                <div class="stats-card" data-tone="amber">
+                  <span class="stats-label">延后重试</span>
+                  <strong id="statsDeferred">0</strong>
+                </div>
+                <div class="stats-card" data-tone="violet">
+                  <span class="stats-label">尝试发送</span>
+                  <strong id="statsForwardAttempts">0</strong>
+                </div>
+                <div class="stats-card" data-tone="blue">
+                  <span class="stats-label">发送失败保留</span>
+                  <strong id="statsFailedKeep">0</strong>
+                </div>
               </div>
             </div>
 
@@ -286,7 +322,9 @@
                 <div class="action-row">
                   <button class="btn btn-soft" id="exportSessionBtn" type="button">导出登录信息</button>
                   <button class="btn btn-primary" id="importSessionBtn" type="button">导入登录信息</button>
+                  <button class="btn btn-soft danger" id="clearSessionBtn" type="button">清空登录信息</button>
                 </div>
+                <p class="field-hint" id="clearSessionHint">会话冲突或无法发验证码时，可清空本地登录（退出登录）后再重新发送验证码或导入。</p>
                 <input id="sessionImportFile" type="file" accept="application/json,.json" hidden />
               </div>
             </div>
@@ -442,6 +480,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="/assets/app.js?v=9a702dcacb" type="module" defer></script>
+    <script src="/assets/app.js?v=a5d29724c3" type="module" defer></script>
   </body>
 </html>

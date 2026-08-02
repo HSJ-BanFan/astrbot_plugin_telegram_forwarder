@@ -221,8 +221,14 @@ export async function exportSession() {
 export async function importSessionFromFile(file) {
   const payload = await readJsonFile(file, "登录信息");
   const result = await apiRequest("/api/import/session", "POST", payload);
-  await loadAll();
+  // 导入/重登后必须 force 拉频道，否则可能仍命中未授权时的失败冷却空缓存。
+  await loadAll({ force: true });
   return result;
+}
+
+/** 登录成功后 force 刷频道/群；流程中仅刷 status。 */
+function loginRefreshMode(result) {
+  return result?.authorized ? "force" : "status";
 }
 
 export function initLogin() {
@@ -300,7 +306,7 @@ export function initLogin() {
         const result = await apiRequest("/api/login/code", "POST", { code: els.codeInput.value.trim() });
         if (els.loginMessage) els.loginMessage.textContent = result.message || "";
         return result;
-      }, "验证码已提交。", { refresh: "status" })
+      }, "验证码已提交。", { refresh: loginRefreshMode })
     );
   }
 
@@ -311,7 +317,7 @@ export function initLogin() {
         const result = await apiRequest("/api/login/password", "POST", { password: els.passwordInput.value });
         if (els.loginMessage) els.loginMessage.textContent = result.message || "";
         return result;
-      }, "密码已提交。", { refresh: "status" })
+      }, "密码已提交。", { refresh: loginRefreshMode })
     );
   }
 
@@ -349,9 +355,30 @@ export function initLogin() {
         "正在导入...",
         () => importSessionFromFile(file),
         "登录信息已导入。",
-        { refresh: "status" }
+        // importSessionFromFile 内已 force loadAll，避免重复。
+        { refresh: false }
       );
     });
+  }
+
+  if (els.clearSessionBtn && els.clearSessionBtn.dataset.loginBound !== "true") {
+    els.clearSessionBtn.dataset.loginBound = "true";
+    els.clearSessionBtn.addEventListener("click", () =>
+      withButtonLoading(
+        els.clearSessionBtn,
+        "正在清空登录信息...",
+        async () => {
+          const result = await apiRequest("/api/login/clear-session", "POST");
+          if (els.loginMessage) {
+            els.loginMessage.textContent =
+              result.message || "已清空本地登录信息，请重新发送验证码或导入。";
+          }
+          return result;
+        },
+        "已清空登录信息。",
+        { refresh: "force" }
+      )
+    );
   }
 
   // subscribe to store changes to update login rendering

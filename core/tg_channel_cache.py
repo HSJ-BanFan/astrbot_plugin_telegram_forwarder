@@ -203,6 +203,14 @@ class TGChannelCache:
         self._last_failure_at = now
         self._last_refresh_at = now
 
+    def invalidate(self) -> None:
+        """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
+        self._channels = []
+        self._available = False
+        self._message = "Telegram channel cache invalidated."
+        self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
+
     async def _is_client_connected(self, client: Any) -> bool:
         checker = getattr(client, "is_connected", None)
         if checker is None:

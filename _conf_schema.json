@@ -294,6 +294,18 @@
                 "default": "独立频道",
                 "hint": "『独立频道』：每个频道独立判断是否合并（推荐）；『混合所有频道』：所有频道消息总数达标才合并成一条超大转发；『关闭』强制不使用大合并"
             },
+            "qq_big_merge_max_attempts": {
+                "description": "QQ 大合并重试次数",
+                "type": "int",
+                "default": 2,
+                "hint": "大合并因 NapCat res_id/retcode=1200 失败时的最大尝试次数（含首次）。1=不重试直接降级；推荐 2~3。仅对可重试错误生效"
+            },
+            "qq_big_merge_retry_delay": {
+                "description": "QQ 大合并重试间隔（秒）",
+                "type": "float",
+                "default": 2,
+                "hint": "两次大合并尝试之间的等待秒数。瞬时协议抖动时可给 QQ 端喘息；0 表示立即重试"
+            },
             "use_channel_title": {
                 "type": "bool",
                 "default": true,

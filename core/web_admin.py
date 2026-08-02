@@ -392,6 +392,11 @@ class WebAdminServer:
             payload = request.get_json(silent=True) or {}
             return run_api(self.import_session(payload), timeout=60.0)
 
+        @app.post("/api/login/clear-session")
+        @require_auth
+        def api_clear_login_session():
+            return run_api(self.clear_login_session(), timeout=60.0)
+
         @app.get("/api/login/status")
         @require_auth
         def api_login_status():
@@ -727,6 +732,10 @@ class WebAdminServer:
         official_wrapper._authorized = False
         # 替换正式会话后清空旧 me 缓存，避免 status 显示上一个账号。
         self._telegram_me_cache = None
+        try:
+            self.tg_channel_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate tg cache before install activate failed: {exc}")
         official_wrapper._init_client()
         await official_wrapper.ensure_connected()
         await official_wrapper._mark_authorized_if_needed()
@@ -1452,6 +1461,12 @@ class WebAdminServer:
             if authorized:
                 await wrapper._mark_authorized_if_needed()
                 await self._refresh_telegram_me()
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after import failed: {exc}"
+                    )
                 await self.plugin.activate_runtime_after_authorized(startup_grace=0)
 
         await self._discard_login_attempt(remove_files=True)
@@ -1509,38 +1524,119 @@ class WebAdminServer:
             "me": me_data,
         }
 
+    @staticmethod
+    def _is_auth_key_duplicated_error(exc: BaseException) -> bool:
+        """判断是否为 Telethon AuthKey 双 IP 冲突（session 已作废）。"""
+        name = type(exc).__name__
+        if "AuthKeyDuplicated" in name:
+            return True
+        text = str(exc).lower()
+        return "authorization key" in text and (
+            "two different ip" in text or "simultaneously" in text
+        )
+
+    async def clear_login_session(self) -> dict[str, Any]:
+        """清空本地 Telegram 登录信息（退出登录）。
+
+        会备份并删除正式 session 文件、断开客户端、清空 me 缓存。
+        用于 AuthKey 冲突或需要彻底换号/重登的场景。
+        """
+        await self._discard_login_attempt(remove_files=True)
+        self._login_data.clear()
+
+        wrapper = self.plugin.client_wrapper
+        session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
+        backup_dir = os.path.join(
+            wrapper.plugin_data_dir,
+            f"user_session_clear_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        )
+        backed_up = False
+        try:
+            if wrapper.client and wrapper.client.is_connected():
+                await wrapper.disconnect(timeout=5.0)
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] disconnect before clear session failed: {exc}")
+
+        await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+
+        for path in self._session_files(session_path):
+            if not os.path.exists(path):
+                continue
+            os.makedirs(backup_dir, exist_ok=True)
+            try:
+                shutil.copyfile(path, os.path.join(backup_dir, os.path.basename(path)))
+                backed_up = True
+            except Exception as exc:
+                logger.debug(
+                    f"[WebAdmin] backup session before clear failed {path}: {exc}"
+                )
+            try:
+                os.remove(path)
+            except Exception as exc:
+                logger.warning(f"[WebAdmin] remove session file failed {path}: {exc}")
+
+        self._telegram_me_cache = None
+        wrapper.client = cast(Any, None)
+        wrapper._authorized = False
+        wrapper._init_client()
+
+        # 退出登录后作废频道/群缓存，避免前端仍读到旧会话的空失败缓存。
+        try:
+            self.tg_channel_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate tg cache after clear failed: {exc}")
+        try:
+            self.qq_group_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate qq cache after clear failed: {exc}")
+
+        return {
+            "authorized": False,
+            "cleared": True,
+            "backup_dir": backup_dir if backed_up else "",
+            "message": "已清空本地 Telegram 登录信息。请重新填写手机号并发送验证码，或导入登录信息。",
+        }
+
     async def login_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         replace_existing = self._to_bool(payload.get("replace_existing"), False)
-        current_wrapper = await self._ensure_wrapper_ready()
         phone = self._normalize_phone(
             str(payload.get("phone") or self.plugin.config.get("phone") or "")
         )
         if not phone:
             raise WebAdminError("请填写 Telegram 手机号。")
 
-        try:
-            if replace_existing:
+        async def _send_code(*, use_temp_login: bool) -> dict[str, Any]:
+            if use_temp_login:
                 await self._discard_login_attempt(remove_files=True)
                 wrapper = await self._ensure_login_wrapper_ready()
+                effective_replace = True
             else:
-                wrapper = current_wrapper
+                wrapper = await self._ensure_wrapper_ready()
+                effective_replace = False
 
             await wrapper.ensure_connected()
-            if not replace_existing and await wrapper.client.is_user_authorized():
+            if not effective_replace and await wrapper.client.is_user_authorized():
+                # 已授权但可能是僵尸 AuthKey：试探 get_me，失败则当冲突处理
+                try:
+                    await asyncio.wait_for(wrapper.client.get_me(), timeout=8.0)
+                except Exception as probe_exc:
+                    if self._is_auth_key_duplicated_error(probe_exc):
+                        raise probe_exc
+                    logger.debug(f"[WebAdmin] authorized probe get_me failed: {probe_exc}")
                 await wrapper._mark_authorized_if_needed()
                 self._login_data.clear()
                 await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 return {"authorized": True, "message": "当前 Telegram 账号已授权。"}
 
             phone_code_hash = await wrapper.send_login_code(phone)
-            if not replace_existing:
+            if not effective_replace:
                 self.plugin.config["phone"] = phone
                 self.plugin.config.save_config()
             self._login_data = {
                 "phone": phone,
                 "phone_code_hash": phone_code_hash,
                 "need_password": False,
-                "replace_existing": replace_existing,
+                "replace_existing": effective_replace or replace_existing,
                 "created_at": datetime.now().isoformat(timespec="seconds"),
             }
             return {
@@ -1549,12 +1645,42 @@ class WebAdminServer:
                 "phone": phone,
                 "message": "验证码已发送，请输入 Telegram 收到的验证码原文。",
             }
-        except FloodWaitError as exc:
-            seconds = getattr(exc, "seconds", 0) or 0
-            raise WebAdminError(f"请求过于频繁，请等待 {seconds} 秒后重试。") from exc
+
+        try:
+            return await _send_code(use_temp_login=replace_existing)
         except WebAdminError:
             raise
         except Exception as exc:
+            # AuthKey 冲突优先于其它异常分类（部分 Telethon 错误会叠在 RPC 链上）。
+            if self._is_auth_key_duplicated_error(exc):
+                logger.warning(
+                    f"[WebAdmin] 发送验证码遇到 AuthKey 冲突，自动清空本地登录信息后改用干净会话: {exc}"
+                )
+                try:
+                    await self.clear_login_session()
+                except Exception as clear_exc:
+                    logger.error(f"[WebAdmin] 自动清空冲突 session 失败: {clear_exc}")
+                    raise WebAdminError(
+                        f"发送验证码失败：登录会话已冲突，且自动清空失败：{clear_exc}。"
+                        "请点击「清空登录信息」后重试。"
+                    ) from clear_exc
+                try:
+                    # 正式 session 已清空；用临时目录发码，成功后再 install 覆盖。
+                    return await _send_code(use_temp_login=True)
+                except FloodWaitError as flood_exc:
+                    seconds = getattr(flood_exc, "seconds", 0) or 0
+                    raise WebAdminError(
+                        f"已清空冲突会话，但请求过于频繁，请等待 {seconds} 秒后重试。"
+                    ) from flood_exc
+                except WebAdminError:
+                    raise
+                except Exception as retry_exc:
+                    raise WebAdminError(
+                        f"已清空冲突的本地登录信息，但再次发送验证码失败：{retry_exc}"
+                    ) from retry_exc
+            if isinstance(exc, FloodWaitError):
+                seconds = getattr(exc, "seconds", 0) or 0
+                raise WebAdminError(f"请求过于频繁，请等待 {seconds} 秒后重试。") from exc
             raise WebAdminError(f"发送验证码失败：{exc}") from exc
 
     async def login_code(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1577,6 +1703,12 @@ class WebAdminServer:
             )
             if ok:
                 phone = self._login_data.get("phone", "")
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after login failed: {exc}"
+                    )
                 if self._login_data.get("replace_existing"):
                     await self._install_login_session(phone)
                 else:
@@ -1626,6 +1758,12 @@ class WebAdminServer:
             ok = await wrapper.sign_in_with_password(password)
             if ok:
                 phone = self._login_data.get("phone", "")
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after password login failed: {exc}"
+                    )
                 if self._login_data.get("replace_existing"):
                     await self._install_login_session(phone)
                 else:

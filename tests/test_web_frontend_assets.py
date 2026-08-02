@@ -28,6 +28,43 @@ build_frontend = _load_build_frontend()
 ASSET_VERSION = build_frontend.compute_version(build_frontend.generate_assets())
 
 
+def test_overview_forward_stats_panel_is_wired() -> None:
+    for root, asset_root in (
+        (ROOT / "web", WEB_ASSETS),
+        (PAGE_ROOT, PAGE_ASSETS),
+    ):
+        html = (root / "index.html").read_text(encoding="utf-8")
+        assert 'class="panel overview-stats-panel"' in html
+        assert "转发统计" in html
+        for element_id in (
+            "statsForwardSuccess",
+            "statsForwardFailed",
+            "statsAcked",
+            "statsDeferred",
+            "statsForwardAttempts",
+            "statsFailedKeep",
+            "statsLastReset",
+        ):
+            assert f'id="{element_id}"' in html
+        app_text = (asset_root / "app.js").read_text(encoding="utf-8")
+        overview_text = (asset_root / "js" / "ui_overview.js").read_text(encoding="utf-8")
+        assert '"statsForwardSuccess"' in app_text
+        assert "status.stats" in overview_text or "stats.forward_success" in overview_text
+        assert "stats.forward_success" in overview_text
+        assert "stats.acked_messages" in overview_text
+        assert "stats.deferred_messages" in overview_text
+        css_candidates = [
+            asset_root / "style.css",
+            asset_root / "css" / "components.css",
+        ]
+        css_blob = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in css_candidates
+            if path.is_file()
+        )
+        assert ".overview-stats-panel" in css_blob or ".stats-grid" in css_blob
+
+
 def test_dashboard_plugin_page_entry_exists() -> None:
     assert (PAGE_ROOT / "index.html").is_file()
     assert (PAGE_ROOT / "_page.json").is_file()
@@ -432,6 +469,28 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         assert '["昵称"' in login_text or '["昵称",' in login_text
         assert '["姓名"' not in login_text
         assert "正在准备重新登录" in login_text
+        index_html = (
+            (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+            if asset_root == WEB_ASSETS
+            else (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+        )
+        assert 'id="clearSessionBtn"' in index_html
+        assert '"clearSessionBtn"' in app_text
+        assert 'apiRequest("/api/login/clear-session", "POST")' in login_text
+        assert "正在清空登录信息" in login_text
+        assert "function loginRefreshMode" in login_text
+        assert 'result?.authorized ? "force" : "status"' in login_text
+        assert 'loadAll({ force: true })' in login_text
+        assert "refresh: loginRefreshMode" in login_text
+        utils_text = (asset_root / "js" / "utils.js").read_text(encoding="utf-8")
+        assert "function searchNeedleVariants" in utils_text
+        assert "function fieldsMatchSearch" in utils_text
+        selector_text = (asset_root / "js" / "ui_selector.js").read_text(encoding="utf-8")
+        assert "fieldsMatchSearch" in selector_text
+        topology_text = (asset_root / "js" / "ui_topology.js").read_text(encoding="utf-8")
+        assert "fieldsMatchSearch" in topology_text
+        context_text = (asset_root / "js" / "context.js").read_text(encoding="utf-8")
+        assert 'typeof options.refresh === "function"' in context_text
 
 
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:

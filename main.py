@@ -266,6 +266,12 @@ class Main(star.Star):
                 "导入 Telegram 登录信息",
             ),
             (
+                "login/clear-session",
+                self.dashboard_clear_login_session,
+                ["POST"],
+                "清空 Telegram 登录信息",
+            ),
+            (
                 "login/status",
                 self.dashboard_login_status,
                 ["GET"],
@@ -518,6 +524,11 @@ class Main(star.Star):
         payload = await self._dashboard_payload()
         return await self._dashboard_call(
             lambda: self._ensure_web_admin_server().import_session(payload)
+        )
+
+    async def dashboard_clear_login_session(self):
+        return await self._dashboard_call(
+            self._ensure_web_admin_server().clear_login_session
         )
 
     async def dashboard_login_status(self):

@@ -11,7 +11,7 @@ import {
   channelTitleUI,
   renderQQTargetSelector,
 } from './ui_selector.js';
-import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled } from './utils.js';
+import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled, fieldsMatchSearch } from './utils.js';
 
 export const TOPOLOGY_FILTERS = new Set(["all", "active", "dedicated", "inherited", "unlinked"]);
 export const topologyUiState = {
@@ -725,26 +725,28 @@ function renderTopologyInto(root, {
     });
   const availableGroups = store.state.qqGroups;
 
-  // Filter channels based on palette search query
-  const channelsKeyword = String(topologyUiState.paletteChannelsQuery || "").trim().toLowerCase();
-  const filteredChannels = availableChannels.filter((channel) => {
-    if (!channelsKeyword) return true;
-    return (
-      String(channel.title || "").toLowerCase().includes(channelsKeyword) ||
-      String(channel.username || "").toLowerCase().includes(channelsKeyword) ||
-      String(channel.channel_ref || "").toLowerCase().includes(channelsKeyword)
-    );
-  });
+  // Filter channels: 首位 @ 时同时匹配带 @ / 去 @（TG username 常无 @）
+  const channelsKeyword = String(topologyUiState.paletteChannelsQuery || "").trim();
+  const filteredChannels = availableChannels.filter((channel) =>
+    fieldsMatchSearch(
+      [
+        channel.title,
+        channel.username,
+        channel.channel_ref,
+        channel.username ? `@${channel.username}` : "",
+      ],
+      channelsKeyword,
+    ),
+  );
 
-  // Filter groups based on palette search query
-  const groupsKeyword = String(topologyUiState.paletteGroupsQuery || "").trim().toLowerCase();
-  const filteredGroups = availableGroups.filter((group) => {
-    if (!groupsKeyword) return true;
-    return (
-      String(group.group_id || "").toLowerCase().includes(groupsKeyword) ||
-      String(group.group_name || "").toLowerCase().includes(groupsKeyword)
-    );
-  });
+  // Filter groups: 首位 @ 保留 @ 相关匹配，并兼容去 @
+  const groupsKeyword = String(topologyUiState.paletteGroupsQuery || "").trim();
+  const filteredGroups = availableGroups.filter((group) =>
+    fieldsMatchSearch(
+      [group.group_id, group.group_name, group.group_name ? `@${group.group_name}` : ""],
+      groupsKeyword,
+    ),
+  );
 
   const palette = showPalette ? `
     <div class="topology-palette">

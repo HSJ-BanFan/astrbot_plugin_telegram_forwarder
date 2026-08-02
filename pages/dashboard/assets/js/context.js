@@ -211,7 +211,11 @@ export async function saveConfig({ quiet = false } = {}) {
 export async function withAction(action, doneMessage, options = {}) {
   try {
     const result = await action();
-    const refresh = options.refresh ?? "all";
+    // refresh 可为函数：登录成功后按 authorized 决定是否 force 拉频道/群列表。
+    const refresh =
+      typeof options.refresh === "function"
+        ? options.refresh(result)
+        : (options.refresh ?? "all");
     if (refresh === "status") {
       await loadStatusOnly();
     } else if (refresh === "force") {
@@ -220,8 +224,10 @@ export async function withAction(action, doneMessage, options = {}) {
       await loadAll();
     }
     showToast(result?.message || doneMessage);
+    return result;
   } catch (error) {
     showToast(error.message);
+    return null;
   }
 }
 

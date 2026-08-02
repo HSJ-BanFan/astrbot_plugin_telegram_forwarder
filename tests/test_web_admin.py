@@ -308,6 +308,8 @@ def test_status_uses_cached_telegram_state_without_rpc(web_admin):
     assert result["telegram"]["me"]["id"] == 12345
     assert result["telegram"]["me"]["username"] == "demo_user"
     assert result["telegram"]["me"].get("cached") is not True
+    assert "stats" in result
+    assert isinstance(result["stats"], dict)
     client.is_user_authorized.assert_not_awaited()
     client.get_me.assert_not_awaited()
 
@@ -1374,3 +1376,94 @@ async def test_import_session_clears_stale_me_cache(web_admin, tmp_path):
     assert web_admin.server._telegram_me_cache["id"] == 222
     assert web_admin.server._telegram_me_cache["username"] == "new_user"
     client.get_me.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clear_login_session_removes_files_and_me_cache(web_admin, tmp_path):
+    session_file = tmp_path / "user_session.session"
+    session_file.write_text("dead-session", encoding="utf-8")
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+    )
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=True,
+        _init_client=MagicMock(),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 1, "username": "old"}
+    web_admin.server._login_data = {"phone": "+861000"}
+    web_admin.server._discard_login_attempt = AsyncMock()
+
+    result = await web_admin.server.clear_login_session()
+
+    assert result["cleared"] is True
+    assert result["authorized"] is False
+    assert web_admin.server._telegram_me_cache is None
+    assert web_admin.server._login_data == {}
+    assert not session_file.exists()
+    assert wrapper._authorized is False
+    wrapper._init_client.assert_called_once()
+    web_admin.server._discard_login_attempt.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_login_start_auto_clears_on_auth_key_duplicated(web_admin, tmp_path):
+    class AuthKeyDuplicatedError(Exception):
+        pass
+
+    good_client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+    )
+    bad_client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+    )
+    official = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=bad_client,
+        ensure_connected=AsyncMock(return_value=True),
+        send_login_code=AsyncMock(
+            side_effect=AuthKeyDuplicatedError(
+                "The authorization key (session file) was used under two different IP addresses simultaneously"
+            )
+        ),
+        _mark_authorized_if_needed=AsyncMock(),
+        is_authorized=MagicMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=False,
+        _init_client=MagicMock(),
+    )
+    temp_wrapper = SimpleNamespace(
+        client=good_client,
+        ensure_connected=AsyncMock(return_value=True),
+        send_login_code=AsyncMock(return_value="hash-ok"),
+        _mark_authorized_if_needed=AsyncMock(),
+        is_authorized=MagicMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _session_path=MagicMock(return_value=str(tmp_path / "web_login_tmp" / "user_session")),
+    )
+    web_admin.plugin.client_wrapper = official
+    web_admin.plugin.config["phone"] = ""
+    web_admin.server._ensure_wrapper_ready = AsyncMock(return_value=official)
+    web_admin.server._ensure_login_wrapper_ready = AsyncMock(return_value=temp_wrapper)
+    web_admin.server._discard_login_attempt = AsyncMock()
+    web_admin.server.clear_login_session = AsyncMock(
+        return_value={"cleared": True, "authorized": False, "message": "cleared"}
+    )
+
+    result = await web_admin.server.login_start({"phone": "+8613800138000"})
+
+    assert result["code_sent"] is True
+    assert result["authorized"] is False
+    web_admin.server.clear_login_session.assert_awaited()
+    temp_wrapper.send_login_code.assert_awaited_once_with("+8613800138000")
+    official.send_login_code.assert_awaited()
+    assert web_admin.server._login_data.get("replace_existing") is True
