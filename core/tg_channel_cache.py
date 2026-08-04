@@ -74,7 +74,11 @@ class TGChannelCache:
         configured_channel_refs: list[str] | None = None,
     ) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and (self._channels or self._last_failure_at):
+            if (
+                not force
+                and self._is_fresh()
+                and (self._channels or self._last_failure_at)
+            ):
                 # 冷却期内直接返回；仍允许 merge configured。
                 return
 
@@ -105,6 +109,7 @@ class TGChannelCache:
             channels_by_ref.update(resolved)
 
             # 2) 再扫对话框补全；总时长不超过 refresh_timeout，避免叠成 150s。
+            alias_to_ref = self._build_alias_index(channels_by_ref)
             remaining = max(1.0, self.refresh_timeout - (time.time() - started_at))
             try:
                 dialogs = await asyncio.wait_for(
@@ -119,11 +124,23 @@ class TGChannelCache:
                     channel_ref = channel["channel_ref"]
                     if not channel_ref:
                         continue
+                    # 同一频道可能以数字 ID 被配置、却以 username 出现在对话框里。
+                    # 按 entity id / username 归一，否则选择器会出现两条重复项。
+                    target_ref = channel_ref
+                    for alias in self._channel_alias_keys(channel):
+                        if alias in alias_to_ref:
+                            target_ref = alias_to_ref[alias]
+                            break
                     # live 结果应覆盖 resolved 占位；仅保留已经写入的 live 结果。
-                    existing = channels_by_ref.get(channel_ref)
+                    existing = channels_by_ref.get(target_ref)
                     if existing and existing.get("source") == "live":
                         continue
-                    channels_by_ref[channel_ref] = channel
+                    if target_ref != channel_ref:
+                        # 保持用户配置的 ref 形态，否则选择器对不上配置值。
+                        channel = {**channel, "channel_ref": target_ref}
+                    channels_by_ref[target_ref] = channel
+                    for alias in self._channel_alias_keys(channel):
+                        alias_to_ref.setdefault(alias, target_ref)
             except asyncio.TimeoutError:
                 logger.warning(
                     "[WebAdmin] Telegram channel dialog scan timed out after %.1fs",
@@ -161,11 +178,15 @@ class TGChannelCache:
             try:
                 entity = await asyncio.wait_for(client.get_entity(ref), timeout=10.0)
             except Exception as exc:
-                logger.debug("[WebAdmin] resolve configured channel %s failed: %s", ref, exc)
+                logger.debug(
+                    "[WebAdmin] resolve configured channel %s failed: %s", ref, exc
+                )
                 return ref, None
             dialog = SimpleDialog(entity)
             if not self._is_channel_like(dialog, entity):
-                logger.debug("[WebAdmin] configured Telegram ref is not a channel: %s", ref)
+                logger.debug(
+                    "[WebAdmin] configured Telegram ref is not a channel: %s", ref
+                )
                 return ref, None
             channel = self._normalize_channel(dialog, entity)
             channel["source"] = "resolved"
@@ -184,7 +205,9 @@ class TGChannelCache:
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("[WebAdmin] configured channel resolve timed out after %.1fs", timeout)
+            logger.warning(
+                "[WebAdmin] configured channel resolve timed out after %.1fs", timeout
+            )
             return {}
         except Exception as exc:
             logger.debug("[WebAdmin] configured channel resolve failed: %s", exc)
@@ -322,15 +345,55 @@ class TGChannelCache:
             return f"-{normalized}"
         return f"-100{normalized}"
 
+    @classmethod
+    def _channel_alias_keys(cls, channel: dict[str, Any]) -> list[str]:
+        """同一频道的等价标识（按优先级去重）：ref / username / 数字 id / -100 形态。
+
+        用户可能用 username、`-100xxx` 或裸数字 ID 配置同一个频道，Telethon 回来的
+        对话框却只带其中一种形态，必须归一后才能判重。
+        """
+        keys: list[str] = []
+
+        def push(value: Any) -> None:
+            text = str(value or "").strip().lstrip("@")
+            if text and text not in keys:
+                keys.append(text)
+
+        push(channel.get("channel_ref"))
+        push(channel.get("username"))
+        entity_id = str(channel.get("id") or "").strip()
+        if entity_id:
+            bare = entity_id.lstrip("-")
+            push(entity_id)
+            push(bare)
+            # `-100` 形态两种都推：_private_channel_ref 的 "已带 100 前缀" 启发式
+            # 对本身以 100 开头的 id 会少加前缀，这里直接补上标准拼接形态。
+            push(f"-100{bare}")
+            push(cls._private_channel_ref(entity_id))
+        return keys
+
+    @classmethod
+    def _build_alias_index(
+        cls, channels_by_ref: dict[str, dict[str, Any]]
+    ) -> dict[str, str]:
+        index: dict[str, str] = {}
+        for ref, channel in channels_by_ref.items():
+            for alias in cls._channel_alias_keys(channel):
+                index.setdefault(alias, ref)
+        return index
+
     def _merge_configured_channels(
         self, configured_channel_refs: list[str]
     ) -> list[dict[str, Any]]:
         channels_by_ref = {
             item["channel_ref"]: copy.deepcopy(item) for item in self._channels
         }
+        known_aliases = self._build_alias_index(channels_by_ref)
         for raw_ref in configured_channel_refs:
             channel_ref = normalize_telegram_channel_name(str(raw_ref or ""))
-            if not channel_ref or channel_ref in channels_by_ref:
+            # 已有 live/resolved 条目覆盖同一频道时不再补占位，避免数字 ID 与
+            # username 各占一行。
+            if not channel_ref or channel_ref in known_aliases:
                 continue
             channels_by_ref[channel_ref] = {
                 "id": channel_ref if channel_ref.lstrip("-").isdigit() else "",
@@ -345,6 +408,8 @@ class TGChannelCache:
                 "source": "configured",
                 "member_count": None,
             }
+            for alias in self._channel_alias_keys(channels_by_ref[channel_ref]):
+                known_aliases.setdefault(alias, channel_ref)
         return self._sort_channels(channels_by_ref.values())
 
     @staticmethod
