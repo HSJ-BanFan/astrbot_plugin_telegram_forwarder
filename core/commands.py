@@ -22,6 +22,9 @@ from astrbot.api.star import Context
 
 from ..common.text_tools import is_numeric_channel_id, normalize_telegram_channel_name
 
+# root 配置里不能明文回显的字段：proxy URL 可能带账号密码，其余是账号凭据。
+SENSITIVE_ROOT_FIELDS = frozenset({"phone", "api_id", "api_hash", "proxy"})
+
 
 class PluginCommands:
     def __init__(
@@ -1444,7 +1447,12 @@ class PluginCommands:
             def pp(v):
                 if isinstance(v, list):
                     return "[]" if not v else ", ".join(str(x) for x in v)
-                return str(v) if v not in (None, "") else "<未设置>"
+                if v in (None, "", "<未设置>"):
+                    return "<未设置>"
+                if field in SENSITIVE_ROOT_FIELDS:
+                    # 和 /tg get root 保持一致：凭据只回显脱敏形态。
+                    return self.mask_sensitive(v, field)
+                return str(v)
 
             yield event.plain_result(
                 f"✅ 已修改根配置 {field}\n  旧值：{pp(old)}\n  新值：{pp(value)}\n配置已保存"

@@ -297,6 +297,74 @@ class TestPluginCommandsDebug:
         assert "socks5://***@127.0.0.1:12311" in results[0]
 
     @pytest.mark.asyncio
+    async def test_set_root_proxy_never_echoes_credentials(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["proxy"] = "socks5://olduser:oldpass@10.0.0.1:1080"
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root proxy socks5://newuser:newpass@203.0.113.9:1080"
+        ):
+            results.append(result)
+
+        joined = "\n".join(results)
+        assert commands.config["proxy"] == "socks5://newuser:newpass@203.0.113.9:1080"
+        for leaked in ("olduser", "oldpass", "newuser", "newpass"):
+            assert leaked not in joined
+        assert "socks5://***@10.0.0.1:1080" in joined
+        assert "socks5://***@203.0.113.9:1080" in joined
+
+    @pytest.mark.asyncio
+    async def test_set_root_api_hash_is_masked(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["api_hash"] = "0123456789abcdef0123456789abcdef"
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+        new_hash = "fedcba9876543210fedcba9876543210"
+
+        results = []
+        async for result in commands.set_config(event, f"root api_hash {new_hash}"):
+            results.append(result)
+
+        joined = "\n".join(results)
+        assert commands.config["api_hash"] == new_hash
+        assert new_hash not in joined
+        assert "0123456789abcdef0123456789abcdef" not in joined
+        assert "已修改根配置 api_hash" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_unset_proxy_shows_placeholder_not_redacted(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config.pop("proxy", None)
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root proxy socks5://127.0.0.1:1080"
+        ):
+            results.append(result)
+
+        assert "旧值：<未设置>" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_non_sensitive_field_is_not_masked(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root target_channel alpha,beta"
+        ):
+            results.append(result)
+
+        assert commands.config["target_channel"] == ["alpha", "beta"]
+        assert "alpha, beta" in results[0]
+
+    @pytest.mark.asyncio
     async def test_set_root_debug_enabled_default_updates_config(self) -> None:
         commands = make_commands(qq_sender=FakeQQSender())
         commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
