@@ -9,7 +9,9 @@
 """
 
 import asyncio
+import decimal
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -80,6 +82,36 @@ class TestBigMergeRetryPolicy:
 
         assert m._resolve_big_merge_retry_policy(
             {"qq_big_merge_retry_delay": float("nan")}
+        ) == (m.DEFAULT_BIG_MERGE_MAX_ATTEMPTS, m.DEFAULT_BIG_MERGE_RETRY_DELAY)
+
+    @pytest.mark.parametrize(
+        "attempts",
+        [float("inf"), float("-inf"), decimal.Decimal("Infinity")],
+    )
+    def test_policy_survives_non_finite_attempts(self, attempts):
+        """int(inf) 抛的是 OverflowError，不是 TypeError/ValueError。"""
+        m = load_dispatcher_module()
+
+        assert m._resolve_big_merge_retry_policy(
+            {"qq_big_merge_max_attempts": attempts}
+        ) == (m.DEFAULT_BIG_MERGE_MAX_ATTEMPTS, m.DEFAULT_BIG_MERGE_RETRY_DELAY)
+
+    def test_policy_survives_non_finite_attempts_from_json_config(self):
+        # json.loads 默认接受 Infinity 字面量，配置文件里可能真的出现。
+        forward_cfg = json.loads('{"qq_big_merge_max_attempts": Infinity}')
+
+        m = load_dispatcher_module()
+
+        assert m._resolve_big_merge_retry_policy(forward_cfg) == (
+            m.DEFAULT_BIG_MERGE_MAX_ATTEMPTS,
+            m.DEFAULT_BIG_MERGE_RETRY_DELAY,
+        )
+
+    def test_policy_replaces_nan_attempts(self):
+        m = load_dispatcher_module()
+
+        assert m._resolve_big_merge_retry_policy(
+            {"qq_big_merge_max_attempts": float("nan")}
         ) == (m.DEFAULT_BIG_MERGE_MAX_ATTEMPTS, m.DEFAULT_BIG_MERGE_RETRY_DELAY)
 
 

@@ -42,8 +42,9 @@ def _resolve_big_merge_retry_policy(forward_cfg: dict) -> tuple[int, float]:
         "qq_big_merge_max_attempts", DEFAULT_BIG_MERGE_MAX_ATTEMPTS
     )
     try:
+        # OverflowError: int(float("inf"))；JSON 配置里的 Infinity 字面量会解析成 inf。
         max_attempts = int(raw_attempts)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         max_attempts = DEFAULT_BIG_MERGE_MAX_ATTEMPTS
     max_attempts = min(MAX_BIG_MERGE_ATTEMPTS, max(1, max_attempts))
 
@@ -52,7 +53,7 @@ def _resolve_big_merge_retry_policy(forward_cfg: dict) -> tuple[int, float]:
     )
     try:
         retry_delay = float(raw_delay)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         retry_delay = DEFAULT_BIG_MERGE_RETRY_DELAY
     if not math.isfinite(retry_delay):
         retry_delay = DEFAULT_BIG_MERGE_RETRY_DELAY
