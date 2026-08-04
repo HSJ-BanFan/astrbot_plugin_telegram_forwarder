@@ -153,6 +153,12 @@ def is_risky_qr_payload(payload: str, keywords: list[str]) -> bool:
 
 
 class ContentSafetyFilter:
+    # 二维码识别的像素预算：超过软上限先降采样，超过硬上限直接放弃识别，
+    # 避免几 KB 的解压炸弹在解码阶段吃掉上 GB 内存。
+    QR_MAX_PIXELS = 16_000_000
+    QR_MAX_SIDE = 4000
+    QR_HARD_MAX_PIXELS = 80_000_000
+
     def __init__(
         self,
         *,
@@ -215,13 +221,31 @@ class ContentSafetyFilter:
             from PIL import Image
         except ImportError:
             return None
+        cls = ContentSafetyFilter
+        payloads: list[str] = []
         with Image.open(io.BytesIO(image_bytes)) as image:
-            payloads = []
             for frame_index in range(min(4, getattr(image, "n_frames", 1))):
                 image.seek(frame_index)
-                frame = image.copy()
-                if frame.width * frame.height > 16_000_000:
-                    frame.thumbnail((4000, 4000))
+                # 尺寸取自文件头，不需要解码；必须在 copy() 之前判断，
+                # 否则解压炸弹（几 KB 的 PNG 解出上亿像素）在 copy() 时就已把内存吃满。
+                width, height = image.size
+                pixels = width * height
+                if pixels > cls.QR_HARD_MAX_PIXELS:
+                    logger.warning(
+                        f"[ContentSafety] 图片 {width}x{height} 像素数过大，跳过二维码识别。"
+                    )
+                    continue
+                if pixels > cls.QR_MAX_PIXELS:
+                    # JPEG 能直接按比例降采样解码，省掉一次全尺寸位图分配；
+                    # 其它格式 draft() 是空操作，thumbnail() 兜底缩到上限内。
+                    try:
+                        image.draft("RGB", (cls.QR_MAX_SIDE, cls.QR_MAX_SIDE))
+                    except (AttributeError, ValueError):
+                        pass
+                    frame = image.copy()
+                    frame.thumbnail((cls.QR_MAX_SIDE, cls.QR_MAX_SIDE))
+                else:
+                    frame = image.copy()
                 payloads.extend(
                     str(item.text or "") for item in zxingcpp.read_barcodes(frame)
                 )

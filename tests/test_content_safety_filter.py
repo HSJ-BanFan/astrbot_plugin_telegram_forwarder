@@ -4,7 +4,7 @@ import json
 import socket
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -196,6 +196,127 @@ def test_qr_dependency_missing_is_reported_as_unavailable(monkeypatch):
     )
 
     assert result == {"filter": False, "msg": "二维码识别不可用，已放行"}
+
+
+class RecordingFrame:
+    def __init__(self, size, calls):
+        self.size = size
+        self.calls = calls
+
+    @property
+    def width(self):
+        return self.size[0]
+
+    @property
+    def height(self):
+        return self.size[1]
+
+    def thumbnail(self, box):
+        self.calls.append(("thumbnail", box))
+        self.size = (min(self.size[0], box[0]), min(self.size[1], box[1]))
+
+
+class RecordingImage:
+    """记录 seek/draft/copy 调用顺序的假 PIL Image。"""
+
+    def __init__(self, size, calls, n_frames=1):
+        self.size = size
+        self.calls = calls
+        self.n_frames = n_frames
+
+    @property
+    def width(self):
+        return self.size[0]
+
+    @property
+    def height(self):
+        return self.size[1]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def seek(self, index):
+        self.calls.append(("seek", index))
+
+    def draft(self, _mode, box):
+        self.calls.append(("draft", box))
+        self.size = (min(self.size[0], box[0]), min(self.size[1], box[1]))
+
+    def copy(self):
+        self.calls.append(("copy", self.size))
+        return RecordingFrame(self.size, self.calls)
+
+
+def install_fake_imaging(monkeypatch, image):
+    pil = ModuleType("PIL")
+    pil_image = ModuleType("PIL.Image")
+    pil_image.open = lambda _fh: image
+    pil.Image = pil_image
+    monkeypatch.setitem(sys.modules, "PIL", pil)
+    monkeypatch.setitem(sys.modules, "PIL.Image", pil_image)
+
+    zxing = ModuleType("zxingcpp")
+    zxing.read_barcodes = lambda _frame: [SimpleNamespace(text="https://example.org")]
+    monkeypatch.setitem(sys.modules, "zxingcpp", zxing)
+
+
+def test_qr_decode_normal_image_copies_without_downscale(monkeypatch):
+    module = load_module()
+    calls = []
+    install_fake_imaging(monkeypatch, RecordingImage((1000, 1000), calls))
+
+    payloads = module.ContentSafetyFilter._decode_qr(b"image")
+
+    assert payloads == ["https://example.org"]
+    assert [name for name, _ in calls] == ["seek", "copy"]
+
+
+def test_qr_decode_checks_pixel_budget_before_copying_frame(monkeypatch):
+    """像素数判断必须早于 copy()，否则解压炸弹已经把内存吃掉了。"""
+    module = load_module()
+    calls = []
+    # 5000x4000 = 2000 万像素，超过 QR_MAX_PIXELS 软上限。
+    install_fake_imaging(monkeypatch, RecordingImage((5000, 4000), calls))
+
+    payloads = module.ContentSafetyFilter._decode_qr(b"image")
+
+    assert payloads == ["https://example.org"]
+    assert [name for name, _ in calls] == ["seek", "draft", "copy", "thumbnail"]
+    # draft 已把待解码尺寸压到上限内，copy 不再分配全尺寸位图。
+    copied_size = next(size for name, size in calls if name == "copy")
+    assert max(copied_size) <= module.ContentSafetyFilter.QR_MAX_SIDE
+
+
+def test_qr_decode_skips_frames_over_hard_pixel_limit(monkeypatch):
+    module = load_module()
+    calls = []
+    # 10000x10000 = 1 亿像素，超过 QR_HARD_MAX_PIXELS。
+    install_fake_imaging(monkeypatch, RecordingImage((10000, 10000), calls))
+
+    payloads = module.ContentSafetyFilter._decode_qr(b"image")
+
+    assert payloads == []
+    assert [name for name, _ in calls] == ["seek"]
+
+
+def test_qr_decode_survives_image_without_draft(monkeypatch):
+    module = load_module()
+    calls = []
+    image = RecordingImage((5000, 4000), calls)
+
+    def _no_draft(*_args, **_kwargs):
+        raise AttributeError("draft unsupported")
+
+    image.draft = _no_draft
+    install_fake_imaging(monkeypatch, image)
+
+    payloads = module.ContentSafetyFilter._decode_qr(b"image")
+
+    assert payloads == ["https://example.org"]
+    assert [name for name, _ in calls] == ["seek", "copy", "thumbnail"]
 
 
 def test_ai_request_contains_text_image_and_forced_json_contract():
