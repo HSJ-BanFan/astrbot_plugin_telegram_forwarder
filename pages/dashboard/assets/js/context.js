@@ -212,8 +212,18 @@ export async function saveConfig({ quiet = false } = {}) {
 }
 
 export async function withAction(action, doneMessage, options = {}) {
+  let result;
   try {
-    const result = await action();
+    result = await action();
+  } catch (error) {
+    showToast(error.message);
+    return null;
+  }
+
+  // action 已经成功落库/生效了，之后的刷新失败只影响页面数据新鲜度。
+  // 不能和 action 共用一个 try，否则会把成功的操作报成失败。
+  let refreshError = null;
+  try {
     // refresh 可为函数：登录成功后按 authorized 决定是否 force 拉频道/群列表。
     const refresh =
       typeof options.refresh === "function"
@@ -226,12 +236,14 @@ export async function withAction(action, doneMessage, options = {}) {
     } else if (refresh !== false && refresh !== "none") {
       await loadAll();
     }
-    showToast(result?.message || doneMessage);
-    return result;
   } catch (error) {
-    showToast(error.message);
-    return null;
+    refreshError = error;
+    console.warn("Post-action refresh failed:", error);
   }
+
+  const doneText = result?.message || doneMessage;
+  showToast(refreshError ? `${doneText}（页面刷新失败：${refreshError.message}）` : doneText);
+  return result;
 }
 
 export async function withButtonLoading(button, label, action, doneMessage, options = {}) {
