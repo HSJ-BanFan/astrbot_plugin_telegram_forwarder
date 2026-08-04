@@ -89,23 +89,29 @@ class QQGroupCache:
                         continue
                     groups_by_id[group_id] = group
 
-            self._groups = self._sort_groups(groups_by_id.values())
-            self._available = saw_successful_call
             now = time.time()
             if saw_successful_call:
+                self._groups = self._sort_groups(groups_by_id.values())
+                self._available = True
                 self._message = ""
                 self._last_failure_at = 0.0
-            elif saw_client:
-                self._message = "QQ group list request failed."
-                self._last_failure_at = now
+                self._last_refresh_at = now
+                return
+
+            # 刷新失败：保留上一次成功的列表，否则选择器会在平台抖动时整个清空，
+            # 用户已配置之外的群全部消失。列表降级标记为 cached，不再冒充 live。
+            if saw_client:
+                message = "QQ group list request failed."
             elif saw_platform:
-                self._message = (
-                    "QQ platform found, but no callable client is available."
-                )
-                self._last_failure_at = now
+                message = "QQ platform found, but no callable client is available."
             else:
-                self._message = "QQ platform is unavailable."
-                self._last_failure_at = now
+                message = "QQ platform is unavailable."
+            self._groups = self._mark_cached(self._groups)
+            if self._groups:
+                message = f"{message} Showing last known group list."
+            self._available = False
+            self._message = message
+            self._last_failure_at = now
             self._last_refresh_at = now
 
     def invalidate(self) -> None:
@@ -150,6 +156,14 @@ class QQGroupCache:
                 continue
             groups_by_id[normalized] = self._fallback_group(normalized)
         return self._sort_groups(groups_by_id.values())
+
+    @staticmethod
+    def _mark_cached(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把保留下来的旧列表标记为 cached，避免把过期数据当成实时数据展示。"""
+        for group in groups:
+            if group.get("source") == "live":
+                group["source"] = "cached"
+        return groups
 
     @staticmethod
     def _extract_group_list(result: Any) -> list[dict[str, Any]]:
