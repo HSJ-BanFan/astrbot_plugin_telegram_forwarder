@@ -363,7 +363,11 @@ async def test_content_safety_downloads_photo_once_and_filters_match():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock(return_value=b"image-bytes")
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": True, "msg": "检测到风险二维码"}
     )
     msg = SimpleNamespace(id=2, text="caption", photo=object(), reply_markup=None)
@@ -372,7 +376,7 @@ async def test_content_safety_downloads_photo_once_and_filters_match():
 
     assert result is True
     forwarder.client.download_media.assert_awaited_once_with(msg, file=bytes)
-    forwarder.content_safety_filter.check.assert_awaited_once_with(
+    forwarder.content_safety_filter.check_ai.assert_awaited_once_with(
         "caption", b"image-bytes", config
     )
 
@@ -390,7 +394,11 @@ async def test_content_safety_large_photo_falls_back_to_text_only_ai():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock(return_value=b"x" * (1024 * 1024 + 1))
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": False, "msg": "放行"}
     )
     msg = SimpleNamespace(id=3, text="caption", photo=object(), reply_markup=None)
@@ -398,7 +406,7 @@ async def test_content_safety_large_photo_falls_back_to_text_only_ai():
     result = await forwarder._is_content_safety_matched(msg)
 
     assert result is False
-    forwarder.content_safety_filter.check.assert_awaited_once_with(
+    forwarder.content_safety_filter.check_ai.assert_awaited_once_with(
         "caption", None, config
     )
 
@@ -412,7 +420,11 @@ async def test_content_safety_analyzes_image_document():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock(return_value=b"png")
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": False, "msg": "放行"}
     )
     msg = SimpleNamespace(
@@ -428,7 +440,9 @@ async def test_content_safety_analyzes_image_document():
 
     assert result is False
     forwarder.client.download_media.assert_awaited_once_with(msg, file=bytes)
-    forwarder.content_safety_filter.check.assert_awaited_once_with("", b"png", config)
+    forwarder.content_safety_filter.check_ai.assert_awaited_once_with(
+        "", b"png", config
+    )
 
 
 @pytest.mark.asyncio
@@ -440,7 +454,11 @@ async def test_content_safety_invalid_image_limit_falls_back_to_default():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock(return_value=b"jpeg")
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": False, "msg": "放行"}
     )
     msg = SimpleNamespace(id=5, text="", photo=object(), reply_markup=None)
@@ -448,7 +466,9 @@ async def test_content_safety_invalid_image_limit_falls_back_to_default():
     result = await forwarder._is_content_safety_matched(msg)
 
     assert result is False
-    forwarder.content_safety_filter.check.assert_awaited_once_with("", b"jpeg", config)
+    forwarder.content_safety_filter.check_ai.assert_awaited_once_with(
+        "", b"jpeg", config
+    )
 
 
 @pytest.mark.asyncio
@@ -464,7 +484,11 @@ async def test_content_safety_skips_download_when_declared_image_is_too_large():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock()
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": False, "msg": "文字放行"}
     )
     msg = SimpleNamespace(
@@ -480,7 +504,7 @@ async def test_content_safety_skips_download_when_declared_image_is_too_large():
 
     assert result is False
     forwarder.client.download_media.assert_not_awaited()
-    forwarder.content_safety_filter.check.assert_awaited_once_with(
+    forwarder.content_safety_filter.check_ai.assert_awaited_once_with(
         "caption", None, config
     )
 
@@ -499,7 +523,11 @@ async def test_content_safety_budget_keeps_local_qr_filter_active():
     forwarder.client = MagicMock()
     forwarder.client.download_media = AsyncMock(return_value=b"image")
     forwarder.content_safety_filter = MagicMock()
-    forwarder.content_safety_filter.check = AsyncMock(
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
         return_value={"filter": True, "msg": "二维码命中"}
     )
     msg = SimpleNamespace(id=7, text="", photo=object(), reply_markup=None)
@@ -507,16 +535,76 @@ async def test_content_safety_budget_keeps_local_qr_filter_active():
     result = await forwarder._is_content_safety_matched(msg)
 
     assert result is True
-    _, _, passed_config = forwarder.content_safety_filter.check.await_args.args
+    _, _, passed_config = forwarder.content_safety_filter.check_ai.await_args.args
     assert passed_config["ai_filter_enabled"] is False
     assert passed_config["qr_filter_enabled"] is True
 
 
+@pytest.mark.asyncio
+async def test_content_safety_qr_match_does_not_consume_ai_budget():
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    config = {
+        "ai_filter_enabled": True,
+        "qr_filter_enabled": True,
+        "content_filter_max_image_mb": 5,
+    }
+    forwarder.config = {"forward_config": config}
+    forwarder._content_safety_calls_remaining = 1
+    forwarder.client = MagicMock()
+    forwarder.client.download_media = AsyncMock(return_value=b"image")
+    forwarder.content_safety_filter = MagicMock()
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": True,
+        "msg": "二维码命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
+        return_value={"filter": False, "msg": "AI 放行"}
+    )
+    msg = SimpleNamespace(id=8, text="", photo=object(), reply_markup=None)
+
+    result = await forwarder._is_content_safety_matched(msg)
+
+    assert result is True
+    assert forwarder._content_safety_calls_remaining == 1
+    forwarder.content_safety_filter.check_ai.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_content_safety_qr_pass_consumes_ai_budget_before_ai_check():
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    config = {
+        "ai_filter_enabled": True,
+        "qr_filter_enabled": True,
+        "content_filter_max_image_mb": 5,
+    }
+    forwarder.config = {"forward_config": config}
+    forwarder._content_safety_calls_remaining = 1
+    forwarder.client = MagicMock()
+    forwarder.client.download_media = AsyncMock(return_value=b"image")
+    forwarder.content_safety_filter = MagicMock()
+    forwarder.content_safety_filter.check_qr.return_value = {
+        "filter": False,
+        "msg": "二维码未命中风险规则",
+    }
+    forwarder.content_safety_filter.check_ai = AsyncMock(
+        return_value={"filter": False, "msg": "AI 放行"}
+    )
+    msg = SimpleNamespace(id=9, text="", photo=object(), reply_markup=None)
+
+    result = await forwarder._is_content_safety_matched(msg)
+
+    assert result is False
+    assert forwarder._content_safety_calls_remaining == 0
+    forwarder.content_safety_filter.check_ai.assert_awaited_once()
+
+
 def test_ai_budget_initialized_once_per_send_cycle_not_inside_retry_loop():
     """AI 调用预算应在 send 外层循环前初始化一次，避免每轮 try 重置。"""
-    source = (
-        Path(__file__).resolve().parents[1] / "core" / "forwarder.py"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "core" / "forwarder.py").read_text(
+        encoding="utf-8"
+    )
     # Isolate the send_pending_messages body roughly around budget usage.
     marker = "self._content_safety_calls_remaining = self._positive_int("
     assert source.count(marker) == 1
@@ -1567,7 +1655,6 @@ async def test_send_pending_removes_filtered_fetched_items_alongside_acked_batch
     removed_ids = sorted(msg_id for _, ids in storage.removed for msg_id in ids)
     assert removed_ids == [601, 602]
     assert storage.pending == []
-
 
 
 @pytest.mark.asyncio

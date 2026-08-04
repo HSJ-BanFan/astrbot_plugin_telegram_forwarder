@@ -4,8 +4,9 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from astrbot.api import AstrBotConfig, logger, star
 from telethon.tl.types import Message  # type: ignore
+
+from astrbot.api import AstrBotConfig, logger, star
 
 from ..common.storage import Storage
 from ..common.text_tools import (
@@ -537,21 +538,6 @@ class Forwarder:
         ):
             return False
 
-        content_safety_config = config
-        if config.get("ai_filter_enabled", False):
-            remaining = getattr(
-                self,
-                "_content_safety_calls_remaining",
-                self._positive_int(config.get("ai_filter_max_calls_per_cycle", 5), 5),
-            )
-            if remaining <= 0:
-                logger.info(
-                    "[ContentSafety] 本轮 AI 分析预算已用尽，仅继续本地二维码检测。"
-                )
-                content_safety_config = {**config, "ai_filter_enabled": False}
-            else:
-                self._content_safety_calls_remaining = remaining - 1
-
         image_bytes = None
         mime_type = str(getattr(getattr(msg, "file", None), "mime_type", "") or "")
         is_image = bool(getattr(msg, "photo", None)) or mime_type.startswith("image/")
@@ -581,7 +567,31 @@ class Forwarder:
                     f"[ContentSafety] 消息 {msg.id} 图片读取失败: {type(exc).__name__}"
                 )
 
-        result = await self.content_safety_filter.check(
+        qr_result = {"filter": False, "msg": "二维码过滤未启用"}
+        if config.get("qr_filter_enabled", False):
+            qr_result = await asyncio.to_thread(
+                self.content_safety_filter.check_qr, image_bytes or b"", config
+            )
+        if qr_result["filter"]:
+            logger.info(f"[ContentSafety] 消息 {msg.id} 已过滤: {qr_result['msg']}")
+            return True
+
+        content_safety_config = config
+        if config.get("ai_filter_enabled", False):
+            remaining = getattr(
+                self,
+                "_content_safety_calls_remaining",
+                self._positive_int(config.get("ai_filter_max_calls_per_cycle", 5), 5),
+            )
+            if remaining <= 0:
+                logger.info(
+                    "[ContentSafety] 本轮 AI 分析预算已用尽，仅继续本地二维码检测。"
+                )
+                content_safety_config = {**config, "ai_filter_enabled": False}
+            else:
+                self._content_safety_calls_remaining = remaining - 1
+
+        result = await self.content_safety_filter.check_ai(
             self._build_message_search_text(msg), image_bytes, content_safety_config
         )
         if result["filter"]:
