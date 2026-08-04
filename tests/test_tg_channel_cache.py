@@ -158,10 +158,48 @@ async def test_tg_channel_cache_resolves_configured_when_dialogs_timeout():
     )
     result = await cache.list_channels(["wtmsd", "acg_meme"])
     assert result["available"] is True
+    # 对话框扫描超时 → 部分成功，必须暴露出来而不是伪装成完整列表。
+    assert result["partial"] is True
+    assert "仅显示已配置频道" in result["message"]
     refs = {ch["channel_ref"]: ch for ch in result["channels"]}
     assert "wtmsd" in refs
     assert refs["wtmsd"]["title"] == "无聊的备忘录"
     assert refs["wtmsd"]["source"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_partial_result_expires_before_full_ttl():
+    module = load_tg_channel_cache_module()
+    cache = module.TGChannelCache(
+        SimpleNamespace(client_wrapper=None),
+        ttl_seconds=3600,
+        partial_ttl_seconds=300.0,
+    )
+    cache._channels = [{"channel_ref": "x"}]
+    cache._available = True
+    cache._last_refresh_at = time.time() - 600
+    cache._last_failure_at = 0.0
+
+    cache._partial = False
+    assert cache._is_fresh() is True  # 完整结果仍在 3600s TTL 内
+    cache._partial = True
+    assert cache._is_fresh() is False  # 部分结果 300s 后就该重试
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_full_scan_is_not_partial():
+    module = load_tg_channel_cache_module()
+    client = SlowDialogClient(count=3)
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels([])
+
+    assert result["available"] is True
+    assert result["partial"] is False
+    assert result["message"] == ""
 
 
 @pytest.mark.asyncio

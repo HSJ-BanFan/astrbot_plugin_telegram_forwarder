@@ -21,17 +21,21 @@ class TGChannelCache:
         max_dialogs: int = 2000,
         refresh_timeout: float = 120.0,
         failure_cooldown: float = 20.0,
+        partial_ttl_seconds: float = 300.0,
     ):
         self.plugin = plugin
         self.ttl_seconds = ttl_seconds
         self.max_dialogs = max(1, int(max_dialogs))
         self.refresh_timeout = max(1.0, float(refresh_timeout))
         self.failure_cooldown = max(0.5, float(failure_cooldown))
+        # 部分成功（已配置频道解析到、但对话框扫描失败）不该锁死整个 TTL。
+        self.partial_ttl_seconds = min(float(ttl_seconds), float(partial_ttl_seconds))
         self._lock = asyncio.Lock()
         self._last_refresh_at = 0.0
         self._last_failure_at = 0.0
         self._channels: list[dict[str, Any]] = []
         self._available = False
+        self._partial = False
         self._message = "Telegram client is unavailable."
         self._pending_configured_refs: list[str] = []
 
@@ -54,13 +58,15 @@ class TGChannelCache:
         return {
             "channels": channels,
             "available": self._available,
+            "partial": self._partial,
             "message": self._message,
         }
 
     def _is_fresh(self) -> bool:
         now = time.time()
         if self._available and self._channels:
-            return (now - self._last_refresh_at) < self.ttl_seconds
+            ttl = self.partial_ttl_seconds if self._partial else self.ttl_seconds
+            return (now - self._last_refresh_at) < ttl
         # 失败/空结果：短冷却，避免 90s 内卡死在“加载失败”
         anchor = self._last_failure_at or self._last_refresh_at
         if anchor <= 0:
@@ -111,6 +117,7 @@ class TGChannelCache:
             # 2) 再扫对话框补全；总时长不超过 refresh_timeout，避免叠成 150s。
             alias_to_ref = self._build_alias_index(channels_by_ref)
             remaining = max(1.0, self.refresh_timeout - (time.time() - started_at))
+            dialog_scan_ok = False
             try:
                 dialogs = await asyncio.wait_for(
                     self._load_dialogs(client),
@@ -141,6 +148,7 @@ class TGChannelCache:
                     channels_by_ref[target_ref] = channel
                     for alias in self._channel_alias_keys(channel):
                         alias_to_ref.setdefault(alias, target_ref)
+                dialog_scan_ok = True
             except asyncio.TimeoutError:
                 logger.warning(
                     "[WebAdmin] Telegram channel dialog scan timed out after %.1fs",
@@ -152,7 +160,14 @@ class TGChannelCache:
             if channels_by_ref:
                 self._channels = self._sort_channels(channels_by_ref.values())
                 self._available = True
-                self._message = ""
+                # 对话框扫描失败时手上只有已配置频道，不能当成完整列表：
+                # 否则用户既看不到提示，又要等满一个 TTL 才会重试。
+                self._partial = not dialog_scan_ok
+                self._message = (
+                    ""
+                    if dialog_scan_ok
+                    else "完整频道列表加载超时，当前仅显示已配置频道，可稍后手动刷新。"
+                )
                 self._last_refresh_at = time.time()
                 self._last_failure_at = 0.0
                 return
@@ -160,6 +175,7 @@ class TGChannelCache:
             # 全失败：短冷却，前端可稍后重试；仍只展示 configured 占位。
             self._channels = []
             self._available = False
+            self._partial = False
             self._message = "Telegram 频道列表加载超时，可稍后手动刷新。"
             self._last_failure_at = time.time()
             self._last_refresh_at = self._last_failure_at
@@ -225,6 +241,7 @@ class TGChannelCache:
     def _set_unavailable(self, message: str) -> None:
         self._channels = []
         self._available = False
+        self._partial = False
         self._message = message
         now = time.time()
         self._last_failure_at = now
@@ -234,6 +251,7 @@ class TGChannelCache:
         """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
         self._channels = []
         self._available = False
+        self._partial = False
         self._message = "Telegram channel cache invalidated."
         self._last_refresh_at = 0.0
         self._last_failure_at = 0.0

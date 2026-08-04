@@ -298,7 +298,9 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
     ),
   );
   const statusText = store.state.tgChannelsAvailable
-    ? `${store.state.tgChannels.length} 个 Telegram 频道`
+    ? store.state.tgChannelsPartial
+      ? `${store.state.tgChannels.length} 个 Telegram 频道（列表不完整，可点刷新）`
+      : `${store.state.tgChannels.length} 个 Telegram 频道`
     : store.state.tgChannelsMessage || "Telegram 未登录或未授权";
   const selectedChannel = currentRef ? channelByRef(currentRef) : null;
   const selectedLabel = selectedChannel

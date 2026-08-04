@@ -50,6 +50,7 @@ function applyDashboardPayload(dashboardPayload) {
     qqGroupsMessage: qqGroups.message || "",
     tgChannels: Array.isArray(tgChannels.channels) ? tgChannels.channels : [],
     tgChannelsAvailable: Boolean(tgChannels.available),
+    tgChannelsPartial: Boolean(tgChannels.partial),
     tgChannelsMessage: tgChannels.message || "",
   });
   const errors = dashboardPayload.errors || {};
@@ -94,6 +95,7 @@ export async function loadTGChannels({ force = false } = {}) {
     store.updateState({
       tgChannels: Array.isArray(data.channels) ? data.channels : [],
       tgChannelsAvailable: Boolean(data.available),
+      tgChannelsPartial: Boolean(data.partial),
       tgChannelsMessage: data.message || "",
     });
     return data;
@@ -101,6 +103,7 @@ export async function loadTGChannels({ force = false } = {}) {
     store.updateState({
       tgChannels: [],
       tgChannelsAvailable: false,
+      tgChannelsPartial: false,
       tgChannelsMessage: error.message,
     });
     return { channels: [], available: false, message: error.message };
