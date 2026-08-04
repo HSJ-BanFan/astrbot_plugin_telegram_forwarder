@@ -381,7 +381,9 @@ class Main(star.Star):
             logger.error(f"[DashboardPage] API 调用失败: {exc}", exc_info=True)
             return self._dashboard_error(exc)
 
-    async def _dashboard_section(self, name: str, operation, default, errors: dict, timeout: float = 8.0):
+    async def _dashboard_section(
+        self, name: str, operation, default, errors: dict, timeout: float = 8.0
+    ):
         try:
             data = await asyncio.wait_for(operation(), timeout=timeout)
             return default if data is None else data
@@ -406,7 +408,11 @@ class Main(star.Star):
             raw_force = None
             if hasattr(request, "args") and request.args is not None:
                 raw_force = request.args.get("force")
-            if raw_force is None and hasattr(request, "query") and request.query is not None:
+            if (
+                raw_force is None
+                and hasattr(request, "query")
+                and request.query is not None
+            ):
                 raw_force = request.query.get("force")
             if raw_force is None:
                 # Dashboard bridge 可能把 force 放在 GET body/params 里
@@ -428,7 +434,9 @@ class Main(star.Star):
 
         # 分段超时：配置直接读；群/频道 force 刷新给 120s 获取预算。
         status, config_data, qq_groups, tg_channels = await asyncio.gather(
-            self._dashboard_section("status", server.get_status, {}, errors, timeout=5.0),
+            self._dashboard_section(
+                "status", server.get_status, {}, errors, timeout=5.0
+            ),
             self._dashboard_section(
                 "config", server.get_config, {"config": {}}, errors, timeout=3.0
             ),
@@ -670,6 +678,30 @@ class Main(star.Star):
             + timedelta(seconds=self.CACHE_REFRESH_SECONDS),
         )
 
+    async def _await_cache_warm(self) -> None:
+        """让首轮抓取/发送等预热跑完，避免两边抢同一条 Telethon 连接。
+
+        预热自身已有 `CACHE_WARM_TIMEOUT_SECONDS` 上限，这里再兜一层超时：
+        预热卡住也绝不能把抓取/发送永久挡在门外。用 `asyncio.wait` 而非
+        `wait_for`，超时不取消预热任务，也不会把预热的异常抛到调度任务里。
+        """
+        task = self._cache_warm_task
+        if task is None or task.done():
+            return
+        done, _pending = await asyncio.wait(
+            {task}, timeout=self.CACHE_WARM_TIMEOUT_SECONDS
+        )
+        if not done:
+            logger.warning("[Main] 缓存预热未在超时内完成，先行启动抓取/发送。")
+
+    async def _run_check_updates_job(self):
+        await self._await_cache_warm()
+        await self.forwarder.check_updates()
+
+    async def _run_send_pending_job(self):
+        await self._await_cache_warm()
+        await self.forwarder.send_pending_messages()
+
     async def activate_runtime_after_authorized(self, startup_grace: int | None = None):
         """Start or refresh runtime jobs after Telegram authorization succeeds."""
         if not self.client_wrapper.is_authorized():
@@ -678,7 +710,8 @@ class Main(star.Star):
         if startup_grace is None:
             startup_grace = self.STARTUP_GRACE_SECONDS
 
-        # 先暖缓存，再启动抓取/发送，避免重启瞬间抢 Telethon。
+        # 预热在后台跑（调用方可能是等 HTTP 响应的登录接口，不能在这里阻塞），
+        # 首轮抓取/发送再通过 `_await_cache_warm()` 等它，避免抢 Telethon。
         if not self._cache_warm_task or self._cache_warm_task.done():
 
             async def _warm_then_log():
@@ -712,7 +745,7 @@ class Main(star.Star):
 
         check_start_time = datetime.now() + timedelta(seconds=startup_grace)
         self.scheduler.add_job(
-            self.forwarder.check_updates,
+            self._run_check_updates_job,
             "interval",
             seconds=check_interval,
             max_instances=1,
@@ -724,7 +757,7 @@ class Main(star.Star):
 
         send_start_time = datetime.now() + timedelta(seconds=startup_grace + 5)
         self.scheduler.add_job(
-            self.forwarder.send_pending_messages,
+            self._run_send_pending_job,
             "interval",
             seconds=send_interval,
             max_instances=1,
@@ -741,7 +774,7 @@ class Main(star.Star):
 
         logger.info("Telegram Forwarder 已成功启动并激活调度器。")
         logger.info(
-            f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')})"
+            f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')}，需等缓存预热完成)"
         )
         logger.info(
             f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
