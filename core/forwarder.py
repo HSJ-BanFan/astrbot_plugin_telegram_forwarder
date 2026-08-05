@@ -16,6 +16,7 @@ from ..common.text_tools import (
 )
 from .client import TelegramClientWrapper
 from .downloader import MediaDownloader
+from .filters.content_safety import ContentSafetyFilter
 from .filters.message_filter import MessageFilter
 from .mergers import MessageMerger
 from .senders.qq import QQSender, QQSendSummary
@@ -61,6 +62,7 @@ class Forwarder:
 
         # 初始化过滤器和合并引擎
         self.message_filter = MessageFilter(config)
+        self.content_safety_filter = ContentSafetyFilter()
         self.message_merger = MessageMerger(config)
 
         # 启动时清理孤儿文件
@@ -85,6 +87,7 @@ class Forwarder:
         self._active_tasks: set[asyncio.Task] = set()
         self._shutdown_complete = asyncio.Event()
         self._shutdown_complete.set()
+        self._content_safety_calls_remaining = 0
 
         # 缓存频道标题 (Key: ChannelUsername, Value: Title)
         self._channel_titles_cache = {}
@@ -527,6 +530,74 @@ class Forwarder:
                     logger.error(f"[Filter] 非法正则表达式 '{pattern}': {e}")
 
         return should_skip
+
+    async def _is_content_safety_matched(self, msg: Message) -> bool:
+        config = self.config.get("forward_config", {})
+        if not config.get("ai_filter_enabled", False) and not config.get(
+            "qr_filter_enabled", False
+        ):
+            return False
+
+        image_bytes = None
+        mime_type = str(getattr(getattr(msg, "file", None), "mime_type", "") or "")
+        is_image = bool(getattr(msg, "photo", None)) or mime_type.startswith("image/")
+        if is_image:
+            try:
+                max_image_mb = int(config.get("content_filter_max_image_mb") or 5)
+            except (TypeError, ValueError):
+                max_image_mb = 5
+            max_bytes = max(1, max_image_mb) * 1024 * 1024
+            declared_size = int(getattr(getattr(msg, "file", None), "size", 0) or 0)
+            if declared_size > max_bytes:
+                logger.info(
+                    f"[ContentSafety] 消息 {msg.id} 图片超过分析大小限制，跳过视觉过滤。"
+                )
+                is_image = False
+
+        if is_image:
+            try:
+                image_bytes = await self.client.download_media(msg, file=bytes)
+                if image_bytes and len(image_bytes) > max_bytes:
+                    logger.info(
+                        f"[ContentSafety] 消息 {msg.id} 图片超过分析大小限制，跳过视觉过滤。"
+                    )
+                    image_bytes = None
+            except Exception as exc:
+                logger.info(
+                    f"[ContentSafety] 消息 {msg.id} 图片读取失败: {type(exc).__name__}"
+                )
+
+        qr_result = {"filter": False, "msg": "二维码过滤未启用"}
+        if config.get("qr_filter_enabled", False):
+            qr_result = await asyncio.to_thread(
+                self.content_safety_filter.check_qr, image_bytes or b"", config
+            )
+        if qr_result["filter"]:
+            logger.info(f"[ContentSafety] 消息 {msg.id} 已过滤: {qr_result['msg']}")
+            return True
+
+        content_safety_config = config
+        if config.get("ai_filter_enabled", False):
+            remaining = getattr(
+                self,
+                "_content_safety_calls_remaining",
+                self._positive_int(config.get("ai_filter_max_calls_per_cycle", 5), 5),
+            )
+            if remaining <= 0:
+                logger.info(
+                    "[ContentSafety] 本轮 AI 分析预算已用尽，仅继续本地二维码检测。"
+                )
+                content_safety_config = {**config, "ai_filter_enabled": False}
+            else:
+                self._content_safety_calls_remaining = remaining - 1
+
+        result = await self.content_safety_filter.check_ai(
+            self._build_message_search_text(msg), image_bytes, content_safety_config
+        )
+        if result["filter"]:
+            logger.info(f"[ContentSafety] 消息 {msg.id} 已过滤: {result['msg']}")
+            return True
+        return False
 
     def _get_effective_config(self, channel_name: str):
         """
@@ -1217,6 +1288,13 @@ class Forwarder:
             logical_sent_count = 0
             processed_keys: set[tuple[str, int]] = set()
             pending_idx = 0
+            # AI 过滤预算按“整个 send 周期”初始化一次，避免每轮 try/retry 重置。
+            self._content_safety_calls_remaining = self._positive_int(
+                self.config.get("forward_config", {}).get(
+                    "ai_filter_max_calls_per_cycle", 5
+                ),
+                5,
+            )
 
             while logical_sent_count < batch_limit and pending_idx < len(valid_pending):
                 # 1. 提取下一组元数据进行尝试
@@ -1385,6 +1463,9 @@ class Forwarder:
 
                             # 关键词/正则过滤
                             should_skip = self._is_text_filter_matched(m, effective_cfg)
+
+                            if not should_skip:
+                                should_skip = await self._is_content_safety_matched(m)
 
                             if should_skip:
                                 individually_skipped_keys.add((channel, m.id))

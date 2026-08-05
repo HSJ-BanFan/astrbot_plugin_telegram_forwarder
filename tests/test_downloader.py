@@ -42,6 +42,52 @@ async def test_download_media_propagates_cancellation(tmp_path):
         await downloader.download_media(msg)
 
 
+@pytest.mark.asyncio
+async def test_download_media_timeout_retries_and_returns(tmp_path):
+    module = load_downloader_module()
+    client = MagicMock()
+    client.is_connected.return_value = True
+
+    async def hangs_forever(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    client.download_media = AsyncMock(side_effect=hangs_forever)
+    downloader = module.MediaDownloader(
+        client, tmp_path, download_timeout_sec=0.01, retry_delay_sec=0
+    )
+
+    msg = MagicMock()
+    msg.id = 5400
+    msg.media = object()
+    msg.sticker = False
+    msg.photo = None
+    msg.video = object()
+    msg.audio = None
+    msg.voice = None
+    msg.file = MagicMock()
+
+    result = await asyncio.wait_for(downloader.download_media(msg), timeout=1)
+
+    assert result == []
+    assert client.download_media.await_count == 3
+
+
+def test_download_timeout_scales_with_file_size(tmp_path):
+    module = load_downloader_module()
+    downloader = module.MediaDownloader(MagicMock(), tmp_path)
+
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=2 * 1024**2))) == 30
+    )
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=25 * 1024**2))) == 90
+    )
+    assert (
+        downloader._download_timeout(MagicMock(file=MagicMock(size=500 * 1024**2)))
+        == 300
+    )
+
+
 def _image_bytes(image) -> bytes:
     """Serialize a Pillow image as PNG bytes.
 
@@ -65,7 +111,15 @@ async def test_contains_qr_code_detects_qr_image(tmp_path):
     barcode = zxingcpp.create_barcode(
         "https://example.com", zxingcpp.BarcodeFormat.QRCode
     )
-    image_bytes = _image_bytes(Image.fromarray(barcode.to_image(scale=4)))
+    # zxing-cpp API differs by version:
+    # - older/CI wheels: to_image(scale=...)
+    # - newer: to_image(size_hint=...)
+    try:
+        qr_image = barcode.to_image(scale=4)
+    except TypeError:
+        qr_image = barcode.to_image(size_hint=200)
+    # zxing Image exposes __array_interface__; no numpy required.
+    image_bytes = _image_bytes(Image.fromarray(qr_image))
     client = MagicMock()
     client.download_media = AsyncMock(return_value=image_bytes)
     downloader = module.MediaDownloader(client, tmp_path)

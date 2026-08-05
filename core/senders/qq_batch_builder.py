@@ -76,6 +76,36 @@ class BuildBatchesResult:
     target_failures: dict[int, str] = field(default_factory=dict)
 
 
+def message_expects_downloadable_media(msg: Message) -> bool:
+    """消息是否携带应下载的图片/视频/音频/文件媒体。
+
+    下载失败时不应退化为只发 caption；贴纸等 QQ 无法展示的类型不在此列。
+    """
+    if not getattr(msg, "media", None):
+        return False
+    if getattr(msg, "sticker", None):
+        return False
+    skip_attr_names = {
+        "DocumentAttributeAnimated",
+        "DocumentAttributeCustomEmoji",
+    }
+    document = getattr(getattr(msg, "media", None), "document", None)
+    if document is not None and any(
+        getattr(attr, "type", None) == "animated"
+        or type(attr).__name__ in skip_attr_names
+        for attr in getattr(document, "attributes", []) or []
+    ):
+        return False
+    return bool(
+        getattr(msg, "photo", None)
+        or getattr(msg, "video", None)
+        or getattr(msg, "audio", None)
+        or getattr(msg, "voice", None)
+        or getattr(msg, "document", None)
+        or getattr(msg, "file", None)
+    )
+
+
 async def build_processed_batches(
     *,
     sender: "QQSender",
@@ -118,6 +148,9 @@ async def build_processed_batches(
     for batch_index, msgs in enumerate(real_batches):
         all_local_files = []
         all_nodes_data = []
+        media_download_failed = False
+        batch_header_added = False
+        header_added_before_batch = header_added
         try:
             reply_preview_cache = await sender._prefetch_reply_previews(
                 msgs, src_channel, strip_links=strip_links
@@ -133,9 +166,17 @@ async def build_processed_batches(
                 media_components = []
                 has_any_attachment = False
                 msg_max_size = getattr(msg, "_max_file_size", 0)
+                expects_media = message_expects_downloadable_media(msg)
                 files = await sender.downloader.download_media(
                     msg, max_size_mb=msg_max_size
                 )
+                if expects_media and not files:
+                    media_download_failed = True
+                    logger.warning(
+                        f"[QQSender] 消息 {getattr(msg, 'id', '?')} 媒体下载失败，"
+                        "跳过整条（不发送纯文字 caption）"
+                    )
+                    continue
                 for fpath in files:
                     all_local_files.append(fpath)
                     has_any_attachment = True
@@ -151,18 +192,16 @@ async def build_processed_batches(
                 if reply_preview and not should_exclude_text:
                     text_parts.insert(0, reply_preview)
 
-                # 头部只应该在一个逻辑展示块里出现一次。
-                # 单频道时在每个批次的第一条消息前添加头部；混合大合并时则只在整个合并序列的第一条前添加，
-                # 否则会在 QQ 端看到重复的 From 前缀，影响可读性。
+                # 头部只在“第一条真正发出的消息”前加一次。
+                # 不能用原始 i==0：首条若因媒体下载失败被跳过，后续成功消息仍需 From 头。
+                # 也不能在“仅 header 节点”被丢弃前就把 flag 置 True。
                 add_header_this_time = False
                 if not should_exclude_text:
                     if involved_channels and len(involved_channels) > 1:
-                        if not header_added and i == 0:
+                        if not header_added:
                             add_header_this_time = True
-                            header_added = True
-                    else:
-                        if i == 0:
-                            add_header_this_time = True
+                    elif not batch_header_added:
+                        add_header_this_time = True
 
                 if add_header_this_time:
                     if text_parts:
@@ -182,6 +221,10 @@ async def build_processed_batches(
                 if not should_exclude_text and text_parts and _node_special_media:
                     if current_node_components:
                         all_nodes_data.append(current_node_components)
+                        if add_header_this_time:
+                            header_added = True
+                            batch_header_added = True
+                        add_header_this_time = False
                     current_node_components = []
 
                 current_node_components.extend(media_components)
@@ -194,8 +237,17 @@ async def build_processed_batches(
                     )
                     if not is_only_header:
                         all_nodes_data.append(current_node_components)
+                        if add_header_this_time:
+                            header_added = True
+                            batch_header_added = True
 
-            if all_nodes_data:
+            if media_download_failed:
+                # 一个逻辑批次必须原子发送。若只发送成功构建的部分，发送汇总会把
+                # 整个 batch_index 标为成功，失败媒体随后将从 pending 中永久丢失。
+                sender._cleanup_files(all_local_files)
+                header_added = header_added_before_batch
+                target_failures.setdefault(batch_index, "media_download_failed")
+            elif all_nodes_data:
                 processed_batches.append(
                     ProcessedBatch(
                         batch_index=batch_index,

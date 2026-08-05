@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 import re
 import shutil
 import sqlite3
@@ -9,9 +10,27 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 import socks
 import telethon
+from astrbot.api import AstrBotConfig, logger
 from telethon import TelegramClient
 
-from astrbot.api import AstrBotConfig, logger
+
+def _silence_telethon_loggers() -> None:
+    """AstrBot root logger 为 DEBUG 时，Telethon 网络层会刷屏；统一压到 WARNING。"""
+    for name in (
+        "telethon",
+        "telethon.network",
+        "telethon.network.mtprotosender",
+        "telethon.network.connection",
+        "telethon.client",
+        "telethon.client.updates",
+        "telethon.client.downloads",
+        "telethon.extensions",
+        "telethon.crypto",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_silence_telethon_loggers()
 
 
 # ========== 全局客户端缓存 ==========
@@ -107,12 +126,14 @@ class TelegramClientWrapper:
             raise ValueError("代理 URL 必须包含主机和端口")
 
         scheme = parsed.scheme.lower()
-        if scheme.startswith("http"):
+        if scheme in {"http", "https"}:
             proxy_type = socks.HTTP
-        elif scheme.startswith("socks4"):
+        elif scheme in {"socks4", "socks4a"}:
             proxy_type = socks.SOCKS4
-        else:
+        elif scheme in {"socks5", "socks5h"}:
             proxy_type = socks.SOCKS5
+        else:
+            raise ValueError("代理协议必须是 http、https、socks4(a) 或 socks5(h)")
 
         username = unquote(parsed.username) if parsed.username is not None else None
         password = unquote(parsed.password) if parsed.password is not None else None
@@ -123,6 +144,57 @@ class TelegramClientWrapper:
         if proxy_type == socks.SOCKS4 and username:
             return (proxy_type, parsed.hostname, parsed.port, True, username)
         return (proxy_type, parsed.hostname, parsed.port)
+
+    @staticmethod
+    def _parse_proxy_config(proxy_config: object):
+        if not isinstance(proxy_config, dict):
+            raise TypeError("代理配置必须是对象")
+
+        protocol = str(proxy_config.get("protocol") or "").strip().lower()
+        host = str(proxy_config.get("host") or "").strip()
+        username = str(proxy_config.get("username") or "") or None
+        password = str(proxy_config.get("password") or "") or None
+        try:
+            port = int(proxy_config.get("port") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("代理端口必须是数字") from exc
+
+        if not host and not port and not username and not password:
+            return None
+        if protocol not in {"http", "socks4", "socks5"}:
+            raise ValueError("代理协议必须是 http、socks4 或 socks5")
+        if not host:
+            raise ValueError("代理主机不能为空")
+        if not 1 <= port <= 65535:
+            raise ValueError("代理端口必须在 1 到 65535 之间")
+        if protocol == "socks4":
+            if password:
+                raise ValueError("socks4 不支持密码，请仅填写用户名或改用 socks5")
+        elif bool(username) != bool(password):
+            raise ValueError("代理用户名和密码必须同时填写")
+        if password and not username:
+            raise ValueError("代理密码不能在账号为空时单独填写")
+
+        proxy_type = {
+            "http": socks.HTTP,
+            "socks4": socks.SOCKS4,
+            "socks5": socks.SOCKS5,
+        }[protocol]
+        if username and password:
+            return (proxy_type, host, port, True, username, password)
+        if proxy_type == socks.SOCKS4 and username:
+            return (proxy_type, host, port, True, username)
+        return (proxy_type, host, port)
+
+    @staticmethod
+    def _redact_proxy_config(proxy_config: object) -> str:
+        if not isinstance(proxy_config, dict):
+            return ""
+        protocol = str(proxy_config.get("protocol") or "")
+        host = str(proxy_config.get("host") or "")
+        port = str(proxy_config.get("port") or "")
+        auth = "***@" if proxy_config.get("username") else ""
+        return f"{protocol}://{auth}{host}:{port}"
 
     def __init__(self, config: AstrBotConfig, plugin_data_dir: Path):
         """
@@ -376,8 +448,9 @@ class TelegramClientWrapper:
             auth_cache[self._session_path()] = True
             # 某些会话（例如 bot 会话）可能无权限调用 get_dialogs，
             # 此时不应影响“已授权”状态判定。
+            # 不要 limit=None：全量对话框会触发大量 GetChannelDifference，日志/网络双刷屏。
             try:
-                await self.client.get_dialogs(limit=None)
+                await self.client.get_dialogs(limit=20)
             except Exception as e:
                 logger.debug(f"[Client] skip get_dialogs after auth: {e}")
             return True, False
@@ -438,10 +511,25 @@ class TelegramClientWrapper:
                     del cache[session_path]
 
             # ========== 代理配置解析 ==========
+            proxy_config = self.config.get("proxy_config")
             proxy_url = self.config.get("proxy", "")
             proxy_setting = None
 
-            if proxy_url:
+            has_structured_proxy = isinstance(proxy_config, dict) and any(
+                proxy_config.get(key)
+                for key in ("host", "port", "username", "password")
+            )
+            if has_structured_proxy:
+                try:
+                    proxy_setting = self._parse_proxy_config(proxy_config)
+                    logger.debug(
+                        f"[Client] 使用代理: {self._redact_proxy_config(proxy_config)}"
+                    )
+                except (TypeError, ValueError, AttributeError) as e:
+                    logger.error(f"[Client] 代理配置错误: {e}")
+                    self.client = None
+                    return
+            elif proxy_url:
                 try:
                     proxy_setting = self._parse_proxy_url(proxy_url)
                     logger.debug(
@@ -449,6 +537,9 @@ class TelegramClientWrapper:
                     )
                 except (ValueError, AttributeError) as e:
                     logger.error(f"[Client] 代理 URL 格式错误: {e}")
+                    # 有代理配置却无效时 fail-closed，禁止静默直连。
+                    self.client = None
+                    return
 
             # ========== 创建 Telegram 客户端 ==========
             client_kwargs = {}
@@ -577,8 +668,9 @@ class TelegramClientWrapper:
             auth_cache[session_path] = True
 
             # ========== 同步对话框 ==========
+            # 仅轻量预热实体缓存；全量同步会拖慢启动并刷 Telethon DEBUG。
             logger.debug("[Client] 正在同步对话框...")
-            await self.client.get_dialogs(limit=None)
+            await self.client.get_dialogs(limit=20)
             logger.debug("[Client] 对话框同步完成")
 
         except Exception as e:

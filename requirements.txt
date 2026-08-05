@@ -1,4 +1,5 @@
 apscheduler
+aiohttp
 telethon>=1.42.0,<1.43.0
 pysocks
 flask

@@ -1,5 +1,5 @@
 import { store } from './store.js';
-import { bindLiveSearchInput, escapeHtml } from './utils.js';
+import { bindLiveSearchInput, escapeHtml, fieldsMatchSearch } from './utils.js';
 import { showToast, loadQQGroups, loadTGChannels } from './context.js';
 import { collectForms, renderAll } from '../app.js';
 
@@ -132,14 +132,13 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
   const scrollState = captureSelectorScroll(root);
   const searchFocus = captureSelectorSearchFocus(root);
   const targets = uniqueList(splitList(manualInput.value));
-  const keyword = String(root.dataset.search || "").trim().toLowerCase();
-  const groups = store.state.qqGroups.filter((group) => {
-    if (!keyword) return true;
-    return (
-      String(group.group_id || "").toLowerCase().includes(keyword) ||
-      String(group.group_name || "").toLowerCase().includes(keyword)
-    );
-  });
+  const keyword = String(root.dataset.search || "").trim();
+  const groups = store.state.qqGroups.filter((group) =>
+    fieldsMatchSearch(
+      [group.group_id, group.group_name, group.group_name ? `@${group.group_name}` : ""],
+      keyword,
+    ),
+  );
   const statusText = store.state.qqGroupsAvailable
     ? `${store.state.qqGroups.length} 个 QQ 群`
     : store.state.qqGroupsMessage || "QQ 平台未就绪";
@@ -286,17 +285,22 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
   const scrollState = captureSelectorScroll(root);
   const searchFocus = captureSelectorSearchFocus(root);
   const currentRef = String(manualInput.value || "").trim().replace(/^@/, "");
-  const keyword = String(root.dataset.search || "").trim().toLowerCase();
-  const channels = store.state.tgChannels.filter((channel) => {
-    if (!keyword) return true;
-    return (
-      String(channel.title || "").toLowerCase().includes(keyword) ||
-      String(channel.username || "").toLowerCase().includes(keyword) ||
-      String(channel.channel_ref || "").toLowerCase().includes(keyword)
-    );
-  });
+  const keyword = String(root.dataset.search || "").trim();
+  const channels = store.state.tgChannels.filter((channel) =>
+    fieldsMatchSearch(
+      [
+        channel.title,
+        channel.username,
+        channel.channel_ref,
+        channel.username ? `@${channel.username}` : "",
+      ],
+      keyword,
+    ),
+  );
   const statusText = store.state.tgChannelsAvailable
-    ? `${store.state.tgChannels.length} 个 Telegram 频道`
+    ? store.state.tgChannelsPartial
+      ? `${store.state.tgChannels.length} 个 Telegram 频道（列表不完整，可点刷新）`
+      : `${store.state.tgChannels.length} 个 Telegram 频道`
     : store.state.tgChannelsMessage || "Telegram 未登录或未授权";
   const selectedChannel = currentRef ? channelByRef(currentRef) : null;
   const selectedLabel = selectedChannel

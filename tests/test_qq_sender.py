@@ -61,6 +61,226 @@ def test_get_platform_bot_returns_none_and_logs_when_get_client_raises(qq_module
     )
 
 
+RESID_FORWARD_FAIL_RESULT = {
+    "status": "failed",
+    "retcode": 1200,
+    "data": None,
+    "message": "发送转发消息（res_id：NGUWPKTy5Blg+yC2NjAqeySjxMNiG7Kzb 失败",
+    "wording": "发送转发消息（res_id：NGUWPKTy5Blg+yC2NjAqeySjxMNiG7Kzb 失败",
+}
+
+
+@pytest.mark.asyncio
+async def test_big_merge_retries_resid_failure_then_succeeds(qq_module):
+    """大合并 res_id 失败可重试；重试成功则不降级单发。"""
+    send_message_calls = 0
+    fallback_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        fallback_calls.append(kwargs["batch_data"]["batch_index"])
+
+    async def send_message_fn(*args, **kwargs):
+        nonlocal send_message_calls
+        send_message_calls += 1
+        if send_message_calls == 1:
+            raise FakeActionFailed(RESID_FORWARD_FAIL_RESULT)
+
+    processed_batches = [
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("a")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.Plain("b")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 2,
+            "nodes_data": [[qq_module.Plain("c")]],
+            "contains_audio": False,
+        },
+    ]
+    target_successes = {0: set(), 1: set(), 2: set()}
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batch_count=3,
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures={},
+        deferred_batch_indexes=set(),
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={
+            "qq_merge_chunk_size": 10,
+            "qq_merge_chunk_delay": 0,
+            "qq_big_merge_max_attempts": 2,
+            "qq_big_merge_retry_delay": 0,
+        },
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=qq_module.classify_send_error,
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=send_message_fn,
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_message_calls == 2
+    assert fallback_calls == []
+    assert result.target_successes == {
+        0: {"aiocqhttp:GroupMessage:1"},
+        1: {"aiocqhttp:GroupMessage:1"},
+        2: {"aiocqhttp:GroupMessage:1"},
+    }
+    assert result.target_failures == {}
+
+
+@pytest.mark.asyncio
+async def test_big_merge_retries_resid_failure_then_degrades_when_still_failing(
+    qq_module,
+):
+    """重试耗尽后仍 res_id 失败，才降级为按批次单发。"""
+    send_message_calls = 0
+    fallback_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        fallback_calls.append(kwargs["batch_data"]["batch_index"])
+
+    async def send_message_fn(*args, **kwargs):
+        nonlocal send_message_calls
+        send_message_calls += 1
+        raise FakeActionFailed(RESID_FORWARD_FAIL_RESULT)
+
+    processed_batches = [
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("a")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.Plain("b")]],
+            "contains_audio": False,
+        },
+    ]
+    target_successes = {0: set(), 1: set()}
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batch_count=2,
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures={},
+        deferred_batch_indexes=set(),
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={
+            "qq_merge_chunk_size": 10,
+            "qq_merge_chunk_delay": 0,
+            "qq_big_merge_max_attempts": 3,
+            "qq_big_merge_retry_delay": 0,
+        },
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=qq_module.classify_send_error,
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=send_message_fn,
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_message_calls == 3
+    assert fallback_calls == [0, 1]
+    assert result.target_successes == {
+        0: {"aiocqhttp:GroupMessage:1"},
+        1: {"aiocqhttp:GroupMessage:1"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_big_merge_generic_retcode_1200_does_not_retry(qq_module):
+    """通用 retcode_1200（非 res_id 空 message）不重试大合并，直接降级。"""
+    send_message_calls = 0
+    fallback_calls: list[int] = []
+
+    async def send_processed_batch_fn(**kwargs):
+        fallback_calls.append(kwargs["batch_data"]["batch_index"])
+
+    async def send_message_fn(*args, **kwargs):
+        nonlocal send_message_calls
+        send_message_calls += 1
+        raise RuntimeError("retcode=1200 rich media transfer failed")
+
+    processed_batches = [
+        {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("a")]],
+            "contains_audio": False,
+        },
+        {
+            "batch_index": 1,
+            "nodes_data": [[qq_module.Plain("b")]],
+            "contains_audio": False,
+        },
+    ]
+    target_successes = {0: set(), 1: set()}
+    lock = asyncio.Lock()
+
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:1"],
+        real_batch_count=2,
+        processed_batches=processed_batches,
+        target_successes=target_successes,
+        target_failures={},
+        deferred_batch_indexes=set(),
+        use_big_merge=True,
+        is_mixed_big_merge=False,
+        forward_cfg={
+            "qq_merge_chunk_size": 10,
+            "qq_merge_chunk_delay": 0,
+            "qq_big_merge_max_attempts": 3,
+            "qq_big_merge_retry_delay": 0,
+        },
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda target: lock,
+        target_is_open=lambda target, now_ts: False,
+        record_target_success=lambda target: None,
+        record_target_failure=lambda target, **kwargs: None,
+        classify_send_error=qq_module.classify_send_error,
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=send_message_fn,
+        fail_fast_limit=10,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert send_message_calls == 1
+    assert fallback_calls == [0, 1]
+    assert result.target_successes == {
+        0: {"aiocqhttp:GroupMessage:1"},
+        1: {"aiocqhttp:GroupMessage:1"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module):
     send_calls: list[int] = []
@@ -102,7 +322,13 @@ async def test_big_merge_fallback_skips_batches_already_marked_success(qq_module
         deferred_batch_indexes=deferred_batch_indexes,
         use_big_merge=True,
         is_mixed_big_merge=False,
-        forward_cfg={"qq_merge_chunk_size": 10, "qq_merge_chunk_delay": 0},
+        forward_cfg={
+            "qq_merge_chunk_size": 10,
+            "qq_merge_chunk_delay": 0,
+            # 非 res_id 类错误不重试；显式 1 次确保旧行为
+            "qq_big_merge_max_attempts": 1,
+            "qq_big_merge_retry_delay": 0,
+        },
         self_id=1,
         node_name="bot",
         get_lock=lambda target: lock,
@@ -1927,6 +2153,156 @@ class TestQQBatchBuilder:
         )
         assert result.target_failures == {}
 
+    @pytest.mark.asyncio
+    async def test_build_skips_caption_when_media_download_fails(
+        self, sender, qq_module
+    ):
+        """有图/视频但下载失败时，不得只转发 caption 纯文字。"""
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        msg = type(
+            "Msg",
+            (),
+            {
+                "id": 311789,
+                "text": "via my nbkls",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": object(),
+                "photo": object(),
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[msg]],
+            src_channel="xinjingdaily",
+            display_name="心惊报",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert result.processed_batches == []
+        assert result.target_failures == {0: "media_download_failed"}
+        # 不得残留纯文字节点
+        assert not any(
+            hasattr(component, "text") and "via my nbkls" in component.text
+            for batch in result.processed_batches
+            for node in batch.get("nodes_data", [])
+            for component in node
+        )
+
+    @pytest.mark.asyncio
+    async def test_build_keeps_pure_text_when_no_media(self, sender, qq_module):
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        msg = type(
+            "Msg",
+            (),
+            {
+                "id": 42,
+                "text": "hello plain",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": None,
+                "photo": None,
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[msg]],
+            src_channel="demo",
+            display_name="demo",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert len(result.processed_batches) == 1
+        texts = [
+            component.text
+            for node in result.processed_batches[0]["nodes_data"]
+            for component in node
+            if hasattr(component, "text")
+        ]
+        assert any("hello plain" in text for text in texts)
+        assert result.target_failures == {}
+
+    @pytest.mark.asyncio
+    async def test_build_retries_whole_batch_when_one_media_download_fails(
+        self, sender, qq_module
+    ):
+        """部分媒体失败时不得发送并确认同一逻辑批次的剩余消息。"""
+
+        async def download_media(msg, max_size_mb=0):
+            if getattr(msg, "id", None) == 1:
+                return []
+            return ["/tmp/photo2.jpg"]
+
+        sender.downloader.download_media = AsyncMock(side_effect=download_media)
+        sender._cleanup_files = MagicMock()
+        sender._dispatch_media_file = lambda path: [
+            qq_module.Image.fromFileSystem(path)
+        ]
+        failed = type(
+            "Msg",
+            (),
+            {
+                "id": 1,
+                "text": "via fail",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": object(),
+                "photo": object(),
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+        ok = type(
+            "Msg",
+            (),
+            {
+                "id": 2,
+                "text": "via ok",
+                "reply_to": None,
+                "_max_file_size": 0,
+                "media": object(),
+                "photo": object(),
+                "video": None,
+                "audio": None,
+                "voice": None,
+                "file": None,
+                "sticker": None,
+            },
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[failed, ok]],
+            src_channel="xinjingdaily",
+            display_name="心惊报",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert result.processed_batches == []
+        assert result.target_failures == {0: "media_download_failed"}
+        sender._cleanup_files.assert_called_once_with(["/tmp/photo2.jpg"])
+
 
 class TestReplyPreviewIntegration:
     @pytest.mark.asyncio
@@ -2946,7 +3322,17 @@ class TestQQTargetHelpers:
             == "sendmsg_confirmation_timeout"
         )
         assert (
+            qq_module.classify_send_error(FakeActionFailed(RESID_FORWARD_FAIL_RESULT))
+            == "resid_forward_empty"
+        )
+        assert (
             qq_module.classify_send_error(RuntimeError("retcode=1200"))
+            == "retcode_1200"
+        )
+        assert (
+            qq_module.classify_send_error(
+                RuntimeError("retcode=1200 rich media transfer failed")
+            )
             == "retcode_1200"
         )
         assert (

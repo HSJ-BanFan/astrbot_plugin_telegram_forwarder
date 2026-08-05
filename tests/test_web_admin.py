@@ -271,6 +271,115 @@ def test_query_token_is_not_accepted(web_admin):
     assert protected.status_code == 401
 
 
+def test_status_uses_cached_telegram_state_without_rpc(web_admin):
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(),
+        get_me=AsyncMock(),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.forwarder = SimpleNamespace(
+        storage=SimpleNamespace(get_all_pending=MagicMock(return_value=[])),
+        stats={},
+        _send_dispatch_lock=asyncio.Lock(),
+        _global_send_lock=asyncio.Lock(),
+        _channel_locks={},
+    )
+    web_admin.plugin.scheduler = SimpleNamespace(
+        running=True,
+        get_jobs=MagicMock(return_value=[]),
+    )
+    web_admin.server._telegram_me_cache = {
+        "id": 12345,
+        "username": "demo_user",
+        "first_name": "Demo",
+        "last_name": None,
+        "phone": "8613800000000",
+    }
+
+    result = asyncio.run(web_admin.server.get_status())
+
+    assert result["telegram"]["connected"] is True
+    assert result["telegram"]["authorized"] is True
+    assert result["telegram"]["me"]["id"] == 12345
+    assert result["telegram"]["me"]["username"] == "demo_user"
+    assert result["telegram"]["me"].get("cached") is not True
+    assert "stats" in result
+    assert isinstance(result["stats"], dict)
+    client.is_user_authorized.assert_not_awaited()
+    client.get_me.assert_not_awaited()
+
+
+def test_status_with_empty_profile_cache_does_not_trigger_rpc(web_admin):
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(),
+        get_me=AsyncMock(),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.forwarder = SimpleNamespace(
+        storage=SimpleNamespace(get_all_pending=MagicMock(return_value=[])),
+        stats={},
+        _send_dispatch_lock=asyncio.Lock(),
+        _global_send_lock=asyncio.Lock(),
+        _channel_locks={},
+    )
+    web_admin.plugin.scheduler = SimpleNamespace(
+        running=True,
+        get_jobs=MagicMock(return_value=[]),
+    )
+    web_admin.server._telegram_me_cache = None
+
+    result = asyncio.run(web_admin.server.get_status())
+
+    assert result["telegram"]["authorized"] is True
+    assert result["telegram"]["me"] is None
+    client.is_user_authorized.assert_not_awaited()
+    client.get_me.assert_not_awaited()
+
+
+def test_refresh_telegram_me_updates_status_cache(web_admin):
+    me = SimpleNamespace(
+        id=99,
+        username="nick",
+        first_name="小明",
+        last_name="",
+        phone="8613111111111",
+    )
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(return_value=me),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        _authorized=False,
+    )
+    web_admin.plugin.client_wrapper = wrapper
+
+    profile = asyncio.run(web_admin.server._refresh_telegram_me())
+
+    assert profile == {
+        "id": 99,
+        "username": "nick",
+        "first_name": "小明",
+        "last_name": "",
+        "phone": "8613111111111",
+    }
+    assert web_admin.server._telegram_me_cache == profile
+    client.get_me.assert_awaited_once()
+
+
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):
     rule = {
         "__template_key": "custom",
@@ -330,6 +439,515 @@ def test_save_config_rejects_malformed_merge_rules(web_admin):
     web_admin.plugin.config.save_config.assert_not_called()
 
 
+def test_proxy_config_migrates_legacy_url(web_admin):
+    config = web_admin.server.normalize_proxy_config(
+        None,
+        "socks5://adm%40in:sec%3Aret@proxy.example.com:12311",
+    )
+
+    assert config == {
+        "protocol": "socks5",
+        "host": "proxy.example.com",
+        "port": 12311,
+        "username": "adm@in",
+        "password": "sec:ret",
+    }
+
+
+@pytest.mark.parametrize(
+    ("url", "protocol"),
+    [
+        ("https://proxy.example.com:8443", "http"),
+        ("socks5h://proxy.example.com:1080", "socks5"),
+        ("socks4a://proxy.example.com:1080", "socks4"),
+    ],
+)
+def test_proxy_config_migrates_legacy_protocol_aliases(web_admin, url, protocol):
+    config = web_admin.server.normalize_proxy_config(None, url)
+
+    assert config["protocol"] == protocol
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://proxy.example.com:1080",
+        "http+unix://proxy.example.com:1080",
+        "socks6://proxy.example.com:1080",
+    ],
+)
+def test_proxy_config_rejects_unknown_legacy_protocol(web_admin, url):
+    with pytest.raises(web_admin.module.WebAdminError, match="代理协议"):
+        web_admin.server.normalize_proxy_config(None, url)
+
+
+def test_proxy_config_to_url_encodes_credentials(web_admin):
+    url = web_admin.server.proxy_config_to_url(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": "adm@in",
+            "password": "sec:ret",
+        }
+    )
+
+    assert url == "socks5://adm%40in:sec%3Aret@proxy.example.com:12311"
+
+
+def test_proxy_config_to_url_brackets_ipv6_host(web_admin):
+    url = web_admin.server.proxy_config_to_url(
+        {
+            "protocol": "socks5",
+            "host": "::1",
+            "port": 1080,
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert url == "socks5://[::1]:1080"
+
+
+def test_proxy_config_credentials_preserve_whitespace(web_admin):
+    config = web_admin.server.normalize_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": " user ",
+            "password": " secret ",
+        }
+    )
+
+    assert config["username"] == " user "
+    assert config["password"] == " secret "
+    assert (
+        web_admin.server.proxy_config_to_url(config)
+        == "socks5://%20user%20:%20secret%20@proxy.example.com:12311"
+    )
+
+
+def test_save_config_persists_structured_proxy_and_legacy_url(web_admin):
+    web_admin.server._rebuild_client = AsyncMock()
+    result = asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "proxy": "socks5://stale:stale@old.example.com:1080",
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "127.0.0.1",
+                        "port": 12311,
+                        "username": "admin",
+                        "password": "secret",
+                    },
+                }
+            }
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"]["host"] == "127.0.0.1"
+    assert web_admin.plugin.config["proxy"] == "socks5://admin:secret@127.0.0.1:12311"
+    assert result["config"]["proxy_config"]["port"] == 12311
+    web_admin.server._rebuild_client.assert_awaited_once_with()
+
+
+def test_save_config_legacy_proxy_replaces_existing_structured_proxy(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://old.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "old.example.com",
+                "port": 1080,
+                "username": "",
+                "password": "",
+            },
+        }
+    )
+    web_admin.server._rebuild_client = AsyncMock()
+
+    asyncio.run(
+        web_admin.server.save_config(
+            {"config": {"proxy": "https://new.example.com:8443"}}
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"] == {
+        "protocol": "http",
+        "host": "new.example.com",
+        "port": 8443,
+        "username": "",
+        "password": "",
+    }
+    assert web_admin.plugin.config["proxy"] == "http://new.example.com:8443"
+    web_admin.server._rebuild_client.assert_awaited_once_with()
+
+
+def test_save_config_rejects_unpaired_proxy_credentials(web_admin):
+    with pytest.raises(
+        web_admin.module.WebAdminError, match="用户名和密码必须同时填写"
+    ):
+        asyncio.run(
+            web_admin.server.save_config(
+                {
+                    "config": {
+                        "proxy_config": {
+                            "protocol": "socks5",
+                            "host": "127.0.0.1",
+                            "port": 12311,
+                            "username": "admin",
+                            "password": "",
+                        }
+                    }
+                }
+            )
+        )
+
+    web_admin.plugin.config.save_config.assert_not_called()
+
+
+def test_get_config_masks_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-real-secret-key",
+        "ai_filter_enabled": True,
+    }
+
+    result = asyncio.run(web_admin.server.get_config())
+
+    fwd = result["config"]["forward_config"]
+    assert fwd["ai_filter_api_key"] == "[REDACTED]"
+    assert fwd["ai_filter_enabled"] is True
+
+
+def test_get_config_masks_proxy_password_and_legacy_credentials(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+
+    result = asyncio.run(web_admin.server.get_config())["config"]
+
+    assert result["proxy_config"]["username"] == "admin"
+    assert result["proxy_config"]["password"] == "[REDACTED]"
+    assert result["proxy"] == "socks5://proxy.example.com:1080"
+    assert "admin:secret" not in str(result)
+
+
+def test_save_config_proxy_placeholder_preserves_existing_password(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+
+    result = asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "proxy.example.com",
+                        "port": 1080,
+                        "username": "admin",
+                        "password": "[REDACTED]",
+                    }
+                }
+            }
+        )
+    )
+
+    assert web_admin.plugin.config["proxy_config"]["password"] == "secret"
+    assert web_admin.plugin.config["proxy"] == (
+        "socks5://admin:secret@proxy.example.com:1080"
+    )
+    assert result["config"]["proxy_config"]["password"] == "[REDACTED]"
+    assert result["config"]["proxy"] == "socks5://proxy.example.com:1080"
+
+
+def test_proxy_test_placeholder_uses_existing_password(web_admin):
+    web_admin.plugin.config.update(
+        {
+            "proxy": "socks5://admin:secret@proxy.example.com:1080",
+            "proxy_config": {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+        }
+    )
+    web_admin.server._probe_proxy_sync = MagicMock(
+        return_value={"success": True, "status": "ok", "latency_ms": 1}
+    )
+
+    asyncio.run(
+        web_admin.server.test_proxy(
+            {
+                "mode": "connectivity",
+                "proxy_config": {
+                    "protocol": "socks5",
+                    "host": "proxy.example.com",
+                    "port": 1080,
+                    "username": "admin",
+                    "password": "[REDACTED]",
+                },
+            }
+        )
+    )
+
+    proxy_config = web_admin.server._probe_proxy_sync.call_args.args[0]
+    assert proxy_config["password"] == "secret"
+
+
+def test_export_config_masks_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-export-secret",
+    }
+
+    result = asyncio.run(web_admin.server.export_config())
+
+    assert result["config"]["forward_config"]["ai_filter_api_key"] == "[REDACTED]"
+
+
+def test_save_config_placeholder_preserves_ai_filter_key(web_admin):
+    web_admin.plugin.config["forward_config"] = {
+        "ai_filter_api_key": "sk-old-secret",
+        "ai_filter_enabled": False,
+    }
+
+    asyncio.run(
+        web_admin.server.save_config(
+            {
+                "config": {
+                    "forward_config": {
+                        "ai_filter_api_key": "[REDACTED]",
+                        "ai_filter_enabled": True,
+                    }
+                }
+            }
+        )
+    )
+
+    fwd = web_admin.plugin.config["forward_config"]
+    assert fwd["ai_filter_api_key"] == "sk-old-secret"
+    assert fwd["ai_filter_enabled"] is True
+
+
+def test_proxy_test_endpoint_requires_auth(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.post(
+        "/api/proxy/test",
+        json={"mode": "connectivity", "proxy_config": {}},
+    )
+
+    assert response.status_code == 401
+
+
+def test_probe_proxy_connectivity_reports_latency(web_admin):
+    fake_socket = MagicMock()
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=fake_socket
+        ) as create_connection,
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 1.025],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "",
+                "password": "",
+            },
+            "connectivity",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 25}
+    create_connection.assert_called_once_with(("proxy.example.com", 1080), timeout=8.0)
+    fake_socket.close.assert_called_once_with()
+
+
+def test_probe_proxy_quality_connects_to_telegram_through_authenticated_proxy(
+    web_admin,
+):
+    proxy_socket = MagicMock()
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+
+    with (
+        patch.object(web_admin.module.socks, "socksocket", return_value=proxy_socket),
+        patch.object(
+            web_admin.module.ssl, "create_default_context", return_value=ssl_context
+        ),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 1.0, 1.042],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "socks5",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "admin",
+                "password": "secret",
+            },
+            "quality",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 42}
+    proxy_socket.set_proxy.assert_called_once_with(
+        web_admin.module.socks.SOCKS5,
+        "proxy.example.com",
+        1080,
+        rdns=True,
+        username="admin",
+        password="secret",
+    )
+    proxy_socket.connect.assert_called_once_with(("api.telegram.org", 443))
+    ssl_context.wrap_socket.assert_called_once_with(
+        proxy_socket, server_hostname="api.telegram.org"
+    )
+    tls_socket.close.assert_called_once_with()
+
+
+def test_probe_http_proxy_quality_sends_connect_with_basic_auth(web_admin):
+    proxy_socket = MagicMock()
+    proxy_socket.recv.return_value = b"HTTP/1.1 200 Connection established\r\n\r\n"
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=proxy_socket
+        ),
+        patch.object(
+            web_admin.module.ssl, "create_default_context", return_value=ssl_context
+        ),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            # started, create_connection timeout, settimeout before send,
+            # loop settimeout, final wrap settimeout, latency
+            side_effect=[1.0, 1.0, 1.0, 1.0, 1.0, 1.050],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "admin",
+                "password": "secret",
+            },
+            "quality",
+            8.0,
+        )
+
+    assert result == {"success": True, "status": "ok", "latency_ms": 50}
+    request = proxy_socket.sendall.call_args.args[0]
+    assert b"CONNECT api.telegram.org:443 HTTP/1.1" in request
+    assert b"Proxy-Authorization: Basic YWRtaW46c2VjcmV0" in request
+    assert b"Basic ***" not in request
+    ssl_context.wrap_socket.assert_called_once_with(
+        proxy_socket, server_hostname="api.telegram.org"
+    )
+    tls_socket.close.assert_called_once_with()
+
+
+def test_probe_proxy_timeout_returns_timeout_status(web_admin):
+    with patch.object(
+        web_admin.module.socket,
+        "create_connection",
+        side_effect=TimeoutError("timed out"),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "connectivity",
+            8.0,
+        )
+
+    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+
+
+def test_probe_proxy_uses_single_timeout_budget(web_admin):
+    proxy_socket = MagicMock()
+    proxy_socket.recv.return_value = b"HTTP/1.1 200 Connection established\r\n\r\n"
+    with (
+        patch.object(
+            web_admin.module.socket, "create_connection", return_value=proxy_socket
+        ),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            side_effect=[1.0, 1.0, 8.5, 9.1],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "quality",
+            8.0,
+        )
+
+    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+
+
+def test_proxy_test_rejects_invalid_mode(web_admin):
+    with pytest.raises(web_admin.module.WebAdminError, match="测试类型无效"):
+        asyncio.run(
+            web_admin.server.test_proxy(
+                {
+                    "mode": "unknown",
+                    "proxy_config": {
+                        "protocol": "socks5",
+                        "host": "proxy.example.com",
+                        "port": 1080,
+                    },
+                }
+            )
+        )
+
+
 def test_qq_groups_requires_auth(web_admin):
     client = web_admin.server.app.test_client()
 
@@ -373,6 +991,28 @@ def test_qq_groups_returns_live_groups(web_admin):
             "session": "qq-platform:GroupMessage:12345",
         }
     ]
+
+
+def test_qq_group_api_failure_uses_failure_cooldown(web_admin):
+    failing_client = SimpleNamespace(
+        call_action=AsyncMock(side_effect=RuntimeError("QQ API unavailable"))
+    )
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(
+            platform_insts=[FakeQQPlatform(failing_client, "qq-platform")]
+        )
+    )
+    client = web_admin.server.app.test_client()
+
+    first = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    second = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = first.get_json()["data"]
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert payload["available"] is False
+    assert payload["message"] == "QQ group list request failed."
+    assert failing_client.call_action.await_count == 1
 
 
 def test_qq_groups_prefers_aiocqhttp_adapter_when_available(web_admin, monkeypatch):
@@ -772,3 +1412,264 @@ def test_static_assets_serving(web_admin):
         assert client.get(path).status_code == 200, (
             f"Static asset {path} failed to resolve"
         )
+
+
+def test_normalize_proxy_config_rejects_invalid_legacy_url(web_admin):
+    with pytest.raises(web_admin.module.WebAdminError, match="代理 URL 格式无效"):
+        web_admin.server.normalize_proxy_config(None, "socks5://proxy.example.com:not-a-port")
+
+
+def test_probe_http_proxy_quality_applies_deadline_on_fragmented_recv(web_admin):
+    proxy_socket = MagicMock()
+    # drip-fed CONNECT response; each recv must re-apply remaining timeout
+    proxy_socket.recv.side_effect = [
+        b"HTTP/1.1 200 Connection",
+        b" established\r\n\r\n",
+    ]
+    tls_socket = MagicMock()
+    ssl_context = MagicMock()
+    ssl_context.wrap_socket.return_value = tls_socket
+    with (
+        patch.object(web_admin.module.socket, "create_connection", return_value=proxy_socket),
+        patch.object(web_admin.module.ssl, "create_default_context", return_value=ssl_context),
+        patch.object(
+            web_admin.module.time,
+            "perf_counter",
+            # started, create_connection, settimeout before send,
+            # recv1 remaining, recv2 remaining, wrap settimeout, latency
+            side_effect=[1.0, 1.0, 1.0, 1.1, 1.2, 1.3, 1.050],
+        ),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "http",
+                "host": "proxy.example.com",
+                "port": 8080,
+                "username": "",
+                "password": "",
+            },
+            "quality",
+            8.0,
+        )
+    assert result["success"] is True
+    assert proxy_socket.recv.call_count == 2
+    # settimeout called before each recv (plus earlier pre-send / wrap)
+    assert proxy_socket.settimeout.call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_refresh_telegram_me_times_out_without_hanging(web_admin):
+    async def slow_get_me():
+        await asyncio.sleep(1.0)
+        return SimpleNamespace(id=1, username="x", first_name="a", last_name="", phone="")
+
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(side_effect=slow_get_me),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        ensure_connected=AsyncMock(return_value=True),
+        _authorized=True,
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = None
+
+    started = asyncio.get_event_loop().time()
+    profile = await web_admin.server._refresh_telegram_me(timeout=0.05)
+    elapsed = asyncio.get_event_loop().time() - started
+
+    assert profile is None
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_import_session_clears_stale_me_cache(web_admin, tmp_path):
+    old_profile = {
+        "id": 111,
+        "username": "old_user",
+        "first_name": "Old",
+        "last_name": "",
+        "phone": "8613000000000",
+    }
+    new_me = SimpleNamespace(
+        id=222,
+        username="new_user",
+        first_name="New",
+        last_name="",
+        phone="8613111111111",
+    )
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(return_value=new_me),
+    )
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        ensure_connected=AsyncMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=True,
+        _mark_authorized_if_needed=AsyncMock(),
+        _session_path=MagicMock(return_value=str(tmp_path / "user_session")),
+    )
+
+    def _init_client():
+        wrapper.client = client
+
+    wrapper._init_client = _init_client
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.plugin.activate_runtime_after_authorized = AsyncMock(return_value=True)
+    web_admin.server._telegram_me_cache = old_profile
+    web_admin.server._write_string_session = MagicMock()
+    web_admin.server._discard_login_attempt = AsyncMock()
+    web_admin.server._session_files = MagicMock(return_value=[])
+
+    result = await web_admin.server.import_session(
+        {"string_session": "AQAD-fake-session", "phone": "8613111111111"}
+    )
+
+    assert result["authorized"] is True
+    assert web_admin.server._telegram_me_cache is not None
+    assert web_admin.server._telegram_me_cache["id"] == 222
+    assert web_admin.server._telegram_me_cache["username"] == "new_user"
+    client.get_me.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clear_login_session_removes_files_and_me_cache(
+    web_admin, tmp_path, monkeypatch
+):
+    session_file = tmp_path / "user_session.session"
+    session_file.write_text("dead-session", encoding="utf-8")
+    client = SimpleNamespace(
+        is_connected=MagicMock(return_value=True),
+    )
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=True),
+        is_authorized=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=True,
+        _init_client=MagicMock(),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 1, "username": "old"}
+    web_admin.server._login_data = {"phone": "+861000"}
+    web_admin.server._discard_login_attempt = AsyncMock()
+
+    async def run_inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    to_thread = AsyncMock(side_effect=run_inline)
+    monkeypatch.setattr(web_admin.module.asyncio, "to_thread", to_thread)
+
+    result = await web_admin.server.clear_login_session()
+
+    assert result["cleared"] is True
+    assert result["authorized"] is False
+    assert web_admin.server._telegram_me_cache is None
+    assert web_admin.server._login_data == {}
+    assert not session_file.exists()
+    assert wrapper._authorized is False
+    wrapper._init_client.assert_called_once()
+    web_admin.server._discard_login_attempt.assert_awaited()
+    to_thread.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_login_session_keeps_file_when_backup_fails(
+    web_admin, tmp_path, monkeypatch
+):
+    session_file = tmp_path / "user_session.session"
+    session_file.write_text("dead-session", encoding="utf-8")
+    client = SimpleNamespace(is_connected=MagicMock(return_value=False))
+    wrapper = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=client,
+        is_connected=MagicMock(return_value=False),
+        is_authorized=MagicMock(return_value=False),
+        disconnect=AsyncMock(),
+        _authorized=False,
+        _init_client=MagicMock(),
+    )
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 1}
+    web_admin.server._login_data = {"phone": "+861000"}
+    web_admin.server._discard_login_attempt = AsyncMock()
+
+    def boom_copy(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(web_admin.module.shutil, "copyfile", boom_copy)
+
+    result = await web_admin.server.clear_login_session()
+
+    assert result["cleared"] is True
+    assert result["backup_dir"] == ""
+    assert session_file.exists()
+    assert session_file.read_text(encoding="utf-8") == "dead-session"
+
+
+@pytest.mark.asyncio
+async def test_login_start_auto_clears_on_auth_key_duplicated(web_admin, tmp_path):
+    class AuthKeyDuplicatedError(Exception):
+        pass
+
+    good_client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+    )
+    bad_client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+    )
+    official = SimpleNamespace(
+        plugin_data_dir=str(tmp_path),
+        client=bad_client,
+        ensure_connected=AsyncMock(return_value=True),
+        send_login_code=AsyncMock(
+            side_effect=AuthKeyDuplicatedError(
+                "The authorization key (session file) was used under two different IP addresses simultaneously"
+            )
+        ),
+        _mark_authorized_if_needed=AsyncMock(),
+        is_authorized=MagicMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _authorized=False,
+        _init_client=MagicMock(),
+    )
+    temp_wrapper = SimpleNamespace(
+        client=good_client,
+        ensure_connected=AsyncMock(return_value=True),
+        send_login_code=AsyncMock(return_value="hash-ok"),
+        _mark_authorized_if_needed=AsyncMock(),
+        is_authorized=MagicMock(return_value=False),
+        is_connected=MagicMock(return_value=True),
+        disconnect=AsyncMock(),
+        _session_path=MagicMock(return_value=str(tmp_path / "web_login_tmp" / "user_session")),
+    )
+    web_admin.plugin.client_wrapper = official
+    web_admin.plugin.config["phone"] = ""
+    web_admin.server._ensure_wrapper_ready = AsyncMock(return_value=official)
+    web_admin.server._ensure_login_wrapper_ready = AsyncMock(return_value=temp_wrapper)
+    web_admin.server._discard_login_attempt = AsyncMock()
+    web_admin.server.clear_login_session = AsyncMock(
+        return_value={"cleared": True, "authorized": False, "message": "cleared"}
+    )
+
+    result = await web_admin.server.login_start({"phone": "+8613800138000"})
+
+    assert result["code_sent"] is True
+    assert result["authorized"] is False
+    web_admin.server.clear_login_session.assert_awaited()
+    temp_wrapper.send_login_code.assert_awaited_once_with("+8613800138000")
+    official.send_login_code.assert_awaited()
+    assert web_admin.server._login_data.get("replace_existing") is True

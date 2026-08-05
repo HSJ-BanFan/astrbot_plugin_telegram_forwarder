@@ -41,6 +41,31 @@ export function bindLiveSearchInput(input, onSearch) {
   });
 }
 
+/**
+ * 搜索词变体：首位是 @ 时同时保留带 @（QQ 群名）与去 @（TG 用户名/频道 ref）。
+ * 例：@wtmsd → ["@wtmsd", "wtmsd"]；普通词只返回自身。
+ */
+export function searchNeedleVariants(query) {
+  const raw = String(query || "").trim().toLowerCase();
+  if (!raw) return [];
+  if (raw.startsWith("@")) {
+    const bare = raw.slice(1).trim();
+    return bare ? [raw, bare] : [raw];
+  }
+  return [raw];
+}
+
+/** 任一字段命中任一 needle 即匹配（兼容 QQ @ 与 TG 无 @）。 */
+export function fieldsMatchSearch(fields, query) {
+  const needles = searchNeedleVariants(query);
+  if (!needles.length) return true;
+  return (Array.isArray(fields) ? fields : [fields]).some((field) => {
+    const hay = String(field ?? "").toLowerCase();
+    if (!hay) return false;
+    return needles.some((needle) => hay.includes(needle));
+  });
+}
+
 export function safeStorageGet(key, fallback = "") {
   try {
     return window.localStorage?.getItem(key) ?? fallback;

@@ -119,6 +119,29 @@ def make_commands(
 
 
 class TestPluginCommandsDebug:
+    def test_ai_filter_api_key_is_masked(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+        secret = "«redacted:sk-…»"
+
+        masked = commands.mask_sensitive(secret, "ai_filter_api_key")
+
+        assert masked == "[REDACTED]"
+        assert secret not in masked
+
+    def test_proxy_url_with_invalid_port_is_redacted(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+
+        masked = commands.mask_sensitive("http://proxy.example:bad", "proxy")
+
+        assert masked == "[REDACTED]"
+
+    def test_proxy_url_with_unclosed_ipv6_is_redacted(self):
+        commands = make_commands(qq_sender=FakeQQSender())
+
+        masked = commands.mask_sensitive("http://[::1", "proxy")
+
+        assert masked == "[REDACTED]"
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("action", [None, "", "  "])
     async def test_debug_without_action_returns_usage(self, action: str | None) -> None:
@@ -131,7 +154,9 @@ class TestPluginCommandsDebug:
         assert "/tg debug <on|off|status>" in results[0]
 
     @pytest.mark.asyncio
-    async def test_debug_returns_uninitialized_message_when_sender_missing(self) -> None:
+    async def test_debug_returns_uninitialized_message_when_sender_missing(
+        self,
+    ) -> None:
         commands = make_commands(qq_sender=None)
         event = make_event()
 
@@ -250,13 +275,105 @@ class TestPluginCommandsDebug:
         assert "True" in results[0]
 
     @pytest.mark.asyncio
+    async def test_get_root_masks_structured_proxy_credentials(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["proxy_config"] = {
+            "protocol": "socks5",
+            "host": "127.0.0.1",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret-password",
+        }
+        event = make_event()
+
+        results = []
+        async for result in commands.get_config(event, "root"):
+            results.append(result)
+
+        assert len(results) == 1
+        assert "proxy_config" in results[0]
+        assert "secret-password" not in results[0]
+        assert "admin" not in results[0]
+        assert "socks5://***@127.0.0.1:12311" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_proxy_never_echoes_credentials(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["proxy"] = "socks5://olduser:oldpass@10.0.0.1:1080"
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root proxy socks5://newuser:newpass@203.0.113.9:1080"
+        ):
+            results.append(result)
+
+        joined = "\n".join(results)
+        assert commands.config["proxy"] == "socks5://newuser:newpass@203.0.113.9:1080"
+        for leaked in ("olduser", "oldpass", "newuser", "newpass"):
+            assert leaked not in joined
+        assert "socks5://***@10.0.0.1:1080" in joined
+        assert "socks5://***@203.0.113.9:1080" in joined
+
+    @pytest.mark.asyncio
+    async def test_set_root_api_hash_is_masked(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["api_hash"] = "0123456789abcdef0123456789abcdef"
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+        new_hash = "fedcba9876543210fedcba9876543210"
+
+        results = []
+        async for result in commands.set_config(event, f"root api_hash {new_hash}"):
+            results.append(result)
+
+        joined = "\n".join(results)
+        assert commands.config["api_hash"] == new_hash
+        assert new_hash not in joined
+        assert "0123456789abcdef0123456789abcdef" not in joined
+        assert "已修改根配置 api_hash" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_unset_proxy_shows_placeholder_not_redacted(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config.pop("proxy", None)
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root proxy socks5://127.0.0.1:1080"
+        ):
+            results.append(result)
+
+        assert "旧值：<未设置>" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_set_root_non_sensitive_field_is_not_masked(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+
+        results = []
+        async for result in commands.set_config(
+            event, "root target_channel alpha,beta"
+        ):
+            results.append(result)
+
+        assert commands.config["target_channel"] == ["alpha", "beta"]
+        assert "alpha, beta" in results[0]
+
+    @pytest.mark.asyncio
     async def test_set_root_debug_enabled_default_updates_config(self) -> None:
         commands = make_commands(qq_sender=FakeQQSender())
         commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
         event = make_event()
 
         results = []
-        async for result in commands.set_config(event, "root debug_enabled_default true"):
+        async for result in commands.set_config(
+            event, "root debug_enabled_default true"
+        ):
             results.append(result)
 
         assert commands.config["debug_enabled_default"] is True
@@ -271,7 +388,9 @@ class TestPluginCommandsDebug:
         event = make_event()
 
         results = []
-        async for result in commands.set_config(event, "root debug_enabled_default maybe"):
+        async for result in commands.set_config(
+            event, "root debug_enabled_default maybe"
+        ):
             results.append(result)
 
         assert "❌ 值格式错误" in results[0]
@@ -280,6 +399,24 @@ class TestPluginCommandsDebug:
         assert "debug_enabled_default" not in commands.config
         commands.config.save_config.assert_not_called()
         commands.context._star_manager.reload.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_global_ai_key_never_echoes_secret(self) -> None:
+        commands = make_commands(qq_sender=FakeQQSender())
+        commands.config["forward_config"] = {}
+        commands.context._star_manager.reload = AsyncMock(return_value=(True, None))
+        event = make_event()
+        secret = "sk-private-content-filter-key"
+
+        results = []
+        async for result in commands.set_config(
+            event, f"global ai_filter_api_key {secret}"
+        ):
+            results.append(result)
+
+        assert commands.config["forward_config"]["ai_filter_api_key"] == secret
+        assert secret not in "\n".join(results)
+        assert "[REDACTED]" in results[0]
 
 
 class TestPluginCommandsClearQueue:
@@ -293,13 +430,13 @@ class TestPluginCommandsClearQueue:
             save=MagicMock(),
         )
         forwarder = SimpleNamespace(storage=storage)
-        commands = commands_module.PluginCommands(MagicMock(), FakeConfig({}), forwarder)
+        commands = commands_module.PluginCommands(
+            MagicMock(), FakeConfig({}), forwarder
+        )
         commands._find_channel_cfg = MagicMock(return_value={"display_name": "demo"})
         event = make_event()
 
         results = await collect_clear_queue(commands, event, "demo")
 
-        assert results == [
-            "❌ 频道 @demo 的配置缺少 channel_username，无法清空队列。"
-        ]
+        assert results == ["❌ 频道 @demo 的配置缺少 channel_username，无法清空队列。"]
         storage.get_channel_data.assert_not_called()

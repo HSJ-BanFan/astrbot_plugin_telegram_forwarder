@@ -28,6 +28,43 @@ build_frontend = _load_build_frontend()
 ASSET_VERSION = build_frontend.compute_version(build_frontend.generate_assets())
 
 
+def test_overview_forward_stats_panel_is_wired() -> None:
+    for root, asset_root in (
+        (ROOT / "web", WEB_ASSETS),
+        (PAGE_ROOT, PAGE_ASSETS),
+    ):
+        html = (root / "index.html").read_text(encoding="utf-8")
+        assert 'class="panel overview-stats-panel"' in html
+        assert "转发统计" in html
+        for element_id in (
+            "statsForwardSuccess",
+            "statsForwardFailed",
+            "statsAcked",
+            "statsDeferred",
+            "statsForwardAttempts",
+            "statsFailedKeep",
+            "statsLastReset",
+        ):
+            assert f'id="{element_id}"' in html
+        app_text = (asset_root / "app.js").read_text(encoding="utf-8")
+        overview_text = (asset_root / "js" / "ui_overview.js").read_text(encoding="utf-8")
+        assert '"statsForwardSuccess"' in app_text
+        assert "status.stats" in overview_text or "stats.forward_success" in overview_text
+        assert "stats.forward_success" in overview_text
+        assert "stats.acked_messages" in overview_text
+        assert "stats.deferred_messages" in overview_text
+        css_candidates = [
+            asset_root / "style.css",
+            asset_root / "css" / "components.css",
+        ]
+        css_blob = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in css_candidates
+            if path.is_file()
+        )
+        assert ".overview-stats-panel" in css_blob or ".stats-grid" in css_blob
+
+
 def test_dashboard_plugin_page_entry_exists() -> None:
     assert (PAGE_ROOT / "index.html").is_file()
     assert (PAGE_ROOT / "_page.json").is_file()
@@ -114,9 +151,11 @@ def test_dashboard_page_has_visible_bridge_failure_state() -> None:
 def test_dashboard_page_boot_uses_aggregate_page_api() -> None:
     context_text = (PAGE_ASSETS / "js" / "context.js").read_text(encoding="utf-8")
 
-    assert 'apiRequest("/api/dashboard")' in context_text
+    assert re.search(r'apiRequest\(\s*"/api/dashboard"', context_text)
     assert "dashboardPayload.status" in context_text
     assert "dashboardPayload.errors" in context_text
+    assert "loadAll({ force = false }" in context_text
+    assert "telegram.login_in_progress" in context_text
 
 
 def test_dashboard_page_uses_sandbox_safe_storage_helpers() -> None:
@@ -228,6 +267,37 @@ def test_topology_edges_align_with_node_cards_at_any_width() -> None:
         assert 'd="M 28' not in text
 
 
+def test_dashboard_get_requests_do_not_send_empty_object_bodies() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        api_text = (asset_root / "js" / "api.js").read_text(encoding="utf-8")
+        get_branch = re.search(
+            r'if \(method\.toUpperCase\(\) === "GET"\) \{(?P<body>.*?)\n\s*\}',
+            api_text,
+            re.S,
+        )
+        assert get_branch, f"{asset_root.relative_to(ROOT)} missing GET bridge branch"
+        assert "bridge.apiGet(endpoint, body);" in get_branch.group("body")
+        assert "body || {}" not in get_branch.group("body")
+
+        context_text = (asset_root / "js" / "context.js").read_text(encoding="utf-8")
+        assert "force ? { force: 1 } : null" in context_text
+        assert "force ? { force: 1 } : {}" not in context_text
+
+
+def test_dashboard_override_keeps_get_body_passthrough() -> None:
+    override_text = (
+        ROOT / "scripts" / "dashboard_overrides" / "assets" / "js" / "api.js"
+    ).read_text(encoding="utf-8")
+    get_branch = re.search(
+        r'if \(method\.toUpperCase\(\) === "GET"\) \{(?P<body>.*?)\n\s*\}',
+        override_text,
+        re.S,
+    )
+    assert get_branch
+    assert "bridge.apiGet(endpoint, body);" in get_branch.group("body")
+    assert "body || {}" not in get_branch.group("body")
+
+
 def test_generated_dashboard_artifacts_in_sync_with_web_source() -> None:
     """pages/dashboard/ 是生成产物：改了 web/ 或 overrides 后必须重跑构建脚本。"""
     mismatches = build_frontend.build(check=True)
@@ -335,6 +405,27 @@ def test_forward_config_exposes_file_direct_link_base_url() -> None:
         assert "普通文件直链基址" in text
 
 
+def test_forward_config_exposes_ai_and_qr_filter_controls() -> None:
+    required = (
+        '"ai_filter_enabled"',
+        '"ai_filter_base_url"',
+        '"ai_filter_api_key"',
+        'type: "password"',
+        '"ai_filter_model"',
+        '"ai_filter_prompt"',
+        '"qr_filter_enabled"',
+        '"qr_filter_mode"',
+        '"qr_risk_keywords"',
+    )
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        config_text = (asset_root / "js" / "config.js").read_text(encoding="utf-8")
+        ui_text = (asset_root / "js" / "ui_config.js").read_text(encoding="utf-8")
+        for marker in required:
+            assert marker in config_text
+        assert 'field.type === "password" ? "password"' in ui_text
+        assert 'field.type === "textarea"' in ui_text
+
+
 def test_status_polling_does_not_rerender_config_surfaces() -> None:
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
         text = (asset_root / "app.js").read_text(encoding="utf-8")
@@ -356,12 +447,83 @@ def test_raw_json_parse_failure_rejects_action() -> None:
 
 
 def test_dashboard_bridge_api_preserves_request_timeout() -> None:
-    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
-        text = (asset_root / "js" / "api.js").read_text(encoding="utf-8")
+    # Dashboard override (and generated pages/dashboard copy) uses effectiveTimeout.
+    page_text = (PAGE_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
+    assert "function withTimeout" in page_text
+    assert "Promise.race" in page_text
+    assert "bridgeRequest(path, method, body, effectiveTimeout)" in page_text
 
-        assert "function withTimeout" in text
-        assert "Promise.race" in text
-        assert "bridgeRequest(path, method, body, timeout)" in text
+    # Standalone web api keeps the plain timeout form.
+    web_text = (WEB_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
+    assert "function withTimeout" in web_text
+    assert "Promise.race" in web_text
+    assert "bridgeRequest(path, method, body, timeout)" in web_text
+
+
+def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> None:
+    for index_path in (ROOT / "web" / "index.html", PAGE_ROOT / "index.html"):
+        text = index_path.read_text(encoding="utf-8")
+        for element_id in (
+            "proxyConnectivityBtn",
+            "proxyConnectivityResult",
+            "proxyQualityBtn",
+            "proxyQualityResult",
+        ):
+            assert f'id="{element_id}"' in text
+
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        app_text = (asset_root / "app.js").read_text(encoding="utf-8")
+        login_text = (asset_root / "js" / "ui_login.js").read_text(encoding="utf-8")
+        assert '"proxyConnectivityBtn"' in app_text
+        assert '"proxyQualityBtn"' in app_text
+        assert 'apiRequest("/api/proxy/test", "POST"' in login_text
+        assert (
+            'resultElement.textContent = success ? `${result.latency_ms} ms` : "超时"'
+            in login_text
+        )
+        assert (
+            'resultElement.textContent = error.message || "超时"' in login_text
+        )
+        assert 'error.message.includes("填写")' not in login_text
+        assert 'button.addEventListener("click", async () =>' in login_text
+        assert "button.textContent = originalText" in login_text
+        assert 'button.dataset.proxyTestBound === "true"' in login_text
+        assert 'button.dataset.proxyTestBound = "true"' in login_text
+        proxy_handler = login_text.split("const runProxyTest =", 1)[1].split(
+            "runProxyTest(els.proxyConnectivityBtn", 1
+        )[0]
+        assert "withButtonLoading" not in proxy_handler
+        assert "loadAll" not in proxy_handler
+        assert "showToast" not in proxy_handler
+        assert 'dataset.loginBound !== "true"' in login_text
+        assert 'dataset.loginBound = "true"' in login_text
+        assert '["昵称"' in login_text or '["昵称",' in login_text
+        assert '["姓名"' not in login_text
+        assert "正在准备重新登录" in login_text
+        index_html = (
+            (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+            if asset_root == WEB_ASSETS
+            else (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+        )
+        assert 'id="clearSessionBtn"' in index_html
+        assert '"clearSessionBtn"' in app_text
+        assert 'apiRequest("/api/login/clear-session", "POST")' in login_text
+        assert "正在清空登录信息" in login_text
+        assert "window.confirm" in login_text
+        assert "确认清空本地 Telegram 登录信息" in login_text
+        assert "function loginRefreshMode" in login_text
+        assert 'result?.authorized ? "force" : "status"' in login_text
+        assert 'loadAll({ force: true })' in login_text
+        assert "refresh: loginRefreshMode" in login_text
+        utils_text = (asset_root / "js" / "utils.js").read_text(encoding="utf-8")
+        assert "function searchNeedleVariants" in utils_text
+        assert "function fieldsMatchSearch" in utils_text
+        selector_text = (asset_root / "js" / "ui_selector.js").read_text(encoding="utf-8")
+        assert "fieldsMatchSearch" in selector_text
+        topology_text = (asset_root / "js" / "ui_topology.js").read_text(encoding="utf-8")
+        assert "fieldsMatchSearch" in topology_text
+        context_text = (asset_root / "js" / "context.js").read_text(encoding="utf-8")
+        assert 'typeof options.refresh === "function"' in context_text
 
 
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
@@ -376,4 +538,6 @@ def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:
         assert 'button.dataset.runtimeActionBound === "true"' in text
         assert 'button.dataset.runtimeActionBound = "true"' in text
         assert 'apiRequest("/api/runtime/check", "POST")' in text
-        assert 'apiRequest("/api/runtime/clear-queue", "POST", { target: "all" })' in text
+        assert (
+            'apiRequest("/api/runtime/clear-queue", "POST", { target: "all" })' in text
+        )

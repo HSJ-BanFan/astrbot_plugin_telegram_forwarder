@@ -39,11 +39,45 @@
         ],
         "hint": "上传 .session 文件以直接登录，避免验证码或人机验证问题，你可以使用本地脚本生成此文件后上传"
     },
-    "proxy": {
-        "description": "代理地址",
-        "type": "string",
-        "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
-        "default": ""
+    "proxy_config": {
+        "description": "代理配置",
+        "type": "object",
+        "hint": "协议、主机、端口与可选认证信息",
+        "items": {
+            "protocol": {
+                "description": "协议",
+                "type": "string",
+                "options": ["http", "socks4", "socks5"],
+                "default": "socks5"
+            },
+            "host": {
+                "description": "IP / 域名",
+                "type": "string",
+                "default": ""
+            },
+            "port": {
+                "description": "端口",
+                "type": "int",
+                "default": 0
+            },
+            "username": {
+                "description": "账号",
+                "type": "string",
+                "default": ""
+            },
+            "password": {
+                "description": "密码",
+                "type": "string",
+                "default": ""
+            }
+        },
+        "default": {
+            "protocol": "socks5",
+            "host": "",
+            "port": 0,
+            "username": "",
+            "password": ""
+        }
     },
     "web_config": {
         "type": "object",
@@ -260,6 +294,18 @@
                 "default": "独立频道",
                 "hint": "『独立频道』：每个频道独立判断是否合并（推荐）；『混合所有频道』：所有频道消息总数达标才合并成一条超大转发；『关闭』强制不使用大合并"
             },
+            "qq_big_merge_max_attempts": {
+                "description": "QQ 大合并重试次数",
+                "type": "int",
+                "default": 2,
+                "hint": "大合并因 NapCat res_id/retcode=1200 失败时的最大尝试次数（含首次）。1=不重试直接降级；推荐 2~3。仅对可重试错误生效"
+            },
+            "qq_big_merge_retry_delay": {
+                "description": "QQ 大合并重试间隔（秒）",
+                "type": "float",
+                "default": 2,
+                "hint": "两次大合并尝试之间的等待秒数。瞬时协议抖动时可给 QQ 端喘息；0 表示立即重试"
+            },
             "use_channel_title": {
                 "type": "bool",
                 "default": true,
@@ -450,8 +496,96 @@
             "filter_regex": {
                 "type": "string",
                 "description": "正则过滤",
+                "default": "#\\s*NSFW\\b|(?:NSFW|前方高能)\\s*提前预警",
+                "hint": "Python 正则表达式过滤。默认示例过滤 NSFW 标签和预警文字；与消息合并规则配合时，命中组内任一消息会丢弃整组。"
+            },
+            "ai_filter_enabled": {
+                "type": "bool",
+                "description": "AI 内容过滤",
+                "default": false,
+                "hint": "发送前使用 OpenAI 兼容视觉模型判断文字和图片；接口异常时默认放行"
+            },
+            "ai_filter_base_url": {
+                "type": "string",
+                "description": "AI Base URL",
                 "default": "",
-                "hint": "Python 正则表达式过滤。留空则不启用。"
+                "hint": "OpenAI 兼容接口基址，例如 https://api.openai.com/v1"
+            },
+            "ai_filter_allow_private_endpoint": {
+                "type": "bool",
+                "description": "允许本地/私网 AI 端点",
+                "default": false,
+                "hint": "仅在使用 Ollama、vLLM 等受信任的本地模型时开启；默认拒绝 IP 地址端点以避免配置被篡改后探测内网"
+            },
+            "ai_filter_api_key": {
+                "type": "string",
+                "description": "AI API Key",
+                "default": "",
+                "hint": "仅用于调用内容过滤模型，请勿在日志或截图中泄露"
+            },
+            "ai_filter_model": {
+                "type": "string",
+                "description": "AI 模型名",
+                "default": "",
+                "hint": "需支持图片输入，例如兼容 OpenAI Vision 的模型"
+            },
+            "ai_filter_prompt": {
+                "type": "string",
+                "description": "AI 过滤提示词",
+                "default": "判断消息文字和图片是否应该过滤。重点过滤：\n1. NSFW、色情、裸露或明显性暗示内容；\n2. 二维码推广，尤其是网贷、借款、博彩、色情、诈骗类二维码；\n3. 诱导扫码、贷款秒到账、虚假金融推广等风险信息。\n正常新闻、普通聊天、技术文档和无风险二维码不要过滤。",
+                "hint": "代码会无条件追加固定 JSON 输出约束，无需在自定义提示词中重复填写"
+            },
+            "ai_filter_timeout": {
+                "type": "int",
+                "description": "AI 过滤超时 (秒)",
+                "default": 20,
+                "hint": "超时或接口失败时放行消息；有效范围 1~60 秒"
+            },
+            "ai_filter_max_calls_per_cycle": {
+                "type": "int",
+                "description": "单轮 AI 分析上限",
+                "default": 5,
+                "hint": "每轮发送最多调用 AI 的消息数；超出后仍执行本地二维码过滤，但跳过 AI 以保护调度延迟"
+            },
+            "qr_filter_enabled": {
+                "type": "bool",
+                "description": "本地二维码过滤",
+                "default": false,
+                "hint": "使用本地 zxing-cpp 检测图片二维码，优先于 AI 执行"
+            },
+            "qr_filter_mode": {
+                "type": "string",
+                "description": "二维码过滤模式",
+                "options": [
+                    "风险二维码",
+                    "全部二维码"
+                ],
+                "default": "风险二维码",
+                "hint": "风险模式仅过滤二维码内容命中风险词的消息；全部模式检测到二维码即过滤"
+            },
+            "qr_risk_keywords": {
+                "type": "list",
+                "item_type": "string",
+                "description": "二维码风险词",
+                "default": [
+                    "loan",
+                    "借款",
+                    "贷款",
+                    "网贷",
+                    "秒到账",
+                    "博彩",
+                    "赌博",
+                    "色情",
+                    "约炮",
+                    "裸聊"
+                ],
+                "hint": "风险模式对二维码解码文本和 URL 执行不区分大小写的包含匹配"
+            },
+            "content_filter_max_image_mb": {
+                "type": "int",
+                "description": "内容过滤图片上限 (MB)",
+                "default": 5,
+                "hint": "超过上限时不上传图片给 AI，也不执行本地二维码识别，但仍检查文字"
             },
             "monitor_keywords": {
                 "type": "list",
@@ -547,6 +681,18 @@
                 "rule_class": "SomeACGPreviewPlusOriginal",
                 "params": {
                     "time_window_seconds": 10
+                }
+            },
+            {
+                "__template_key": "default",
+                "name": "心惊报 NSFW 预警关联下一条",
+                "channel": "xinjingdaily",
+                "rule_class": "KeywordNextNMerge",
+                "params": {
+                    "trigger_keywords": [],
+                    "trigger_regex": "(?:NSFW|前方高能)\\s*提前预警",
+                    "next_count": 1,
+                    "time_window_seconds": 15
                 }
             }
         ],

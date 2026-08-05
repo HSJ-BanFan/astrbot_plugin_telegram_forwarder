@@ -46,6 +46,14 @@ function cacheElements() {
     "schedulerStatus",
     "channelCount",
     "queueCount",
+    "statsForwardSuccess",
+    "statsForwardFailed",
+    "statsAcked",
+    "statsDeferred",
+    "statsForwardAttempts",
+    "statsFailedKeep",
+    "statsLastReset",
+    "statsResetHint",
     "queueList",
     "runtimeMessage",
     "runtimeState",
@@ -60,7 +68,15 @@ function cacheElements() {
     "apiIdInput",
     "apiHashInput",
     "phoneInput",
-    "proxyInput",
+    "proxyProtocolInput",
+    "proxyHostInput",
+    "proxyPortInput",
+    "proxyUsernameInput",
+    "proxyPasswordInput",
+    "proxyConnectivityBtn",
+    "proxyConnectivityResult",
+    "proxyQualityBtn",
+    "proxyQualityResult",
     "codeInput",
     "passwordInput",
     "sendCodeBtn",
@@ -90,6 +106,7 @@ function cacheElements() {
     "configImportFile",
     "exportSessionBtn",
     "importSessionBtn",
+    "clearSessionBtn",
     "sessionImportFile",
     "rawConfigInput",
     "saveRawBtn",
@@ -263,7 +280,9 @@ export function closeSidebar() {
 
 function bindMainEvents() {
   if (els.refreshBtn) {
-    els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
+    els.refreshBtn.addEventListener("click", () =>
+      withAction(() => loadAll({ force: true }), "已强制刷新缓存。", { refresh: false })
+    );
   }
   if (els.saveBtn) {
     els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));

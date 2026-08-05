@@ -7,6 +7,26 @@ import { renderQQTargetSelector, renderTGChannelSelector, splitList, joinList } 
 import { escapeHtml, motionEnabled } from './utils.js';
 
 const DEFAULT_WEB_CONFIG = { enabled: true, host: "127.0.0.1", port: 8180, token: "" };
+const DEFAULT_PROXY_CONFIG = { protocol: "socks5", host: "", port: 0, username: "", password: "" };
+
+function proxyConfigFromState(cfg) {
+  if (cfg.proxy_config && typeof cfg.proxy_config === "object") {
+    return { ...DEFAULT_PROXY_CONFIG, ...cfg.proxy_config };
+  }
+  if (!cfg.proxy) return { ...DEFAULT_PROXY_CONFIG };
+  try {
+    const parsed = new URL(cfg.proxy);
+    return {
+      protocol: parsed.protocol.replace(":", "").toLowerCase() || "socks5",
+      host: parsed.hostname || "",
+      port: Number.parseInt(parsed.port, 10) || 0,
+      username: decodeURIComponent(parsed.username || ""),
+      password: decodeURIComponent(parsed.password || ""),
+    };
+  } catch {
+    return { ...DEFAULT_PROXY_CONFIG };
+  }
+}
 
 export function intValue(id, fallback = 0) {
   const parsed = Number.parseInt(els[id]?.value, 10);
@@ -71,7 +91,12 @@ export function renderRootConfig() {
   if (els.apiIdInput) els.apiIdInput.value = cfg.api_id || "";
   if (els.apiHashInput) els.apiHashInput.value = cfg.api_hash || "";
   if (els.phoneInput) els.phoneInput.value = cfg.phone || "";
-  if (els.proxyInput) els.proxyInput.value = cfg.proxy || "";
+  const proxy = proxyConfigFromState(cfg);
+  if (els.proxyProtocolInput) els.proxyProtocolInput.value = proxy.protocol;
+  if (els.proxyHostInput) els.proxyHostInput.value = proxy.host;
+  if (els.proxyPortInput) els.proxyPortInput.value = proxy.port || "";
+  if (els.proxyUsernameInput) els.proxyUsernameInput.value = proxy.username;
+  if (els.proxyPasswordInput) els.proxyPasswordInput.value = proxy.password;
   if (els.targetChannelInput) els.targetChannelInput.value = cfg.target_channel || "";
   if (els.targetQQInput) els.targetQQInput.value = joinList(cfg.target_qq_session || []);
 
@@ -235,7 +260,15 @@ function renderField(field, value, attrName) {
       </div>
     `;
   }
-  const inputType = field.type === "int" || field.type === "float" ? "number" : "text";
+  if (field.type === "textarea") {
+    return `
+      <div class="settings-card wide">
+        <h3>${escapeHtml(field.label)}</h3>
+        <textarea ${attr} rows="8">${escapeHtml(value ?? "")}</textarea>
+      </div>
+    `;
+  }
+  const inputType = field.type === "int" || field.type === "float" ? "number" : field.type === "password" ? "password" : "text";
   const step = field.type === "float" ? ' step="0.1"' : "";
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : "";
   return `
@@ -279,7 +312,13 @@ export function collectRootConfig() {
   store.state.config.api_id = intValue("apiIdInput", 0);
   store.state.config.api_hash = els.apiHashInput?.value.trim() || "";
   store.state.config.phone = els.phoneInput?.value.trim() || "";
-  store.state.config.proxy = els.proxyInput?.value.trim() || "";
+  store.state.config.proxy_config = {
+    protocol: els.proxyProtocolInput?.value || DEFAULT_PROXY_CONFIG.protocol,
+    host: els.proxyHostInput?.value.trim() || "",
+    port: intValue("proxyPortInput", 0),
+    username: els.proxyUsernameInput?.value.trim() || "",
+    password: els.proxyPasswordInput?.value || "",
+  };
   store.state.config.target_channel = els.targetChannelInput?.value.trim() || "";
   store.state.config.target_qq_session = splitList(els.targetQQInput?.value || "");
   store.state.config.debug_enabled_default = els.debugDefaultInput ? els.debugDefaultInput.checked : false;
@@ -310,7 +349,7 @@ export function collectForwardConfig() {
       const parsed = Number.parseFloat(el.value);
       cfg[field.key] = Number.isFinite(parsed) ? parsed : field.defaultValue;
     } else {
-      cfg[field.key] = el.value.trim();
+      cfg[field.key] = field.type === "password" ? el.value : el.value.trim();
     }
   });
   store.state.config.forward_config = cfg;

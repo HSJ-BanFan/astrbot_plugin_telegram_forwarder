@@ -50,6 +50,7 @@ function applyDashboardPayload(dashboardPayload) {
     qqGroupsMessage: qqGroups.message || "",
     tgChannels: Array.isArray(tgChannels.channels) ? tgChannels.channels : [],
     tgChannelsAvailable: Boolean(tgChannels.available),
+    tgChannelsPartial: Boolean(tgChannels.partial),
     tgChannelsMessage: tgChannels.message || "",
   });
   const errors = dashboardPayload.errors || {};
@@ -61,7 +62,12 @@ function applyDashboardPayload(dashboardPayload) {
 
 export async function loadQQGroups({ force = false } = {}) {
   try {
-    const data = await apiRequest(force ? "/api/qq/groups/refresh" : "/api/qq/groups", force ? "POST" : "GET");
+    const data = await apiRequest(
+      force ? "/api/qq/groups/refresh" : "/api/qq/groups",
+      force ? "POST" : "GET",
+      null,
+      force ? 130000 : 30000
+    );
     store.updateState({
       qqGroups: Array.isArray(data.groups) ? data.groups : [],
       qqGroupsAvailable: Boolean(data.available),
@@ -80,10 +86,16 @@ export async function loadQQGroups({ force = false } = {}) {
 
 export async function loadTGChannels({ force = false } = {}) {
   try {
-    const data = await apiRequest(force ? "/api/tg/channels/refresh" : "/api/tg/channels", force ? "POST" : "GET");
+    const data = await apiRequest(
+      force ? "/api/tg/channels/refresh" : "/api/tg/channels",
+      force ? "POST" : "GET",
+      null,
+      force ? 130000 : 30000
+    );
     store.updateState({
       tgChannels: Array.isArray(data.channels) ? data.channels : [],
       tgChannelsAvailable: Boolean(data.available),
+      tgChannelsPartial: Boolean(data.partial),
       tgChannelsMessage: data.message || "",
     });
     return data;
@@ -91,15 +103,21 @@ export async function loadTGChannels({ force = false } = {}) {
     store.updateState({
       tgChannels: [],
       tgChannelsAvailable: false,
+      tgChannelsPartial: false,
       tgChannelsMessage: error.message,
     });
     return { channels: [], available: false, message: error.message };
   }
 }
 
-export async function loadAll() {
+export async function loadAll({ force = false } = {}) {
   if (isDashboardPage()) {
-    const dashboardPayload = await apiRequest("/api/dashboard");
+    const dashboardPayload = await apiRequest(
+      "/api/dashboard",
+      "GET",
+      force ? { force: 1 } : null,
+      force ? 130000 : 45000
+    );
     applyDashboardPayload(dashboardPayload);
     syncRuntimeStatusRefresh();
     if (renderAllCallback) renderAllCallback();
@@ -109,8 +127,8 @@ export async function loadAll() {
   const [status, configData] = await Promise.all([
     apiRequest("/api/status"),
     apiRequest("/api/config"),
-    loadQQGroups(),
-    loadTGChannels(),
+    loadQQGroups({ force }),
+    loadTGChannels({ force }),
   ]);
   store.updateState({
     status: status,
@@ -133,10 +151,14 @@ export async function loadStatusOnly() {
 }
 
 export function runtimeNeedsStatusRefresh() {
-  const runtime = store.state.status?.runtime || {};
+  const status = store.state.status || {};
+  const runtime = status.runtime || {};
+  const telegram = status.telegram || {};
   const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
+  // 登录流程需要自动刷新；业务 busy 也需要。其它页面不定时刷。
   return Boolean(
-    runtime.active_web_operations ||
+    telegram.login_in_progress ||
+      runtime.active_web_operations ||
       runtime.capture_busy ||
       runtime.send_busy ||
       runtime.global_send_busy ||
@@ -190,26 +212,46 @@ export async function saveConfig({ quiet = false } = {}) {
 }
 
 export async function withAction(action, doneMessage, options = {}) {
+  let result;
   try {
-    const result = await action();
-    const refresh = options.refresh ?? "all";
+    result = await action();
+  } catch (error) {
+    showToast(error.message);
+    return null;
+  }
+
+  // action 已经成功落库/生效了，之后的刷新失败只影响页面数据新鲜度。
+  // 不能和 action 共用一个 try，否则会把成功的操作报成失败。
+  let refreshError = null;
+  try {
+    // refresh 可为函数：登录成功后按 authorized 决定是否 force 拉频道/群列表。
+    const refresh =
+      typeof options.refresh === "function"
+        ? options.refresh(result)
+        : (options.refresh ?? "all");
     if (refresh === "status") {
       await loadStatusOnly();
+    } else if (refresh === "force") {
+      await loadAll({ force: true });
     } else if (refresh !== false && refresh !== "none") {
       await loadAll();
     }
-    showToast(result?.message || doneMessage);
   } catch (error) {
-    showToast(error.message);
+    refreshError = error;
+    console.warn("Post-action refresh failed:", error);
   }
+
+  const doneText = result?.message || doneMessage;
+  showToast(refreshError ? `${doneText}（页面刷新失败：${refreshError.message}）` : doneText);
+  return result;
 }
 
-export async function withButtonLoading(button, label, action, doneMessage) {
+export async function withButtonLoading(button, label, action, doneMessage, options = {}) {
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = label;
   try {
-    return await withAction(action, doneMessage);
+    return await withAction(action, doneMessage, options);
   } finally {
     button.disabled = false;
     button.textContent = originalText;

@@ -15,6 +15,7 @@ export const store = {
     qqGroupsMessage: "",
     tgChannels: [],
     tgChannelsAvailable: false,
+    tgChannelsPartial: false,
     tgChannelsMessage: "",
   },
   listeners: [],

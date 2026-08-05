@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
 
 
@@ -528,6 +530,7 @@ def test_main_registers_dashboard_page_web_apis():
         ]
         assert f"/{PLUGIN_NAME}/status" in registered_routes
         assert f"/{PLUGIN_NAME}/config" in registered_routes
+        assert f"/{PLUGIN_NAME}/proxy/test" in registered_routes
         assert f"/{PLUGIN_NAME}/login/start" in registered_routes
         assert f"/{PLUGIN_NAME}/runtime/check" in registered_routes
         assert all(route.startswith(f"/{PLUGIN_NAME}/") for route in registered_routes)
@@ -747,6 +750,21 @@ def test_parse_proxy_url_without_credentials_keeps_short_tuple():
     assert proxy == (2, "example.com", 12311)
 
 
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "ftp://example.com:1080",
+        "http+unix://example.com:1080",
+        "socks6://example.com:1080",
+    ],
+)
+def test_parse_proxy_url_rejects_unknown_protocol(proxy_url):
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="代理协议"):
+        client_module.TelegramClientWrapper._parse_proxy_url(proxy_url)
+
+
 def test_parse_proxy_url_supports_socks4():
     client_module = load_client_module()
 
@@ -765,6 +783,151 @@ def test_parse_proxy_url_supports_socks4_userid():
     )
 
     assert proxy == (3, "example.com", 12311, True, "legacy")
+
+
+def test_parse_structured_socks5_proxy_with_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret",
+        }
+    )
+
+    assert proxy == (2, "proxy.example.com", 12311, True, "admin", "secret")
+
+
+def test_parse_structured_proxy_preserves_credential_whitespace():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "proxy.example.com",
+            "port": 12311,
+            "username": " user ",
+            "password": " secret ",
+        }
+    )
+
+    assert proxy == (
+        2,
+        "proxy.example.com",
+        12311,
+        True,
+        " user ",
+        " secret ",
+    )
+
+
+def test_parse_structured_http_proxy_without_credentials():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "http",
+            "host": "127.0.0.1",
+            "port": "7890",
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert proxy == (1, "127.0.0.1", 7890)
+
+
+def test_parse_empty_structured_proxy_returns_none():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "",
+            "port": 0,
+            "username": "",
+            "password": "",
+        }
+    )
+
+    assert proxy is None
+
+
+def test_parse_structured_proxy_requires_paired_credentials():
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="用户名和密码必须同时填写"):
+        client_module.TelegramClientWrapper._parse_proxy_config(
+            {
+                "protocol": "socks5",
+                "host": "127.0.0.1",
+                "port": 12311,
+                "username": "admin",
+                "password": "",
+            }
+        )
+
+
+def test_parse_structured_socks4_rejects_password():
+    client_module = load_client_module()
+
+    with pytest.raises(ValueError, match="socks4 不支持密码"):
+        client_module.TelegramClientWrapper._parse_proxy_config(
+            {
+                "protocol": "socks4",
+                "host": "proxy.example.com",
+                "port": 1080,
+                "username": "user",
+                "password": "secret",
+            }
+        )
+
+
+def test_redact_structured_proxy_hides_credentials():
+    client_module = load_client_module()
+
+    redacted = client_module.TelegramClientWrapper._redact_proxy_config(
+        {
+            "protocol": "socks5",
+            "host": "127.0.0.1",
+            "port": 12311,
+            "username": "admin",
+            "password": "secret",
+        }
+    )
+
+    assert redacted == "socks5://***@127.0.0.1:12311"
+    assert "admin" not in redacted
+    assert "secret" not in redacted
+
+
+def test_invalid_structured_proxy_does_not_fall_back_to_direct_connection():
+    telegram_client = MagicMock()
+    client_module = load_client_module(client_factory=telegram_client)
+    tmp_dir = make_test_dir()
+    try:
+        wrapper = client_module.TelegramClientWrapper(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "proxy_config": {
+                    "protocol": "socks5",
+                    "host": "127.0.0.1",
+                    "port": 12311,
+                    "username": "admin",
+                    "password": "",
+                },
+            },
+            tmp_dir,
+        )
+
+        assert wrapper.client is None
+        telegram_client.assert_not_called()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():
@@ -889,6 +1052,6 @@ def test_start_routes_connection_through_ensure_connected():
 
     wrapper.ensure_connected.assert_awaited_once_with()
     client.connect.assert_not_awaited()
-    client.get_dialogs.assert_awaited_once_with(limit=None)
+    client.get_dialogs.assert_awaited_once_with(limit=20)
     assert wrapper._authorized is True
     auth_cache.clear()

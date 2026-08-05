@@ -6,14 +6,20 @@ import hmac
 import os
 import secrets
 import shutil
+import socket
 import sqlite3
+import ssl
 import tempfile
 import threading
+import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote, unquote, urlparse
 
+import socks
+from astrbot.api import logger
 from telethon.errors import (
     FloodWaitError,
     PhoneCodeExpiredError,
@@ -21,8 +27,6 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 from telethon.sessions import StringSession
-
-from astrbot.api import logger
 
 from .client import TelegramClientWrapper
 from .qq_group_cache import QQGroupCache
@@ -37,6 +41,8 @@ DEFAULT_WEB_CONFIG = {
     "token": "",
 }
 WEAK_DEFAULT_WEB_TOKENS = {"123456"}
+AI_KEY_PLACEHOLDER = "[REDACTED]"
+PROXY_PASSWORD_PLACEHOLDER = "[REDACTED]"
 SILENT_OK_WEB_PATHS = {"/api/status"}
 SILENT_OK_WEB_PREFIXES = ("/assets/",)
 WEB_REQUEST_LABELS = {
@@ -127,6 +133,7 @@ class WebAdminServer:
         self.loop = loop
         self._login_data: dict[str, Any] = {}
         self._login_wrapper: TelegramClientWrapper | None = None
+        self._telegram_me_cache: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
         self._http_server = None
         self._runtime_operations: list[dict[str, Any]] = []
@@ -335,28 +342,34 @@ class WebAdminServer:
         @app.get("/api/qq/groups")
         @require_auth
         def api_qq_groups():
-            return run_api(self.list_qq_groups())
+            return run_api(self.list_qq_groups(), timeout=130.0)
 
         @app.post("/api/qq/groups/refresh")
         @require_auth
         def api_qq_groups_refresh():
-            return run_api(self.list_qq_groups(force=True))
+            return run_api(self.list_qq_groups(force=True), timeout=130.0)
 
         @app.get("/api/tg/channels")
         @require_auth
         def api_tg_channels():
-            return run_api(self.list_tg_channels())
+            return run_api(self.list_tg_channels(), timeout=130.0)
 
         @app.post("/api/tg/channels/refresh")
         @require_auth
         def api_tg_channels_refresh():
-            return run_api(self.list_tg_channels(force=True))
+            return run_api(self.list_tg_channels(force=True), timeout=130.0)
 
         @app.post("/api/config")
         @require_auth
         def api_save_config():
             payload = request.get_json(silent=True) or {}
             return run_api(self.save_config(payload), timeout=60.0)
+
+        @app.post("/api/proxy/test")
+        @require_auth
+        def api_proxy_test():
+            payload = request.get_json(silent=True) or {}
+            return run_api(self.test_proxy(payload), timeout=15.0)
 
         @app.get("/api/export/config")
         @require_auth
@@ -379,6 +392,11 @@ class WebAdminServer:
         def api_import_session():
             payload = request.get_json(silent=True) or {}
             return run_api(self.import_session(payload), timeout=60.0)
+
+        @app.post("/api/login/clear-session")
+        @require_auth
+        def api_clear_login_session():
+            return run_api(self.clear_login_session(), timeout=60.0)
 
         @app.get("/api/login/status")
         @require_auth
@@ -459,6 +477,7 @@ class WebAdminServer:
                     self.host,
                     self.port,
                     self.app,
+                    threaded=True,
                     request_handler=self._request_handler_cls,
                 )
                 logger.info(
@@ -712,9 +731,16 @@ class WebAdminServer:
         self.plugin.config.save_config()
         official_wrapper.client = None
         official_wrapper._authorized = False
+        # 替换正式会话后清空旧 me 缓存，避免 status 显示上一个账号。
+        self._telegram_me_cache = None
+        try:
+            self.tg_channel_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate tg cache before install activate failed: {exc}")
         official_wrapper._init_client()
         await official_wrapper.ensure_connected()
         await official_wrapper._mark_authorized_if_needed()
+        await self._refresh_telegram_me()
         await self.plugin.activate_runtime_after_authorized(startup_grace=0)
         await self._discard_login_attempt(remove_files=True)
 
@@ -732,8 +758,68 @@ class WebAdminServer:
         wrapper._authorized = False
         wrapper._init_client()
 
+    def _cached_login_status(self) -> dict[str, Any]:
+        wrapper = self.plugin.client_wrapper
+        authorized = bool(wrapper and wrapper.is_authorized())
+        me = self._telegram_me_cache if authorized else None
+        if not authorized:
+            self._telegram_me_cache = None
+        return {
+            "connected": bool(wrapper and wrapper.is_connected()),
+            "authorized": authorized,
+            "login_in_progress": bool(self._login_data),
+            "need_password": bool(self._login_data.get("need_password")),
+            "replace_existing": bool(self._login_data.get("replace_existing")),
+            "code_sent": bool(self._login_data.get("phone_code_hash")),
+            "phone": self._login_data.get("phone")
+            or self.plugin.config.get("phone", ""),
+            "created_at": self._login_data.get("created_at"),
+            "me": me,
+        }
+
+    async def _refresh_telegram_me(self, timeout: float = 5.0) -> dict[str, Any] | None:
+        """登录成功后刷新一次账号资料，供 /api/status 无 RPC 轮询复用。"""
+        wrapper = self.plugin.client_wrapper
+        client = getattr(wrapper, "client", None) if wrapper else None
+        if not wrapper or not client:
+            self._telegram_me_cache = None
+            return None
+
+        async def _load() -> dict[str, Any] | None:
+            if not wrapper.is_connected():
+                connected = await wrapper.ensure_connected()
+                if not connected:
+                    return self._telegram_me_cache
+            authorized = bool(await client.is_user_authorized())
+            if not authorized:
+                self._telegram_me_cache = None
+                wrapper._authorized = False
+                return None
+            wrapper._authorized = True
+            me = await client.get_me()
+            profile = {
+                "id": getattr(me, "id", None),
+                "username": getattr(me, "username", None),
+                "first_name": getattr(me, "first_name", None),
+                "last_name": getattr(me, "last_name", None),
+                "phone": getattr(me, "phone", None),
+            }
+            self._telegram_me_cache = profile
+            return profile
+
+        try:
+            return await asyncio.wait_for(_load(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("[WebAdmin] refresh telegram me timed out")
+            return self._telegram_me_cache
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] refresh telegram me failed: {exc}")
+            return self._telegram_me_cache
+
     async def get_status(self) -> dict[str, Any]:
-        login_status = await self.get_login_status()
+        login_status = self._cached_login_status()
+        # 状态轮询只读内存缓存，避免 Dashboard 定时请求持续占用 Telegram RPC。
+        # 登录、导入 session、启动预热和后台刷新负责更新该缓存。
         forwarder = self.plugin.forwarder
         all_pending = forwarder.storage.get_all_pending()
         queue_by_channel: dict[str, int] = {}
@@ -836,8 +922,214 @@ class WebAdminServer:
 
     async def get_config(self) -> dict[str, Any]:
         config = self._to_plain(dict(self.plugin.config))
+        forward_config = config.get("forward_config")
+        if isinstance(forward_config, dict) and forward_config.get("ai_filter_api_key"):
+            forward_config["ai_filter_api_key"] = AI_KEY_PLACEHOLDER
+        proxy_config = self.normalize_proxy_config(
+            config.get("proxy_config"), config.get("proxy", "")
+        )
+        public_proxy_config = dict(proxy_config)
+        if public_proxy_config.get("password"):
+            public_proxy_config["password"] = PROXY_PASSWORD_PLACEHOLDER
+        config["proxy_config"] = public_proxy_config
+        # 旧版 proxy URL 仍供兼容读取，但 Web 响应不得重复暴露其中的认证信息。
+        config["proxy"] = self.proxy_config_to_url(
+            {**proxy_config, "username": "", "password": ""}
+        )
         config["web_config"] = self.normalize_web_config(config.get("web_config", {}))
         return {"config": config}
+
+    @staticmethod
+    def normalize_proxy_config(value: Any, legacy_proxy: Any = "") -> dict[str, Any]:
+        if isinstance(value, dict):
+            raw = value
+        else:
+            raw = {}
+
+        protocol = str(raw.get("protocol") or "").strip().lower()
+        host = str(raw.get("host") or "").strip()
+        username = str(raw.get("username") or "")
+        password = str(raw.get("password") or "")
+        port_value = raw.get("port")
+
+        has_structured_proxy = any((host, port_value, username, password))
+        if not has_structured_proxy and legacy_proxy:
+            try:
+                parsed = urlparse(str(legacy_proxy).strip())
+                # urlparse 对非法端口 / 残缺 IPv6 可能在访问 .port 时抛 ValueError
+                _ = parsed.port
+            except ValueError as exc:
+                raise WebAdminError("代理 URL 格式无效。") from exc
+            legacy_protocol = parsed.scheme.lower()
+            if legacy_protocol in {"http", "https"}:
+                protocol = "http"
+            elif legacy_protocol in {"socks4", "socks4a"}:
+                protocol = "socks4"
+            elif legacy_protocol in {"socks5", "socks5h"}:
+                protocol = "socks5"
+            else:
+                raise WebAdminError(
+                    "代理协议必须是 http、https、socks4(a) 或 socks5(h)。"
+                )
+            host = parsed.hostname or ""
+            port_value = parsed.port
+            username = unquote(parsed.username) if parsed.username else ""
+            password = unquote(parsed.password) if parsed.password else ""
+
+        if not any((host, port_value, username, password)):
+            return {
+                "protocol": "socks5",
+                "host": "",
+                "port": 0,
+                "username": "",
+                "password": "",
+            }
+        if protocol not in {"http", "socks4", "socks5"}:
+            raise WebAdminError("代理协议必须是 http、socks4 或 socks5。")
+        if not host:
+            raise WebAdminError("代理主机不能为空。")
+        try:
+            port = int(port_value or 0)
+        except (TypeError, ValueError) as exc:
+            raise WebAdminError("代理端口必须是数字。") from exc
+        if not 1 <= port <= 65535:
+            raise WebAdminError("代理端口必须在 1 到 65535 之间。")
+        if protocol == "socks4":
+            if password:
+                raise WebAdminError("socks4 不支持密码，请仅填写用户名或改用 socks5。")
+        elif bool(username) != bool(password):
+            raise WebAdminError("代理用户名和密码必须同时填写。")
+        if password and not username:
+            raise WebAdminError("代理密码不能在账号为空时单独填写。")
+        return {
+            "protocol": protocol,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+        }
+
+    @staticmethod
+    def proxy_config_to_url(proxy_config: dict[str, Any]) -> str:
+        host = str(proxy_config.get("host") or "")
+        if not host:
+            return ""
+        auth = ""
+        username = str(proxy_config.get("username") or "")
+        password = str(proxy_config.get("password") or "")
+        if username:
+            auth = quote(username, safe="")
+            if password:
+                auth += f":{quote(password, safe='')}"
+            auth += "@"
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{proxy_config['protocol']}://{auth}{url_host}:{proxy_config['port']}"
+
+    def _restore_proxy_password_placeholder(self, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        restored = dict(value)
+        if restored.get("password") != PROXY_PASSWORD_PLACEHOLDER:
+            return restored
+        current = self.normalize_proxy_config(
+            self.plugin.config.get("proxy_config"),
+            self.plugin.config.get("proxy", ""),
+        )
+        restored["password"] = current.get("password", "")
+        return restored
+
+    @staticmethod
+    def _probe_proxy_sync(
+        proxy_config: dict[str, Any], mode: str, timeout: float
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        deadline = started + timeout
+        sock = None
+
+        def remaining_timeout() -> float:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise TimeoutError("proxy test timed out")
+            return remaining
+
+        try:
+            if mode == "connectivity":
+                sock = socket.create_connection(
+                    (proxy_config["host"], proxy_config["port"]),
+                    timeout=remaining_timeout(),
+                )
+            else:
+                if proxy_config["protocol"] == "http":
+                    sock = socket.create_connection(
+                        (proxy_config["host"], proxy_config["port"]),
+                        timeout=remaining_timeout(),
+                    )
+                    sock.settimeout(remaining_timeout())
+                    headers = [
+                        "CONNECT api.telegram.org:443 HTTP/1.1",
+                        "Host: api.telegram.org:443",
+                    ]
+                    if proxy_config["username"]:
+                        credentials = (
+                            f"{proxy_config['username']}:{proxy_config['password']}"
+                        ).encode("utf-8")
+                        auth = base64.b64encode(credentials).decode("ascii")
+                        headers.append(f"Proxy-Authorization: Basic {auth}")
+                    sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
+                    response = b""
+                    while b"\r\n\r\n" not in response and len(response) < 16384:
+                        sock.settimeout(remaining_timeout())
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            break
+                        response += chunk
+                    status_line = response.split(b"\r\n", 1)[0]
+                    if b" 200 " not in status_line:
+                        raise OSError("HTTP proxy CONNECT failed")
+                else:
+                    proxy_type = {
+                        "socks4": socks.SOCKS4,
+                        "socks5": socks.SOCKS5,
+                    }[proxy_config["protocol"]]
+                    sock = socks.socksocket()
+                    sock.set_proxy(
+                        proxy_type,
+                        proxy_config["host"],
+                        proxy_config["port"],
+                        rdns=True,
+                        username=proxy_config["username"] or None,
+                        password=proxy_config["password"] or None,
+                    )
+                    sock.settimeout(remaining_timeout())
+                    sock.connect(("api.telegram.org", 443))
+                context = ssl.create_default_context()
+                sock.settimeout(remaining_timeout())
+                sock = context.wrap_socket(sock, server_hostname="api.telegram.org")
+            latency_ms = max(1, round((time.perf_counter() - started) * 1000))
+            return {"success": True, "status": "ok", "latency_ms": latency_ms}
+        except (OSError, TimeoutError, socks.ProxyError) as exc:
+            logger.info(f"[WebAdmin] 代理测试未通过 ({mode}): {type(exc).__name__}")
+            return {"success": False, "status": "timeout", "latency_ms": None}
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    async def test_proxy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mode = str(payload.get("mode") or "").strip().lower()
+        if mode not in {"connectivity", "quality"}:
+            raise WebAdminError("代理测试类型无效。")
+        proxy_config = self.normalize_proxy_config(
+            self._restore_proxy_password_placeholder(payload.get("proxy_config"))
+        )
+        if not proxy_config["host"]:
+            raise WebAdminError("请先填写代理 IP / 域名和端口。")
+        timeout = 8.0
+        return await asyncio.to_thread(
+            self._probe_proxy_sync, proxy_config, mode, timeout
+        )
 
     async def list_qq_groups(self, force: bool = False) -> dict[str, Any]:
         return await self.qq_group_cache.list_groups(
@@ -946,6 +1238,7 @@ class WebAdminServer:
             self.plugin.config.get("api_id"),
             self.plugin.config.get("api_hash"),
             self.plugin.config.get("proxy"),
+            self._to_plain(self.plugin.config.get("proxy_config", {})),
         )
         old_web_config = self.normalize_web_config(
             self.plugin.config.get("web_config", {})
@@ -979,11 +1272,37 @@ class WebAdminServer:
                 value = str(value or "").strip()
             self.plugin.config[key] = value
 
+        if "proxy_config" in incoming:
+            proxy_config = self.normalize_proxy_config(
+                self._restore_proxy_password_placeholder(incoming["proxy_config"])
+            )
+            self.plugin.config["proxy_config"] = proxy_config
+            self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
+        elif "proxy" in incoming:
+            proxy_config = self.normalize_proxy_config(None, incoming["proxy"])
+            self.plugin.config["proxy_config"] = proxy_config
+            # legacy-only 保存也要回写规范化后的 proxy URL，避免协议别名残留。
+            self.plugin.config["proxy"] = self.proxy_config_to_url(proxy_config)
+
         if "forward_config" in incoming:
             if not isinstance(incoming["forward_config"], dict):
                 raise WebAdminError("forward_config 必须是对象。")
             forward_config = dict(incoming["forward_config"])
-            for list_key in ("forward_types", "filter_keywords", "monitor_keywords"):
+            old_forward_config = self.plugin.config.get("forward_config", {})
+            if (
+                forward_config.get("ai_filter_api_key") == AI_KEY_PLACEHOLDER
+                and isinstance(old_forward_config, dict)
+                and old_forward_config.get("ai_filter_api_key")
+            ):
+                forward_config["ai_filter_api_key"] = old_forward_config[
+                    "ai_filter_api_key"
+                ]
+            for list_key in (
+                "forward_types",
+                "filter_keywords",
+                "monitor_keywords",
+                "qr_risk_keywords",
+            ):
                 if list_key in forward_config:
                     forward_config[list_key] = self._as_string_list(
                         forward_config.get(list_key)
@@ -1013,6 +1332,7 @@ class WebAdminServer:
             self.plugin.config.get("api_id"),
             self.plugin.config.get("api_hash"),
             self.plugin.config.get("proxy"),
+            self._to_plain(self.plugin.config.get("proxy_config", {})),
         )
         reinitialized_client = False
         if new_client_keys != old_client_keys:
@@ -1156,12 +1476,21 @@ class WebAdminServer:
         # cast 避免 pyright 把 client 收窄固定为 None（_init_client 会重建实例）
         wrapper.client = cast(Any, None)
         wrapper._authorized = False
+        # 导入会话后必须清空旧账号 me 缓存，否则 /api/status 可能继续显示上一个用户。
+        self._telegram_me_cache = None
         wrapper._init_client()
         authorized = False
         if wrapper.client and await wrapper.ensure_connected():
             authorized = bool(await wrapper.client.is_user_authorized())
             if authorized:
                 await wrapper._mark_authorized_if_needed()
+                await self._refresh_telegram_me()
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after import failed: {exc}"
+                    )
                 await self.plugin.activate_runtime_after_authorized(startup_grace=0)
 
         await self._discard_login_attempt(remove_files=True)
@@ -1219,38 +1548,135 @@ class WebAdminServer:
             "me": me_data,
         }
 
+    @staticmethod
+    def _is_auth_key_duplicated_error(exc: BaseException) -> bool:
+        """判断是否为 Telethon AuthKey 双 IP 冲突（session 已作废）。"""
+        name = type(exc).__name__
+        if "AuthKeyDuplicated" in name:
+            return True
+        text = str(exc).lower()
+        return "authorization key" in text and (
+            "two different ip" in text or "simultaneously" in text
+        )
+
+    def _backup_and_remove_session_files_sync(
+        self,
+        session_path: str,
+        backup_dir: str,
+    ) -> bool:
+        backed_up = False
+        for path in self._session_files(session_path):
+            if not os.path.exists(path):
+                continue
+            os.makedirs(backup_dir, exist_ok=True)
+            file_backed_up = False
+            try:
+                shutil.copyfile(path, os.path.join(backup_dir, os.path.basename(path)))
+                backed_up = True
+                file_backed_up = True
+            except Exception as exc:
+                # 备份失败时保留原 session，避免 AuthKey 自动清理路径无恢复副本。
+                logger.warning(
+                    f"[WebAdmin] backup session before clear failed {path}: {exc}"
+                )
+            if not file_backed_up:
+                continue
+            try:
+                os.remove(path)
+            except Exception as exc:
+                logger.warning(f"[WebAdmin] remove session file failed {path}: {exc}")
+        return backed_up
+
+    async def clear_login_session(self) -> dict[str, Any]:
+        """清空本地 Telegram 登录信息（退出登录）。
+
+        会备份并删除正式 session 文件、断开客户端、清空 me 缓存。
+        用于 AuthKey 冲突或需要彻底换号/重登的场景。
+        """
+        await self._discard_login_attempt(remove_files=True)
+        self._login_data.clear()
+
+        wrapper = self.plugin.client_wrapper
+        session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
+        backup_dir = os.path.join(
+            wrapper.plugin_data_dir,
+            f"user_session_clear_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        )
+        try:
+            if wrapper.client and wrapper.client.is_connected():
+                await wrapper.disconnect(timeout=5.0)
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] disconnect before clear session failed: {exc}")
+
+        await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+        backed_up = await asyncio.to_thread(
+            self._backup_and_remove_session_files_sync,
+            session_path,
+            backup_dir,
+        )
+
+        self._telegram_me_cache = None
+        wrapper.client = cast(Any, None)
+        wrapper._authorized = False
+        wrapper._init_client()
+
+        # 退出登录后作废频道/群缓存，避免前端仍读到旧会话的空失败缓存。
+        try:
+            self.tg_channel_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate tg cache after clear failed: {exc}")
+        try:
+            self.qq_group_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate qq cache after clear failed: {exc}")
+
+        return {
+            "authorized": False,
+            "cleared": True,
+            "backup_dir": backup_dir if backed_up else "",
+            "message": "已清空本地 Telegram 登录信息。请重新填写手机号并发送验证码，或导入登录信息。",
+        }
+
     async def login_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         replace_existing = self._to_bool(payload.get("replace_existing"), False)
-        current_wrapper = await self._ensure_wrapper_ready()
         phone = self._normalize_phone(
             str(payload.get("phone") or self.plugin.config.get("phone") or "")
         )
         if not phone:
             raise WebAdminError("请填写 Telegram 手机号。")
 
-        try:
-            if replace_existing:
+        async def _send_code(*, use_temp_login: bool) -> dict[str, Any]:
+            if use_temp_login:
                 await self._discard_login_attempt(remove_files=True)
                 wrapper = await self._ensure_login_wrapper_ready()
+                effective_replace = True
             else:
-                wrapper = current_wrapper
+                wrapper = await self._ensure_wrapper_ready()
+                effective_replace = False
 
             await wrapper.ensure_connected()
-            if not replace_existing and await wrapper.client.is_user_authorized():
+            if not effective_replace and await wrapper.client.is_user_authorized():
+                # 已授权但可能是僵尸 AuthKey：试探 get_me，失败则当冲突处理
+                try:
+                    await asyncio.wait_for(wrapper.client.get_me(), timeout=8.0)
+                except Exception as probe_exc:
+                    if self._is_auth_key_duplicated_error(probe_exc):
+                        raise probe_exc
+                    logger.debug(f"[WebAdmin] authorized probe get_me failed: {probe_exc}")
                 await wrapper._mark_authorized_if_needed()
                 self._login_data.clear()
                 await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 return {"authorized": True, "message": "当前 Telegram 账号已授权。"}
 
             phone_code_hash = await wrapper.send_login_code(phone)
-            if not replace_existing:
+            if not effective_replace:
                 self.plugin.config["phone"] = phone
                 self.plugin.config.save_config()
             self._login_data = {
                 "phone": phone,
                 "phone_code_hash": phone_code_hash,
                 "need_password": False,
-                "replace_existing": replace_existing,
+                "replace_existing": effective_replace or replace_existing,
                 "created_at": datetime.now().isoformat(timespec="seconds"),
             }
             return {
@@ -1259,12 +1685,42 @@ class WebAdminServer:
                 "phone": phone,
                 "message": "验证码已发送，请输入 Telegram 收到的验证码原文。",
             }
-        except FloodWaitError as exc:
-            seconds = getattr(exc, "seconds", 0) or 0
-            raise WebAdminError(f"请求过于频繁，请等待 {seconds} 秒后重试。") from exc
+
+        try:
+            return await _send_code(use_temp_login=replace_existing)
         except WebAdminError:
             raise
         except Exception as exc:
+            # AuthKey 冲突优先于其它异常分类（部分 Telethon 错误会叠在 RPC 链上）。
+            if self._is_auth_key_duplicated_error(exc):
+                logger.warning(
+                    f"[WebAdmin] 发送验证码遇到 AuthKey 冲突，自动清空本地登录信息后改用干净会话: {exc}"
+                )
+                try:
+                    await self.clear_login_session()
+                except Exception as clear_exc:
+                    logger.error(f"[WebAdmin] 自动清空冲突 session 失败: {clear_exc}")
+                    raise WebAdminError(
+                        f"发送验证码失败：登录会话已冲突，且自动清空失败：{clear_exc}。"
+                        "请点击「清空登录信息」后重试。"
+                    ) from clear_exc
+                try:
+                    # 正式 session 已清空；用临时目录发码，成功后再 install 覆盖。
+                    return await _send_code(use_temp_login=True)
+                except FloodWaitError as flood_exc:
+                    seconds = getattr(flood_exc, "seconds", 0) or 0
+                    raise WebAdminError(
+                        f"已清空冲突会话，但请求过于频繁，请等待 {seconds} 秒后重试。"
+                    ) from flood_exc
+                except WebAdminError:
+                    raise
+                except Exception as retry_exc:
+                    raise WebAdminError(
+                        f"已清空冲突的本地登录信息，但再次发送验证码失败：{retry_exc}"
+                    ) from retry_exc
+            if isinstance(exc, FloodWaitError):
+                seconds = getattr(exc, "seconds", 0) or 0
+                raise WebAdminError(f"请求过于频繁，请等待 {seconds} 秒后重试。") from exc
             raise WebAdminError(f"发送验证码失败：{exc}") from exc
 
     async def login_code(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1287,6 +1743,12 @@ class WebAdminServer:
             )
             if ok:
                 phone = self._login_data.get("phone", "")
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after login failed: {exc}"
+                    )
                 if self._login_data.get("replace_existing"):
                     await self._install_login_session(phone)
                 else:
@@ -1294,7 +1756,12 @@ class WebAdminServer:
                     self.plugin.config.save_config()
                     await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 self._login_data.clear()
-                return {"authorized": True, "message": "登录成功。"}
+                me = await self._refresh_telegram_me()
+                return {
+                    "authorized": True,
+                    "message": "登录成功。",
+                    "me": me,
+                }
             return {"authorized": False, "message": "验证码已提交，但账号仍未授权。"}
         except SessionPasswordNeededError:
             self._login_data["need_password"] = True
@@ -1331,6 +1798,12 @@ class WebAdminServer:
             ok = await wrapper.sign_in_with_password(password)
             if ok:
                 phone = self._login_data.get("phone", "")
+                try:
+                    self.tg_channel_cache.invalidate()
+                except Exception as exc:
+                    logger.debug(
+                        f"[WebAdmin] invalidate tg cache after password login failed: {exc}"
+                    )
                 if self._login_data.get("replace_existing"):
                     await self._install_login_session(phone)
                 else:
@@ -1338,7 +1811,12 @@ class WebAdminServer:
                     self.plugin.config.save_config()
                     await self.plugin.activate_runtime_after_authorized(startup_grace=0)
                 self._login_data.clear()
-                return {"authorized": True, "message": "两步验证通过，登录完成。"}
+                me = await self._refresh_telegram_me()
+                return {
+                    "authorized": True,
+                    "message": "两步验证通过，登录完成。",
+                    "me": me,
+                }
             return {"authorized": False, "message": "密码已提交，但账号仍未授权。"}
         except FloodWaitError as exc:
             seconds = getattr(exc, "seconds", 0) or 0
@@ -1358,6 +1836,7 @@ class WebAdminServer:
             "need_password": False,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
+        # 重新登录流程中仍保留当前授权缓存，直到新账号成功替换。
         return {"message": "已进入重新登录流程，当前已登录账号会保留到新账号登录成功。"}
 
     async def runtime_check(self) -> dict[str, Any]:

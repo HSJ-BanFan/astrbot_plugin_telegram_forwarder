@@ -127,7 +127,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `phone` | `string` | `""` | 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。若使用命令登录则无需填写。 |
 | `api_id` | `int` | `0` | **(必填)** Telegram API 凭证 ID (从 [my.telegram.org](https://my.telegram.org) 获取，如 `123456`) |
 | `api_hash` | `string` | `""` | **(必填)** Telegram API 凭证 Hash (从 [my.telegram.org](https://my.telegram.org) 获取)。 |
-| `proxy` | `string` | `""` | 代理地址，例如 `http://127.0.0.1:7890`（部分网络环境访问 TG 必填）。 |
+| `proxy_config` | `object` | 见配置页 | 结构化代理：协议、IP/域名、端口及可选账号密码；旧 `proxy` URL 自动兼容。 |
 | `telegram_session` | `file` | `[]` | 上传 `.session` 会话文件（绕过验证码/人机验证的首选方案）。 |
 
 > [!TIP]
@@ -276,9 +276,33 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `pending_retry_max_delay_sec`| `int`| `1800` | 失败重试最大延迟 (秒)。 |
 | `curfew_time` | `string` | `""` | 宵禁时间段 (例如 `23:00-07:00`)，在该时间段内不抓取和发送消息。 |
 | `filter_keywords` | `list` | `[]` | 全局过滤关键词列表。 |
-| `filter_regex` | `string` | `""` | 全局过滤正则表达式。 |
+| `filter_regex` | `string` | `#\s*NSFW\b\|(?:NSFW\|前方高能)\s*提前预警` | 全局过滤正则表达式。默认示例过滤 NSFW 标签和预警文字。 |
+| `ai_filter_enabled` | `bool` | `false` | 启用 OpenAI 兼容视觉模型过滤。接口失败或输出无效时默认放行。 |
+| `ai_filter_base_url` | `string` | `""` | OpenAI 兼容 API 基址，例如 `https://api.openai.com/v1`。 |
+| `ai_filter_allow_private_endpoint` | `bool` | `false` | 仅在使用受信任的 Ollama/vLLM 等本地模型时开启；默认拒绝 IP 地址端点。 |
+| `ai_filter_api_key` | `string` | `""` | AI API Key；命令查询和日志不会显示明文。 |
+| `ai_filter_model` | `string` | `""` | 支持文字和图片输入的模型名。 |
+| `ai_filter_prompt` | `string` | 内置内容安全提示词 | 自定义判断规则。代码始终追加固定 JSON 输出约束。 |
+| `ai_filter_timeout` | `int` | `20` | AI 接口总超时秒数。超时后放行。 |
+| `ai_filter_max_calls_per_cycle` | `int` | `5` | 单轮发送最多调用 AI 的消息数；额度耗尽仍执行本地二维码过滤。 |
+| `qr_filter_enabled` | `bool` | `false` | 启用本地二维码识别，优先于 AI 执行。 |
+| `qr_filter_mode` | `string` | `"风险二维码"` | `风险二维码` 或 `全部二维码`。 |
+| `qr_risk_keywords` | `list` | 内置风险词 | 风险模式匹配二维码解码后的文本或 URL。 |
+| `content_filter_max_image_mb` | `int` | `5` | 内容安全分析的单张图片大小上限。 |
 | `monitor_keywords` | `list` | `[]` | 全局监听关键词（命中后立即发送，绕过轮询延迟）。 |
 | `monitor_regex` | `string` | `""` | 全局监听正则表达式。 |
+
+默认合并规则还提供了一个 `xinjingdaily` 示例：当消息命中 `NSFW/前方高能 + 提前预警` 时，将其与 15 秒内紧随的下一条消息标记为同一逻辑组。合并规则本身不执行过滤；发送前由全局 `filter_regex` 命中预警消息，并据此丢弃整个逻辑组，因此后续消息即使只有图片、没有文字或没有 Telegram 遮罩，也会一起过滤。
+
+AI 过滤请求会把消息文字和图片发送到配置的 OpenAI 兼容接口。无论自定义提示词是否声明输出格式，插件都会追加以下约束，并严格校验字段和类型：
+
+```json
+{"filter": true, "msg": "判断原因"}
+```
+
+`filter=true` 表示丢弃消息，`false` 表示允许转发。返回值必须且只能包含 `filter` 和 `msg`；允许模型在 JSON 外包一层 Markdown 代码块，但不接受额外说明、字符串形式的布尔值或缺失字段。接口异常、超时或返回无效 JSON 时采用 fail-open，保留消息。
+
+二维码过滤使用本地 `zxing-cpp`，不上传图片即可发现二维码。`全部二维码` 模式最可靠；`风险二维码` 模式只在二维码内容命中风险词时过滤。短链、跳转链接或纯随机 URL 本身不包含风险语义，本地规则无法确认落地页，此时可同时开启 AI 过滤，让视觉模型结合图片文案进行兜底判断。
 
 ---
 

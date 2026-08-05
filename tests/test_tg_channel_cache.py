@@ -1,0 +1,394 @@
+import asyncio
+import importlib.util
+import sys
+import time
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+
+def load_tg_channel_cache_module():
+    root = Path(__file__).resolve().parents[1]
+    module_path = root / "core" / "tg_channel_cache.py"
+    module_name = "astrbot_plugin_telegram_forwarder.core.tg_channel_cache"
+    package = ModuleType("astrbot_plugin_telegram_forwarder")
+    package.__path__ = [str(root)]
+    core_pkg = ModuleType("astrbot_plugin_telegram_forwarder.core")
+    core_pkg.__path__ = [str(root / "core")]
+    common_pkg = ModuleType("astrbot_plugin_telegram_forwarder.common")
+    common_pkg.__path__ = [str(root / "common")]
+    text_tools = ModuleType("astrbot_plugin_telegram_forwarder.common.text_tools")
+
+    def normalize_telegram_channel_name(value):
+        return str(value or "").strip().lstrip("@")
+
+    text_tools.normalize_telegram_channel_name = normalize_telegram_channel_name
+    stubbed = {
+        "astrbot": ModuleType("astrbot"),
+        "astrbot.api": SimpleNamespace(
+            logger=SimpleNamespace(
+                warning=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+                info=lambda *a, **k: None,
+            )
+        ),
+        "astrbot_plugin_telegram_forwarder": package,
+        "astrbot_plugin_telegram_forwarder.core": core_pkg,
+        "astrbot_plugin_telegram_forwarder.common": common_pkg,
+        "astrbot_plugin_telegram_forwarder.common.text_tools": text_tools,
+    }
+    original = {name: sys.modules.get(name) for name in stubbed}
+    try:
+        sys.modules.update(stubbed)
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, value in original.items():
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
+
+
+class SlowDialogClient:
+    def __init__(self, count=5, delay=0.0, entities=None):
+        self.count = count
+        self.delay = delay
+        self.seen = 0
+        self.entities = entities or {}
+
+    def is_connected(self):
+        return True
+
+    async def is_user_authorized(self):
+        return True
+
+    async def get_entity(self, ref):
+        await asyncio.sleep(0)
+        if ref not in self.entities:
+            raise ValueError(f"missing {ref}")
+        return self.entities[ref]
+
+    def get_dialogs(self, limit=None):
+        async def _load():
+            out = []
+            n = self.count if limit is None else min(self.count, int(limit))
+            for i in range(n):
+                self.seen += 1
+                if self.delay:
+                    await asyncio.sleep(self.delay)
+                entity = SimpleNamespace(
+                    id=1000 + i,
+                    username=f"ch{i}",
+                    title=f"Channel {i}",
+                    megagroup=False,
+                    broadcast=True,
+                    participants_count=1,
+                )
+                out.append(
+                    SimpleNamespace(
+                        title=f"Channel {i}",
+                        entity=entity,
+                        is_channel=True,
+                        is_user=False,
+                    )
+                )
+            return out
+
+        return _load()
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_caps_dialog_scan():
+    module = load_tg_channel_cache_module()
+    client = SlowDialogClient(count=20, delay=0.0)
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(
+        plugin, ttl_seconds=30, max_dialogs=5, refresh_timeout=5.0
+    )
+    result = await cache.list_channels([])
+    assert result["available"] is True
+    assert client.seen == 5
+    assert len(result["channels"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_resolves_configured_when_dialogs_timeout():
+    module = load_tg_channel_cache_module()
+    entity = SimpleNamespace(
+        id=42,
+        username="wtmsd",
+        title="无聊的备忘录",
+        megagroup=False,
+        broadcast=True,
+        participants_count=10,
+    )
+    client = SlowDialogClient(
+        count=50,
+        delay=0.2,
+        entities={
+            "wtmsd": entity,
+            "acg_meme": SimpleNamespace(
+                id=7,
+                username="acg_meme",
+                title="ACG",
+                megagroup=False,
+                broadcast=True,
+                participants_count=1,
+            ),
+        },
+    )
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(
+        plugin,
+        ttl_seconds=30,
+        max_dialogs=50,
+        refresh_timeout=0.05,
+        failure_cooldown=1.0,
+    )
+    result = await cache.list_channels(["wtmsd", "acg_meme"])
+    assert result["available"] is True
+    # 对话框扫描超时 → 部分成功，必须暴露出来而不是伪装成完整列表。
+    assert result["partial"] is True
+    assert "仅显示已配置频道" in result["message"]
+    refs = {ch["channel_ref"]: ch for ch in result["channels"]}
+    assert "wtmsd" in refs
+    assert refs["wtmsd"]["title"] == "无聊的备忘录"
+    assert refs["wtmsd"]["source"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_partial_result_expires_before_full_ttl():
+    module = load_tg_channel_cache_module()
+    cache = module.TGChannelCache(
+        SimpleNamespace(client_wrapper=None),
+        ttl_seconds=3600,
+        partial_ttl_seconds=300.0,
+    )
+    cache._channels = [{"channel_ref": "x"}]
+    cache._available = True
+    cache._last_refresh_at = time.time() - 600
+    cache._last_failure_at = 0.0
+
+    cache._partial = False
+    assert cache._is_fresh() is True  # 完整结果仍在 3600s TTL 内
+    cache._partial = True
+    assert cache._is_fresh() is False  # 部分结果 300s 后就该重试
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_full_scan_is_not_partial():
+    module = load_tg_channel_cache_module()
+    client = SlowDialogClient(count=3)
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels([])
+
+    assert result["available"] is True
+    assert result["partial"] is False
+    assert result["message"] == ""
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_live_dialog_overrides_resolved_metadata():
+    module = load_tg_channel_cache_module()
+    resolved_entity = SimpleNamespace(
+        id=42,
+        username="same_channel",
+        title="Old title",
+        megagroup=False,
+        broadcast=True,
+        participants_count=1,
+    )
+    live_entity = SimpleNamespace(
+        id=42,
+        username="same_channel",
+        title="New title",
+        megagroup=False,
+        broadcast=True,
+        participants_count=99,
+    )
+    live_dialog = SimpleNamespace(
+        title="New title",
+        entity=live_entity,
+        is_channel=True,
+        is_user=False,
+    )
+    client = SlowDialogClient(count=0, entities={"same_channel": resolved_entity})
+    client.get_dialogs = AsyncMock(return_value=[live_dialog])
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels(["same_channel"])
+
+    channels = [
+        item for item in result["channels"] if item["channel_ref"] == "same_channel"
+    ]
+    assert len(channels) == 1
+    assert channels[0]["source"] == "live"
+    assert channels[0]["title"] == "New title"
+    assert channels[0]["member_count"] == 99
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_numeric_configured_ref_not_duplicated_by_username():
+    """用数字 ID 配置、对话框里以 username 出现，必须归并成一条。"""
+    module = load_tg_channel_cache_module()
+    entity = SimpleNamespace(
+        id=1000000042,
+        username="wtmsd",
+        title="无聊的备忘录",
+        megagroup=False,
+        broadcast=True,
+        participants_count=88,
+    )
+    live_dialog = SimpleNamespace(
+        title="无聊的备忘录",
+        entity=entity,
+        is_channel=True,
+        is_user=False,
+    )
+    client = SlowDialogClient(count=0, entities={"-1001000000042": entity})
+    client.get_dialogs = AsyncMock(return_value=[live_dialog])
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels(["-1001000000042"])
+
+    assert len(result["channels"]) == 1
+    channel = result["channels"][0]
+    assert channel["channel_ref"] == "-1001000000042"
+    assert channel["source"] == "live"
+    assert channel["username"] == "wtmsd"
+    assert channel["member_count"] == 88
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_unresolvable_numeric_ref_merges_with_live_dialog():
+    """get_entity 解析失败时，配置占位不应和对话框 live 条目各占一行。"""
+    module = load_tg_channel_cache_module()
+    entity = SimpleNamespace(
+        id=1000000042,
+        username="wtmsd",
+        title="无聊的备忘录",
+        megagroup=False,
+        broadcast=True,
+        participants_count=3,
+    )
+    live_dialog = SimpleNamespace(
+        title="无聊的备忘录",
+        entity=entity,
+        is_channel=True,
+        is_user=False,
+    )
+    client = SlowDialogClient(count=0, entities={})
+    client.get_dialogs = AsyncMock(return_value=[live_dialog])
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels(["-1001000000042"])
+
+    assert len(result["channels"]) == 1
+    assert result["channels"][0]["channel_ref"] == "wtmsd"
+    assert result["channels"][0]["source"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_keeps_distinct_channels_apart():
+    module = load_tg_channel_cache_module()
+    client = SlowDialogClient(count=3)
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels([])
+
+    refs = [item["channel_ref"] for item in result["channels"]]
+    assert sorted(refs) == ["ch0", "ch1", "ch2"]
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_rejects_configured_user_entity():
+    module = load_tg_channel_cache_module()
+    user_entity = type(
+        "User",
+        (),
+        {
+            "id": 7,
+            "username": "not_a_channel",
+            "first_name": "Private user",
+            "is_user": True,
+        },
+    )()
+    client = SlowDialogClient(count=0, entities={"not_a_channel": user_entity})
+    plugin = SimpleNamespace(
+        client_wrapper=SimpleNamespace(client=client, is_authorized=lambda: True)
+    )
+    cache = module.TGChannelCache(plugin, ttl_seconds=30, refresh_timeout=5.0)
+
+    result = await cache.list_channels(["not_a_channel"])
+
+    entries = [
+        item for item in result["channels"] if item["channel_ref"] == "not_a_channel"
+    ]
+    assert len(entries) == 1
+    assert entries[0]["source"] == "configured"
+    assert entries[0]["id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_tg_channel_cache_failure_uses_short_cooldown():
+    module = load_tg_channel_cache_module()
+    cache = module.TGChannelCache(
+        SimpleNamespace(client_wrapper=None),
+        ttl_seconds=90,
+        failure_cooldown=1.0,
+    )
+    cache._available = False
+    cache._channels = []
+    cache._last_failure_at = time.time()
+    cache._last_refresh_at = cache._last_failure_at
+    assert cache._is_fresh() is True
+    cache._last_failure_at -= 1.5
+    cache._last_refresh_at = cache._last_failure_at
+    assert cache._is_fresh() is False
+
+
+def test_tg_channel_cache_invalidate_clears_freshness():
+    module = load_tg_channel_cache_module()
+    cache = module.TGChannelCache(
+        SimpleNamespace(client_wrapper=None),
+        ttl_seconds=90,
+        failure_cooldown=30.0,
+    )
+    cache._available = False
+    cache._channels = [{"channel_ref": "x"}]
+    cache._last_failure_at = time.time()
+    cache._last_refresh_at = cache._last_failure_at
+    assert cache._is_fresh() is True
+    cache.invalidate()
+    assert cache._channels == []
+    assert cache._available is False
+    assert cache._last_refresh_at == 0.0
+    assert cache._last_failure_at == 0.0
+    assert cache._is_fresh() is False

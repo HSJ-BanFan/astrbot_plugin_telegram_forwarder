@@ -245,6 +245,33 @@ export function renderStatus() {
     animateMetricNumber(els.queueCount, queue.total ?? 0);
   }
 
+  const stats = status.stats || {};
+  if (els.statsForwardSuccess) {
+    animateMetricNumber(els.statsForwardSuccess, stats.forward_success ?? 0);
+  }
+  if (els.statsForwardFailed) {
+    animateMetricNumber(els.statsForwardFailed, stats.forward_failed ?? 0);
+  }
+  if (els.statsAcked) {
+    animateMetricNumber(els.statsAcked, stats.acked_messages ?? 0);
+  }
+  if (els.statsDeferred) {
+    animateMetricNumber(els.statsDeferred, stats.deferred_messages ?? 0);
+  }
+  if (els.statsForwardAttempts) {
+    animateMetricNumber(els.statsForwardAttempts, stats.forward_attempts ?? 0);
+  }
+  if (els.statsFailedKeep) {
+    animateMetricNumber(els.statsFailedKeep, stats.failed_messages ?? 0);
+  }
+  if (els.statsLastReset) {
+    const resetAt = String(stats.last_reset || "").trim();
+    els.statsLastReset.textContent = resetAt ? `统计起点 ${resetAt}` : "统计起点 —";
+  }
+  if (els.statsResetHint) {
+    els.statsResetHint.textContent = "进程内累计计数；插件重启后清零。";
+  }
+
   renderRuntimeOperations(runtime);
 
   if (els.queueList) {

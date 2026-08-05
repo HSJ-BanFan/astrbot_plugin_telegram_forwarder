@@ -18,11 +18,19 @@ except Exception:  # pragma: no cover - import guard for non-AstrBot test runtim
 
 
 class QQGroupCache:
-    def __init__(self, plugin: Any, ttl_seconds: int = 90):
+    def __init__(
+        self,
+        plugin: Any,
+        ttl_seconds: int = 3600,
+        *,
+        failure_cooldown: float = 20.0,
+    ):
         self.plugin = plugin
         self.ttl_seconds = ttl_seconds
+        self.failure_cooldown = max(0.5, float(failure_cooldown))
         self._lock = asyncio.Lock()
         self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
         self._groups: list[dict[str, Any]] = []
         self._available = False
         self._message = "QQ platform is unavailable."
@@ -43,16 +51,24 @@ class QQGroupCache:
         }
 
     def _is_fresh(self) -> bool:
-        return (time.time() - self._last_refresh_at) < self.ttl_seconds
+        now = time.time()
+        # 成功刷新（含空列表）走 TTL；失败走短冷却。
+        if self._available and self._last_refresh_at > 0 and self._last_failure_at <= 0:
+            return (now - self._last_refresh_at) < self.ttl_seconds
+        anchor = self._last_failure_at or self._last_refresh_at
+        if anchor <= 0:
+            return False
+        return (now - anchor) < self.failure_cooldown
 
     async def _refresh(self, *, force: bool = False) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and self._groups:
+            if not force and self._is_fresh():
                 return
 
             groups_by_id: dict[str, dict[str, Any]] = {}
             saw_platform = False
             saw_client = False
+            saw_successful_call = False
 
             for platform, platform_id in self._iter_qq_platforms():
                 saw_platform = True
@@ -65,6 +81,7 @@ class QQGroupCache:
                 except Exception as exc:
                     logger.warning("[WebAdmin] Failed to load QQ groups: %s", exc)
                     continue
+                saw_successful_call = True
                 for raw_group in self._extract_group_list(result):
                     group = self._normalize_group(raw_group, platform_id)
                     group_id = group["group_id"]
@@ -72,17 +89,38 @@ class QQGroupCache:
                         continue
                     groups_by_id[group_id] = group
 
-            self._groups = self._sort_groups(groups_by_id.values())
-            self._available = saw_client
-            if saw_client:
+            now = time.time()
+            if saw_successful_call:
+                self._groups = self._sort_groups(groups_by_id.values())
+                self._available = True
                 self._message = ""
+                self._last_failure_at = 0.0
+                self._last_refresh_at = now
+                return
+
+            # 刷新失败：保留上一次成功的列表，否则选择器会在平台抖动时整个清空，
+            # 用户已配置之外的群全部消失。列表降级标记为 cached，不再冒充 live。
+            if saw_client:
+                message = "QQ group list request failed."
             elif saw_platform:
-                self._message = (
-                    "QQ platform found, but no callable client is available."
-                )
+                message = "QQ platform found, but no callable client is available."
             else:
-                self._message = "QQ platform is unavailable."
-            self._last_refresh_at = time.time()
+                message = "QQ platform is unavailable."
+            self._groups = self._mark_cached(self._groups)
+            if self._groups:
+                message = f"{message} Showing last known group list."
+            self._available = False
+            self._message = message
+            self._last_failure_at = now
+            self._last_refresh_at = now
+
+    def invalidate(self) -> None:
+        """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
+        self._groups = []
+        self._available = False
+        self._message = "QQ group cache invalidated."
+        self._last_refresh_at = 0.0
+        self._last_failure_at = 0.0
 
     def _iter_qq_platforms(self) -> list[tuple[Any, str]]:
         platforms = get_platform_instances(getattr(self.plugin, "context", None))
@@ -118,6 +156,14 @@ class QQGroupCache:
                 continue
             groups_by_id[normalized] = self._fallback_group(normalized)
         return self._sort_groups(groups_by_id.values())
+
+    @staticmethod
+    def _mark_cached(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """把保留下来的旧列表标记为 cached，避免把过期数据当成实时数据展示。"""
+        for group in groups:
+            if group.get("source") == "live":
+                group["source"] = "cached"
+        return groups
 
     @staticmethod
     def _extract_group_list(result: Any) -> list[dict[str, Any]]:
