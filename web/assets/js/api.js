@@ -39,7 +39,7 @@ async function bridgeRequest(path, method = "GET", body = null, timeout = 30000)
     await bridge.ready();
     const endpoint = bridgeEndpoint(path);
     if (method.toUpperCase() === "GET") {
-      return bridge.apiGet(endpoint, body || {});
+      return bridge.apiGet(endpoint, body);
     }
     return bridge.apiPost(endpoint, body || {});
   })(), timeout);

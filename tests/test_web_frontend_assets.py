@@ -267,6 +267,37 @@ def test_topology_edges_align_with_node_cards_at_any_width() -> None:
         assert 'd="M 28' not in text
 
 
+def test_dashboard_get_requests_do_not_send_empty_object_bodies() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        api_text = (asset_root / "js" / "api.js").read_text(encoding="utf-8")
+        get_branch = re.search(
+            r'if \(method\.toUpperCase\(\) === "GET"\) \{(?P<body>.*?)\n\s*\}',
+            api_text,
+            re.S,
+        )
+        assert get_branch, f"{asset_root.relative_to(ROOT)} missing GET bridge branch"
+        assert "bridge.apiGet(endpoint, body);" in get_branch.group("body")
+        assert "body || {}" not in get_branch.group("body")
+
+        context_text = (asset_root / "js" / "context.js").read_text(encoding="utf-8")
+        assert "force ? { force: 1 } : null" in context_text
+        assert "force ? { force: 1 } : {}" not in context_text
+
+
+def test_dashboard_override_keeps_get_body_passthrough() -> None:
+    override_text = (
+        ROOT / "scripts" / "dashboard_overrides" / "assets" / "js" / "api.js"
+    ).read_text(encoding="utf-8")
+    get_branch = re.search(
+        r'if \(method\.toUpperCase\(\) === "GET"\) \{(?P<body>.*?)\n\s*\}',
+        override_text,
+        re.S,
+    )
+    assert get_branch
+    assert "bridge.apiGet(endpoint, body);" in get_branch.group("body")
+    assert "body || {}" not in get_branch.group("body")
+
+
 def test_generated_dashboard_artifacts_in_sync_with_web_source() -> None:
     """pages/dashboard/ 是生成产物：改了 web/ 或 overrides 后必须重跑构建脚本。"""
     mismatches = build_frontend.build(check=True)

@@ -115,7 +115,7 @@ export async function loadAll({ force = false } = {}) {
     const dashboardPayload = await apiRequest(
       "/api/dashboard",
       "GET",
-      force ? { force: 1 } : {},
+      force ? { force: 1 } : null,
       force ? 130000 : 45000
     );
     applyDashboardPayload(dashboardPayload);
