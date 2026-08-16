@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 变更记录 (Changelog)
 
+- **2026-08-16**: 更新测试策略（补充依赖安装前置；覆盖率描述改为现实口径，约 78%、无强制门禁）。
 - **2026-08-15**: 修正过期内容。新增 `ContentSafetyFilter`（AI 审核 + 二维码风险过滤）到核心组件与过滤引擎；调度改为三 job + 60s grace（含缓存预热门控）；`/tg` 命令 14 条、Web API 25 条；同步模块索引文件数（filters 3 / senders 15 / web 19 / tests 25 / dashboard 20）与测试覆盖清单。
 - **2026-07-04 (补扫)**: 深入补扫 `relogin.py` 重登流程、`_conf_schema.json` 配置字段、`core/downloader.py` 媒体细节与两份 Web 设计 spec；修正 `core/filters` 接口描述偏差（实际为 `filter_messages` / `filter_keywords` / `filter_regex` 黑名单语义，非 `should_keep` / include/exclude）；新增 4 个独立单测（`test_message_filter` / `test_qq_circuit` / `test_qq_file_fallback` / `test_qq_dispatcher`，共 62 条用例），全量 338 passed。
 - **2026-07-04**: 增量补扫。新增 Web 管理界面（`web/` / `core/web_admin.py` / 缓存层）、`scripts/` 构建流水线、`pages/dashboard/` 生成产物识别；补充 `core/mergers/keyword_next` 新合并器；新增 `core/filters/` 与 `core/mergers/` 模块文档；更新模块结构图与索引。
@@ -90,7 +91,8 @@ Web 管理界面默认监听 `http://127.0.0.1:8180`（可在 `_conf_schema.json
 ## 测试策略
 
 - **测试框架**: `pytest`（`conftest.py` 内置 asyncio 兼容回退，即使无 `pytest-asyncio` 也能跑）
-- **最小覆盖率**: 80%（使用 `--cov-report=term-missing`）
+- **覆盖率**: 无强制门禁；当前全量约 78%（使用 `--cov-report=term-missing`）
+- **前置依赖**: 先 `pip install -r requirements.txt` + `pip install pytest pytest-cov`。`conftest.py` 只 mock `telethon`，`web_admin.py` / `content_safety.py` 会真实 import `socks`(pysocks) / `flask` / `zxing-cpp`，缺失会 ModuleNotFoundError。
 - **Mock 深度**: `conftest.py` 通过 `sys.modules` 直接 mock 掉 `telethon`、AstrBot 内部模块等，避免测试过程中的网络连接与环境依赖
 - **前端门禁**: `tests/test_web_frontend_assets.py` 验证 `pages/dashboard/` 与 `web/` 同步（CI 必过）
 - **覆盖范围**:
@@ -110,6 +112,7 @@ Web 管理界面默认监听 `http://127.0.0.1:8180`（可在 `_conf_schema.json
 
 ## 编码规范
 
+- **提交信息**: Conventional Commits 风格，类型小写 + 英文主语（如 `fix: ...` / `feat: ...`）；正文可分点写中文说明。
 - **异步模式**: 必须全异步，严禁使用 `requests`，推荐 `aiohttp` 或 `httpx`（详见 `.claude/rules/async-patterns.md`）。
 - **格式化**: `ruff format .` 然后 `ruff check --fix .`，行宽 120，Python 3.12+（详见 `.claude/rules/code-style.md`）。
 - **配置与数据**: 持久化数据存于 `data/plugin_data/astrbot_plugin_telegram_forwarder/`（原子写 `Storage.save()`），以防更新时丢失；严禁放插件自身目录。

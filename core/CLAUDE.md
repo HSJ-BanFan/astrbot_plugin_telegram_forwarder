@@ -11,9 +11,10 @@
 - 对各个平台的细分发送进行解耦支持（如 `senders`、`filters`、`mergers` 子模块）。
 
 ## 入口与启动
-- **运行时入口**: `forwarder.py` / `Forwarder` 类。由根目录的 `main.py` 实例化，并在 APScheduler 中以双 job（`check_updates` / `send_pending_messages`）周期性拉起。
+- **运行时入口**: `forwarder.py` / `Forwarder` 类。由根目录的 `main.py` 实例化，并在 APScheduler 中以三 job（`cache_refresh` / `check_updates` / `send_pending_messages`）周期性拉起，启动后有 60s grace。
 - **命令入口**: `commands.py` / `PluginCommands` 类。处理 `/tg` 命令组：`add` / `rm` / `ls` / `check` / `status` / `pause` / `resume` / `queue` / `clearqueue` / `get` / `set` / `login` / `debug` / `help`。
 - **Web 后端入口**: `web_admin.py` / `WebAdminServer` 类。由 `main.py:Main._start_web_admin_server()` 在 `initialize()` 阶段启动，独立 Flask 线程。
+- **启动连接**: `Main.initialize()` 不阻塞 —— 后台任务 `_bootstrap_after_connect()` 以 20s 超时 + 30s 节流重试连接 Telegram，离线/无代理时 AstrBot 主服务照常启动，代理恢复后自动激活调度器（无需重启）。
 
 ## 对外接口
 - `Forwarder` 对外暴露 `check_updates()` / `send_pending_messages()` / `stop()` / `shutdown(timeout)` / `qq_sender`（运行时延迟引导）等。
@@ -34,10 +35,12 @@
 - **异步生成器**: 控制指令全盘采用异步生成器与框架层交互。
 - **配置合并**: 采用策略树解析全局 `forward_config` 与具体频道自定义配置的合并。
 - **跨重载缓存**: `TelegramClientWrapper` 把客户端句柄挂在 `sys._telegram_forwarder_client_cache`，避免插件保存配置时被重载误伤。
+- **并发连接守卫**: `TelegramClientWrapper.ensure_connected()` 用 `_connect_lock`（asyncio.Lock）串行化连接，后台启动任务 / Web 面板 / 转发任务并发触发时只对客户端发起一次 `connect()`，其余拿锁后二次检查复用。
 - **Web 路由双层注册**: 同一 handler 同时挂到 `/api/...`（legacy）与 `/page/dashboard`（聚合），由 `WebAdminServer` 统一调度，便于前端在独立部署与插件沙箱两种环境下复用。
 
 ## 测试与质量
 - `tests/test_forwarder_send_pending.py` 覆盖调度主流程。
+- `tests/test_main_startup_blocking.py` 覆盖离线启动不阻塞与代理恢复自动激活；`tests/test_main_cache_warm_gate.py` 覆盖缓存预热门控。
 - `tests/test_commands_debug.py` 覆盖 `/tg debug` 开关。
 - `tests/test_client_session_schema.py` + `tests/test_relogin.py` 覆盖 Telethon 会话兼容与重登。
 - `tests/test_web_admin.py` 覆盖 Web 管理后端的关键路径。
@@ -61,5 +64,6 @@
 - 子模块：`senders/`、`mergers/`、`filters/`（各有独立 CLAUDE.md）
 
 ## 变更记录 (Changelog)
+- **2026-08-16**: 修正调度为三 job + 60s grace；补充启动后台连接（`_bootstrap_after_connect`）、并发连接守卫与新增回归测试。
 - **2026-07-04**: 新增 `web_admin.py` / `qq_group_cache.py` / `tg_channel_cache.py` 的职责描述；补全对外接口、数据模型、测试覆盖与 FAQ；引入子模块文档链接。
 - **2026-06-08**: 初始化模块级自适应文档。
