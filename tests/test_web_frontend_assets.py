@@ -566,7 +566,7 @@ def test_docker_network_hints_are_present() -> None:
 
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
         text = (asset_root / "js" / "ui_config.js").read_text(encoding="utf-8")
-        assert "Docker 中仅容器内可达" in text
+        assert "本地回环地址，仅当前环境内可达" in text
 
 
 def test_api_hash_input_requires_full_hex_value() -> None:

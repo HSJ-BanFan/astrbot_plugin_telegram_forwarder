@@ -51,7 +51,7 @@ export function renderSidebarStatusCard() {
     const isDashboard = isDashboardPage();
     const isLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
     const statusLabel = isDashboard
-      ? `已连接官方插件页 API，独立 WebUI${isLoopback ? "（Docker 中仅容器内可达）" : ""}:`
+      ? `已连接官方插件页 API，独立 WebUI${isLoopback ? "（本地回环地址，仅当前环境内可达）" : ""}:`
       : "独立 WebUI 运行中:";
     const badgeLabel = isDashboard ? "插件页正常" : "运行正常";
 
@@ -59,10 +59,10 @@ export function renderSidebarStatusCard() {
       <div class="sidebar-status-card">
         <div class="status-badge success">
           <span class="status-dot success" style="width: 6px; height: 6px; background: var(--success); border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle;"></span>
-          ${badgeLabel}
+          ${escapeHtml(badgeLabel)}
         </div>
-        <div class="status-text">${statusLabel}</div>
-        <a href="${webUrl}" target="_blank" class="status-link">${webUrl}</a>
+        <div class="status-text">${escapeHtml(statusLabel)}</div>
+        <a href="${escapeHtml(webUrl)}" target="_blank" class="status-link">${escapeHtml(webUrl)}</a>
       </div>
     `;
 

@@ -133,7 +133,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `telegram_session` | `file` | `[]` | 上传 `.session` 会话文件（绕过验证码/人机验证的首选方案）。 |
 
 > Docker 部署且代理运行在宿主机时，代理主机应填写 `host.docker.internal`，不要填写 `127.0.0.1`；后者会指向 AstrBot 容器自身。
-
+>
 > [!TIP]
 > **(推荐)** 优先推荐使用命令行指令 `/tg login` 流程来直接登录，非常快捷，且无需手动配置或上传 `.session` 文件。
 

@@ -3,7 +3,7 @@
 ## 模块职责
 `core/filters` 是消息过滤引擎。在 `Forwarder` 抓取到候选消息后、进入合并与发送队列之前，决定哪些消息应当被丢弃。含两套互补机制：
 - **`MessageFilter`**：**黑名单语义**，命中规则的消息被丢弃，其余原样保留。
-- **`ContentSafetyFilter`**：**AI 内容审核 + 二维码风险过滤**（NSFW / 色情 / 网贷 / 博彩 / 诈骗类二维码等），由 LLM 判定并在每周期限量调用。
+- **`ContentSafetyFilter`**：**AI 内容审核（LLM 判定，每周期限量调用）+ 二维码风险过滤（本地解码 + 风险词匹配）**（NSFW / 色情 / 网贷 / 博彩 / 诈骗类二维码等）。
 
 ## 入口与启动
 - 由 `Forwarder.__init__` 实例化 `MessageFilter(config)` 并在抓取流程中调用。
@@ -15,7 +15,7 @@
   - 返回：通过过滤的消息子集（保持原顺序，不修改入参对象）。
   - 短路：若 `forward_config` 中既无 `filter_keywords` 也无 `filter_regex`，直接原样返回，不做任何遍历。
   - 命中日志：丢弃时调用 `logger_func(f"[Filter] Filtered by ...")`（若提供）。
-- `ContentSafetyFilter.check_ai(text, image_bytes, config) -> dict`: 调 LLM 判定文本 + 图片，返回 `{"filter": bool, "msg": str}`。对文本构造 search 文本、解码图片走 `check_qr()`。
+- `ContentSafetyFilter.check_ai(text, image_bytes, config) -> dict`: 异步调 LLM 判定文本 + 图片，返回 `{"filter": bool, "msg": str}`。不构造 search 文本、不调用 `check_qr()` —— 前置的 search 文本构造与 QR 判定由 `Forwarder` 完成后再调用。
 - `ContentSafetyFilter.check_qr(image_bytes, config) -> dict`: 本地解析二维码，命中 `qr_risk_keywords` 风险词即过滤；解码失败按图片非风险处理。
 
 ## 关键依赖与配置
@@ -29,7 +29,7 @@
   - `ai_filter_allow_private_endpoint: bool`：是否放行 localhost / 内网 base_url（默认拒绝，防 SSRF；放行时用 `_PinnedResolver` 锁定 DNS）。
   - `ai_filter_max_calls_per_cycle: int`（默认 5）：每个 send 周期内 LLM 调用预算，超出后自动跳过 AI 判定但保留 QR 本地过滤。
   - `qr_risk_keywords: list[str]`：`DEFAULT_QR_RISK_KEYWORDS`（loan/借款/贷款/网贷/博彩/色情等）兜底。
-  - `content_filter_max_image_mb: float`：参与过滤的最大图片体积（过大跳过，防内存峰值）。
+  - `content_filter_max_image_mb: float`：参与过滤的最大图片体积，运行时 `int()` 取整且下限 1 MB（配置 `0.5` 实际按 1 MB 处理；过大跳过，防内存峰值）。
 - LLM 判定需解析为严格 JSON `{"filter": bool, "msg": str}`（`parse_ai_decision`），非法输出按不过滤处理。
 
 ## 数据模型
