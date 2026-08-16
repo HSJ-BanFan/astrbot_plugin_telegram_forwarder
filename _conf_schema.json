@@ -42,7 +42,7 @@
     "proxy_config": {
         "description": "代理配置",
         "type": "object",
-        "hint": "协议、主机、端口与可选认证信息",
+        "hint": "协议、主机、端口与可选认证信息；AstrBot 在 Docker、代理在宿主机时，主机请填 host.docker.internal",
         "items": {
             "protocol": {
                 "description": "协议",
@@ -94,7 +94,7 @@
                 "description": "监听地址",
                 "type": "string",
                 "default": "127.0.0.1",
-                "hint": "默认仅本机访问；如需局域网访问可显式改为 0.0.0.0"
+                "hint": "默认仅当前进程环境访问；Docker 部署需改为 0.0.0.0，并在容器配置中映射监听端口"
             },
             "port": {
                 "description": "监听端口",

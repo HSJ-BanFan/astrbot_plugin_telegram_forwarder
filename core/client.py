@@ -380,28 +380,37 @@ class TelegramClientWrapper:
         forward_cfg = self.config.get("forward_config", {}) if self.config else {}
         allow_rebuild = forward_cfg.get("wrong_session_rebuild_enabled", True)
 
-        try:
-            await self.client.connect()
-        except Exception as e:
-            if not allow_rebuild or not self._is_wrong_session_error(e):
-                raise
+        # 连接守卫：后台启动任务、Web 面板、转发任务可能同时在离线时触发 connect，
+        # 只允许一个 connect() 在飞，其余等锁后二次检查复用同一连接，避免并发 connect。
+        lock = getattr(self, "_connect_lock", None)
+        if lock is None:
+            lock = self._connect_lock = asyncio.Lock()
 
-            session_path = self._session_path()
-            logger.warning(
-                f"[Client] 检测到 wrong session ID，准备清理并重建会话: {session_path}"
-            )
-            await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
-            self._init_client()
-            if not self.client:
-                return False
-
+        async with lock:
+            if self.client.is_connected():
+                return True
             try:
                 await self.client.connect()
-            except Exception as retry_error:
-                logger.error(
-                    f"[Client] wrong session ID 自愈重连失败: {session_path} | first_error={e!r} | retry_error={retry_error!r}"
+            except Exception as e:
+                if not allow_rebuild or not self._is_wrong_session_error(e):
+                    raise
+
+                session_path = self._session_path()
+                logger.warning(
+                    f"[Client] 检测到 wrong session ID，准备清理并重建会话: {session_path}"
                 )
-                return False
+                await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+                self._init_client()
+                if not self.client:
+                    return False
+
+                try:
+                    await self.client.connect()
+                except Exception as retry_error:
+                    logger.error(
+                        f"[Client] wrong session ID 自愈重连失败: {session_path} | first_error={e!r} | retry_error={retry_error!r}"
+                    )
+                    return False
 
         return self.client.is_connected()
 

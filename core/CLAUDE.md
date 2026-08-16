@@ -17,7 +17,7 @@
 
 ## 对外接口
 - `Forwarder` 对外暴露 `check_updates()` / `send_pending_messages()` / `stop()` / `shutdown(timeout)` / `qq_sender`（运行时延迟引导）等。
-- `Main._register_dashboard_web_apis()` 在插件根注册 27 条 Web API（含 `/page/dashboard` 聚合端点与一组 `/api/...` legacy 路由），转发至 `WebAdminServer` 方法。
+- `Main._register_dashboard_web_apis()` 在插件根注册 25 条 Web API（24 条 legacy `/api/...` 路由 + `page/dashboard` 聚合端点），转发至 `WebAdminServer` 方法。
 
 ## 关键依赖与配置
 - 严重依赖外层传入的 `AstrBotConfig`（进行合并覆盖式的配置解析）。

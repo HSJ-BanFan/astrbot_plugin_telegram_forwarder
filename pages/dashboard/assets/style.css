@@ -1686,6 +1686,7 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 12px;
+  min-width: 0;
 }
 
 .form-grid.single {
@@ -1695,12 +1696,10 @@ select {
 .proxy-fields {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns:
-    minmax(120px, 0.75fr)
-    minmax(180px, 1.5fr)
-    minmax(110px, 0.75fr)
-    minmax(150px, 1fr)
-    minmax(150px, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-inline-size: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 12px;
   margin: 0;
   padding: 12px;
@@ -1721,6 +1720,14 @@ select {
   flex-wrap: wrap;
   gap: 10px 18px;
   align-items: center;
+}
+
+.proxy-config-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .proxy-test-item {

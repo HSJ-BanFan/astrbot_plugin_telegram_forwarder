@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 变更记录 (Changelog)
 
+- **2026-08-15**: 修正过期内容。新增 `ContentSafetyFilter`（AI 审核 + 二维码风险过滤）到核心组件与过滤引擎；调度改为三 job + 60s grace（含缓存预热门控）；`/tg` 命令 14 条、Web API 25 条；同步模块索引文件数（filters 3 / senders 15 / web 19 / tests 25 / dashboard 20）与测试覆盖清单。
 - **2026-07-04 (补扫)**: 深入补扫 `relogin.py` 重登流程、`_conf_schema.json` 配置字段、`core/downloader.py` 媒体细节与两份 Web 设计 spec；修正 `core/filters` 接口描述偏差（实际为 `filter_messages` / `filter_keywords` / `filter_regex` 黑名单语义，非 `should_keep` / include/exclude）；新增 4 个独立单测（`test_message_filter` / `test_qq_circuit` / `test_qq_file_fallback` / `test_qq_dispatcher`，共 62 条用例），全量 338 passed。
 - **2026-07-04**: 增量补扫。新增 Web 管理界面（`web/` / `core/web_admin.py` / 缓存层）、`scripts/` 构建流水线、`pages/dashboard/` 生成产物识别；补充 `core/mergers/keyword_next` 新合并器；新增 `core/filters/` 与 `core/mergers/` 模块文档；更新模块结构图与索引。
 - **2026-06-08**: 进行了全仓自适应清点，更新了项目结构拓扑，新增了模块级别的 Mermaid 图与索引。
@@ -23,10 +24,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `Forwarder` (`core/forwarder.py`): 统筹调度，轮询抓取 Telegram 更新并处理发送队列。
   - `QQSender` (`core/senders/qq.py`): QQ 目标转发的门面，下分 13 个子模块（媒体处理、目标探测、批次分发、失败回退等）。
   - `TelegramClientWrapper` (`core/client.py`): 持久化的 Telethon 客户端封装（含跨重载的 `sys` 级客户端/授权缓存）。
+  - `ContentSafetyFilter` (`core/filters/content_safety.py`): AI 内容审核 + 二维码风险过滤（`ai_filter_*` / `qr_risk_keywords`，按 `ai_filter_max_calls_per_cycle` 预算限量调用 LLM，含 SSRF 防护的 pinned resolver）。
   - `PluginCommands` (`core/commands.py`): `/tg` 命令组的命令处理。
   - `WebAdminServer` (`core/web_admin.py`): 独立 Flask Web 管理服务（默认 `127.0.0.1:8180`）。
   - `QQGroupCache` / `TGChannelCache`: 带 TTL 的平台列表缓存（供 Web 选择器使用）。
-- **调度**: APScheduler 双 job（`check_updates` / `send_pending_messages`），启动后有 30s grace period。
+- **调度**: APScheduler 三 job（`cache_refresh` / `check_updates` / `send_pending_messages`），启动后有 60s grace period，先暖缓存再抓取，避免一启动就和 Web 抢 Telethon。
 
 ## 模块结构图
 
@@ -56,14 +58,14 @@ graph TD
 | --- | --- | --- | --- | --- |
 | 根入口 | `main.py` | `Main` 插件类、Dashboard Web API 路由注册、`/tg` 命令注册 | 2 | 高 |
 | `core/` | 核心业务 | 抓取、指令、队列分发、客户端管理、Web 管理后端、平台缓存 | 8 | 高 |
-| `core/senders/` | 平台发送 | QQ 门面及 13 个子模块（媒体/熔断/分发/回退/日志等），Telegram 直发 | 14 | 高 |
-| `core/filters/` | 过滤引擎 | `MessageFilter` 基于 `filter_keywords` / `filter_regex` 的黑名单过滤（命中即丢弃） | 2 | 高 |
+| `core/senders/` | 平台发送 | QQ 门面及 13 个子模块（媒体/熔断/分发/回退/日志等），Telegram 直发 | 15 | 高 |
+| `core/filters/` | 过滤引擎 | `MessageFilter` 黑名单过滤 + `ContentSafetyFilter`（AI 审核 / 二维码风险过滤） | 3 | 高 |
 | `core/mergers/` | 合并策略 | `MessageMerger` + `SomeACGPreviewPlusOriginal` + `KeywordNextNMerge` | 5 | 高 |
 | `common/` | 通用工具 | `Storage`（原子写）、`text_tools`（频道名规范化/Telethon 实体解析） | 3 | 高 |
-| `web/` | Web 前端源 | 唯一手改前端（HTML/CSS/JS 模块化 + 本地 GSAP），可直接 `127.0.0.1:8180` 服务 | 15 | 高 |
-| `tests/` | 测试套件 | 15 个 test 文件 + 极深 mock 的 `conftest.py` | 16 | 高 |
+| `web/` | Web 前端源 | 唯一手改前端（HTML/CSS/JS 模块化 + 本地 GSAP），可直接 `127.0.0.1:8180` 服务 | 19 | 高 |
+| `tests/` | 测试套件 | 24 个 test 文件 + 极深 mock 的 `conftest.py` | 25 | 高 |
 | `scripts/` | 构建工具 | `build_frontend.py` 把 `web/` 编译为 `pages/dashboard/` 沙箱产物 | 3 | 高 |
-| `pages/dashboard/` | 生成产物 | **禁止手改**：AstrBot 插件页沙箱，由 `scripts/build_frontend.py` 生成 | 17 | 跳过 |
+| `pages/dashboard/` | 生成产物 | **禁止手改**：AstrBot 插件页沙箱，由 `scripts/build_frontend.py` 生成 | 20 | 跳过 |
 
 ## 运行与开发
 
@@ -93,14 +95,17 @@ Web 管理界面默认监听 `http://127.0.0.1:8180`（可在 `_conf_schema.json
 - **前端门禁**: `tests/test_web_frontend_assets.py` 验证 `pages/dashboard/` 与 `web/` 同步（CI 必过）
 - **覆盖范围**:
   - QQ 发送链路：`test_qq_sender.py`、`test_qq_log_policy.py`、`test_qq_circuit.py`、`test_qq_dispatcher.py`、`test_qq_file_fallback.py`
-  - 消息过滤：`test_message_filter.py`
+  - 消息过滤：`test_message_filter.py`、`test_content_safety_filter.py`
   - 抓取调度：`test_forwarder_send_pending.py`
+  - 启动预热门控：`test_main_cache_warm_gate.py`
   - 持久化：`test_storage_pending_retry.py`
   - 客户端会话：`test_client_session_schema.py`、`test_relogin.py`
   - 命令：`test_commands_debug.py`
   - 合并：`test_keyword_next_merge.py`
   - 下载：`test_downloader.py`
-  - Web 管理后端：`test_web_admin.py`
+  - 平台列表缓存：`test_qq_group_cache.py`、`test_tg_channel_cache.py`
+  - Web 管理后端：`test_web_admin.py`、`test_web_context_with_action.py`
+  - 元数据/默认配置/打包：`test_metadata_compatibility.py`、`test_default_config_examples.py`、`test_install_package.py`
   - 前端产物同步：`test_web_frontend_assets.py`
 
 ## 编码规范
@@ -121,7 +126,7 @@ Web 管理界面默认监听 `http://127.0.0.1:8180`（可在 `_conf_schema.json
 
 ## 相关文件清单
 
-- `main.py` — 插件入口、Web API 路由表（27 条）、`/tg` 命令组（13 条）
+- `main.py` — 插件入口、Web API 路由表（25 条）、`/tg` 命令组（14 条）
 - `relogin.py` — Telegram 重新登录工具
 - `metadata.yaml` — v0.9.0，作者 HSJ-BanFan&Foolllll
 - `requirements.txt` — apscheduler / telethon>=1.42.0,<1.43.0 / pysocks / flask

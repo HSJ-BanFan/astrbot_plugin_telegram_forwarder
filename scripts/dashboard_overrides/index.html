@@ -233,7 +233,7 @@
                     <h3>连接信息</h3>
                     <div class="form-grid">
                       <label class="field">API ID<input id="apiIdInput" type="number" inputmode="numeric" /></label>
-                      <label class="field">API Hash<input id="apiHashInput" type="password" autocomplete="off" /></label>
+                      <label class="field">API Hash<input id="apiHashInput" type="password" autocomplete="off" minlength="32" maxlength="32" pattern="[0-9a-fA-F]{32}" /></label>
                       <label class="field">手机号<input id="phoneInput" type="tel" placeholder="+8613800000000" /></label>
                       <fieldset class="proxy-fields">
                         <legend>代理（可选）</legend>
@@ -248,6 +248,7 @@
                         <label class="field">端口<input id="proxyPortInput" type="number" inputmode="numeric" min="1" max="65535" placeholder="1080" /></label>
                         <label class="field">账号<input id="proxyUsernameInput" type="text" autocomplete="username" placeholder="可留空" /></label>
                         <label class="field">密码<input id="proxyPasswordInput" type="password" autocomplete="current-password" placeholder="可留空" /></label>
+                        <p class="proxy-config-hint">AstrBot 运行在 Docker、代理运行在宿主机时，请将代理地址填写为 <code>host.docker.internal</code>，不要填写 <code>127.0.0.1</code>。</p>
                         <div class="proxy-test-row">
                           <div class="proxy-test-item">
                             <button class="btn btn-soft" id="proxyConnectivityBtn" type="button">测试</button>
@@ -420,7 +421,7 @@
             <div class="panel-head">
               <div>
                 <h2>Web 设置</h2>
-                <p>host/port 保存后需要重载插件生效。</p>
+                <p>host/port 保存后需要重载插件生效。Docker 部署需监听 <code>0.0.0.0</code>，并将同一端口映射到宿主机。</p>
               </div>
             </div>
             <div class="settings-grid">

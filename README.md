@@ -98,6 +98,8 @@
    ```
    独立 Flask 页面首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。这些配置只影响独立 Flask 页面，不影响 AstrBot Dashboard 内嵌页面。
 
+   > Docker 部署时，`127.0.0.1` 只代表容器自身。若要从宿主机浏览器访问独立页面，请将 `web_config.host` 设为 `0.0.0.0`，并在 Compose / Docker 中映射同一个监听端口（例如 `6199:6199`）。
+
 页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 
 ### 前端源码与构建（开发者须知）
@@ -129,6 +131,8 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 | `api_hash` | `string` | `""` | **(必填)** Telegram API 凭证 Hash (从 [my.telegram.org](https://my.telegram.org) 获取)。 |
 | `proxy_config` | `object` | 见配置页 | 结构化代理：协议、IP/域名、端口及可选账号密码；旧 `proxy` URL 自动兼容。 |
 | `telegram_session` | `file` | `[]` | 上传 `.session` 会话文件（绕过验证码/人机验证的首选方案）。 |
+
+> Docker 部署且代理运行在宿主机时，代理主机应填写 `host.docker.internal`，不要填写 `127.0.0.1`；后者会指向 AstrBot 容器自身。
 
 > [!TIP]
 > **(推荐)** 优先推荐使用命令行指令 `/tg login` 流程来直接登录，非常快捷，且无需手动配置或上传 `.session` 文件。

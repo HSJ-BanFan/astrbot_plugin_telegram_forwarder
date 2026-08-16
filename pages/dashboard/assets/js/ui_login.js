@@ -1,7 +1,79 @@
 import { store } from './store.js';
 import { apiRequest, isDashboardPage } from './api.js';
 import { escapeHtml, safeStorageRemove, safeStorageSet } from './utils.js';
-import { els, showToast, withAction, withButtonLoading, loadAll, saveConfig, enterApp } from './context.js';
+import { els, showToast, withAction, withButtonLoading, loadAll, enterApp } from './context.js';
+
+const DEFAULT_PROXY_CONFIG = {
+  protocol: "socks5",
+  host: "",
+  port: 0,
+  username: "",
+  password: "",
+};
+
+function normalizeProxyConfig(value) {
+  const config = value && typeof value === "object" ? value : {};
+  return {
+    protocol: String(config.protocol || DEFAULT_PROXY_CONFIG.protocol),
+    host: String(config.host || "").trim(),
+    port: Number.parseInt(config.port, 10) || 0,
+    username: String(config.username || "").trim(),
+    password: String(config.password || ""),
+  };
+}
+
+function proxyConfigFromInputs() {
+  return normalizeProxyConfig({
+    protocol: els.proxyProtocolInput?.value,
+    host: els.proxyHostInput?.value,
+    port: els.proxyPortInput?.value,
+    username: els.proxyUsernameInput?.value,
+    password: els.proxyPasswordInput?.value,
+  });
+}
+
+function sameProxyConfig(left, right) {
+  return JSON.stringify(normalizeProxyConfig(left)) === JSON.stringify(normalizeProxyConfig(right));
+}
+
+function syncLoginConfigInputs(config) {
+  const proxy = normalizeProxyConfig(config?.proxy_config);
+  if (els.apiIdInput) els.apiIdInput.value = config?.api_id || "";
+  if (els.apiHashInput) els.apiHashInput.value = config?.api_hash || "";
+  if (els.proxyProtocolInput) els.proxyProtocolInput.value = proxy.protocol;
+  if (els.proxyHostInput) els.proxyHostInput.value = proxy.host;
+  if (els.proxyPortInput) els.proxyPortInput.value = proxy.port || "";
+  if (els.proxyUsernameInput) els.proxyUsernameInput.value = proxy.username;
+  if (els.proxyPasswordInput) els.proxyPasswordInput.value = proxy.password;
+}
+
+async function saveChangedLoginConfig() {
+  const loaded = store.state.config || {};
+  const formApiId = Number.parseInt(els.apiIdInput?.value, 10) || 0;
+  const formApiHash = els.apiHashInput?.value.trim() || "";
+  const formProxy = proxyConfigFromInputs();
+  const apiIdChanged = formApiId !== (Number.parseInt(loaded.api_id, 10) || 0);
+  const apiHashChanged = formApiHash !== String(loaded.api_hash || "");
+  const proxyChanged = !sameProxyConfig(formProxy, loaded.proxy_config);
+
+  // 先读取服务器最新值，再把用户在当前页面真正改动过的字段重放上去。
+  // 旧标签页因此不会在发送验证码前把整份过期配置写回。
+  const latestResult = await apiRequest("/api/config");
+  const latest = latestResult?.config || loaded;
+  const patch = {};
+  if (apiIdChanged) patch.api_id = formApiId;
+  if (apiHashChanged) patch.api_hash = formApiHash;
+  if (proxyChanged) patch.proxy_config = formProxy;
+
+  let resolved = latest;
+  if (Object.keys(patch).length > 0) {
+    const result = await apiRequest("/api/config", "POST", { config: patch });
+    resolved = result?.config || { ...latest, ...patch };
+  }
+  store.updateState({ config: resolved });
+  syncLoginConfigInputs(resolved);
+  return resolved;
+}
 
 export async function checkToken(token) {
   if (isDashboardPage()) return true;
@@ -249,7 +321,7 @@ export function initLogin() {
     els.sendCodeBtn.addEventListener("click", () =>
       // 登录相关动作后强制刷一次状态（含 me 缓存），保证昵称/步骤及时更新。
       withButtonLoading(els.sendCodeBtn, "正在发送验证码...", async () => {
-        await saveConfig({ quiet: true });
+        await saveChangedLoginConfig();
         const result = await apiRequest("/api/login/start", "POST", {
           phone: els.phoneInput.value.trim(),
           replace_existing: Boolean(store.state.status?.telegram?.replace_existing),
@@ -259,14 +331,6 @@ export function initLogin() {
       }, "验证码已发送。", { refresh: "status" })
     );
   }
-
-  const proxyConfigFromInputs = () => ({
-    protocol: els.proxyProtocolInput?.value || "socks5",
-    host: els.proxyHostInput?.value.trim() || "",
-    port: Number.parseInt(els.proxyPortInput?.value, 10) || 0,
-    username: els.proxyUsernameInput?.value || "",
-    password: els.proxyPasswordInput?.value || "",
-  });
 
   const runProxyTest = (button, resultElement, mode) => {
     if (!button || !resultElement) return;
@@ -285,10 +349,10 @@ export function initLogin() {
         }, 12000);
         const success = Boolean(result.success) && Number.isFinite(result.latency_ms);
         resultElement.classList.add(success ? "success" : "timeout");
-        resultElement.textContent = success ? `${result.latency_ms} ms` : "超时";
+        resultElement.textContent = success ? `${result.latency_ms} ms` : (result.message || "连接失败");
       } catch (error) {
         resultElement.classList.add("timeout");
-        resultElement.textContent = error.message || "超时";
+        resultElement.textContent = error.message || "连接失败";
       } finally {
         button.disabled = false;
         button.textContent = originalText;

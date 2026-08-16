@@ -19,7 +19,7 @@
 
 ## 数据模型
 - `store.js`: 持有 `state.config` / `state.status` / `state.qqGroups` / `state.tgChannels` 等，并通过订阅模式广播变更。
-- `app.js:FORWARD_GROUPS`: 配置表单的结构化描述（key / label / type / defaultValue / suffix / placeholder），驱动 `ui_channels.js` 动态渲染表单。
+- `config.js:FORWARD_GROUPS`: 配置表单的结构化描述（key / label / type / defaultValue / suffix / placeholder），驱动 `ui_config.js` 动态渲染表单。
 - `MSG_TYPES`: `["文字","图片","视频","音频","文件"]`；`TRI_STATE`: `["继承全局","开启","关闭"]`。
 
 ## 测试与质量
@@ -43,14 +43,18 @@
 - `assets/css/components.css` — 通用组件样式
 - `assets/css/section-channels.css` — 频道规则表单样式
 - `assets/js/api.js` — API 调用与运行环境适配
+- `assets/js/config.js` — 前端常量 / 表单字段定义
 - `assets/js/store.js` — 状态管理
 - `assets/js/context.js` — 全局工具（toast / loader / 物理卡片绑定等）
 - `assets/js/ui_login.js` — Telegram 登录流程 UI
 - `assets/js/ui_overview.js` — 运行总览 UI
 - `assets/js/ui_channels.js` — 频道规则与合并规则 UI
+- `assets/js/ui_config.js` — 配置表单渲染 UI
+- `assets/js/ui_topology.js` — 转发关系拓扑 UI
 - `assets/js/ui_selector.js` — QQ 群 / Telegram 频道选择器
 - `assets/js/utils.js` — 通用工具函数（含 `motionEnabled`）
 - `assets/js/gsap.min.js` — 本地化 GSAP 动画库
 
 ## 变更记录 (Changelog)
+- **2026-08-15**: 补全 `config.js` / `ui_config.js` / `ui_topology.js` 到相关文件清单。
 - **2026-07-04**: 初始化模块文档。聚焦 PR33（Web Admin QQ 群选择）与前端性能优化（GSAP 本地化、微动画）。
