@@ -98,7 +98,7 @@
    ```
    独立 Flask 页面首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。这些配置只影响独立 Flask 页面，不影响 AstrBot Dashboard 内嵌页面。
 
-   > Docker 部署时，`127.0.0.1` 只代表容器自身。若要从宿主机浏览器访问独立页面，请将 `web_config.host` 设为 `0.0.0.0`，并在 Compose / Docker 中映射同一个监听端口（例如 `6199:6199`）。
+   > Docker 部署时，`127.0.0.1` 只代表容器自身。若要从宿主机浏览器访问独立页面，请将 `web_config.host` 设为 `0.0.0.0`，并在 Compose / Docker 中映射默认监听端口 `8180`（例如 `8180:8180`；仅本机访问可写成 `127.0.0.1:8180:8180`）。
 
 页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 
