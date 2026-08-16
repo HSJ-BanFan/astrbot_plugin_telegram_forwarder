@@ -19,7 +19,7 @@
 
 ## 数据模型
 - `store.js`: 持有 `state.config` / `state.status` / `state.qqGroups` / `state.tgChannels` 等，并通过订阅模式广播变更。
-- `app.js:FORWARD_GROUPS`: 配置表单的结构化描述（key / label / type / defaultValue / suffix / placeholder），驱动 `ui_channels.js` 动态渲染表单。
+- `config.js:FORWARD_GROUPS`: 配置表单的结构化描述（key / label / type / defaultValue / suffix / placeholder），驱动 `ui_config.js` 动态渲染表单。
 - `MSG_TYPES`: `["文字","图片","视频","音频","文件"]`；`TRI_STATE`: `["继承全局","开启","关闭"]`。
 
 ## 测试与质量
@@ -27,6 +27,8 @@
 - `motionEnabled()` 守卫（`utils.js`）尊重用户偏好与无障碍设置，禁用动效时跳过 GSAP 调用。
 
 ## 常见问题 (FAQ)
+- **Q**: 登录页点"发送验证码"会覆盖其它页面刚保存的配置吗？
+  **A**: 不会。`ui_login.js` 的 `saveChangedLoginConfig()` 先 GET `/api/config` 读服务器最新值，只 patch 用户在当前页面真正改动的 `api_id` / `api_hash` / `proxy_config` 字段，未改动字段不写回。
 - **Q**: 为什么 `style.css` 只允许写 `@import`？
   **A**: AstrBot 插件页沙箱无法解析子路径 `@import`，`build_frontend.py` 会把所有 `@import` 内联成单一自包含文件。直接写普通 CSS 会被构建器拒绝。
 - **Q**: 改完前端为什么打开还是旧版本？
@@ -43,14 +45,19 @@
 - `assets/css/components.css` — 通用组件样式
 - `assets/css/section-channels.css` — 频道规则表单样式
 - `assets/js/api.js` — API 调用与运行环境适配
+- `assets/js/config.js` — 前端常量 / 表单字段定义
 - `assets/js/store.js` — 状态管理
 - `assets/js/context.js` — 全局工具（toast / loader / 物理卡片绑定等）
 - `assets/js/ui_login.js` — Telegram 登录流程 UI
 - `assets/js/ui_overview.js` — 运行总览 UI
 - `assets/js/ui_channels.js` — 频道规则与合并规则 UI
+- `assets/js/ui_config.js` — 配置表单渲染 UI
+- `assets/js/ui_topology.js` — 转发关系拓扑 UI
 - `assets/js/ui_selector.js` — QQ 群 / Telegram 频道选择器
 - `assets/js/utils.js` — 通用工具函数（含 `motionEnabled`）
 - `assets/js/gsap.min.js` — 本地化 GSAP 动画库
 
 ## 变更记录 (Changelog)
+- **2026-08-16**: 补充登录保存行为 FAQ（`saveChangedLoginConfig` 只 patch 已改动字段）。
+- **2026-08-15**: 补全 `config.js` / `ui_config.js` / `ui_topology.js` 到相关文件清单。
 - **2026-07-04**: 初始化模块文档。聚焦 PR33（Web Admin QQ 群选择）与前端性能优化（GSAP 本地化、微动画）。

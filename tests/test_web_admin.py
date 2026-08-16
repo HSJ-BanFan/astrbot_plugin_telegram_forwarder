@@ -553,6 +553,24 @@ def test_save_config_persists_structured_proxy_and_legacy_url(web_admin):
     web_admin.server._rebuild_client.assert_awaited_once_with()
 
 
+@pytest.mark.asyncio
+async def test_save_config_rejects_malformed_api_hash(web_admin):
+    web_admin.server._rebuild_client = AsyncMock()
+    with pytest.raises(web_admin.module.WebAdminError, match="32 位十六进制"):
+        await web_admin.server.save_config({"config": {"api_hash": "too-short"}})
+
+
+@pytest.mark.asyncio
+async def test_save_config_preserves_valid_api_hash(web_admin):
+    api_hash = "0123456789abcdef0123456789abcdef"
+    web_admin.server._rebuild_client = AsyncMock()
+
+    await web_admin.server.save_config({"config": {"api_hash": api_hash}})
+
+    assert web_admin.plugin.config["api_hash"] == api_hash
+    web_admin.server._rebuild_client.assert_awaited_once_with()
+
+
 def test_save_config_legacy_proxy_replaces_existing_structured_proxy(web_admin):
     web_admin.plugin.config.update(
         {
@@ -901,7 +919,36 @@ def test_probe_proxy_timeout_returns_timeout_status(web_admin):
             8.0,
         )
 
-    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+    assert result == {
+        "success": False,
+        "status": "timeout",
+        "latency_ms": None,
+        "message": "连接超时，请检查代理地址、端口和防火墙。",
+    }
+
+
+def test_probe_proxy_connection_refused_returns_docker_loopback_hint(web_admin):
+    with patch.object(
+        web_admin.module.socket,
+        "create_connection",
+        side_effect=ConnectionRefusedError("connection refused"),
+    ):
+        result = web_admin.server._probe_proxy_sync(
+            {
+                "protocol": "socks5",
+                "host": "127.0.0.1",
+                "port": 7897,
+                "username": "",
+                "password": "",
+            },
+            "connectivity",
+            8.0,
+        )
+
+    assert result["success"] is False
+    assert result["status"] == "connection_refused"
+    assert result["latency_ms"] is None
+    assert "host.docker.internal" in result["message"]
 
 
 def test_probe_proxy_uses_single_timeout_budget(web_admin):
@@ -929,7 +976,12 @@ def test_probe_proxy_uses_single_timeout_budget(web_admin):
             8.0,
         )
 
-    assert result == {"success": False, "status": "timeout", "latency_ms": None}
+    assert result == {
+        "success": False,
+        "status": "timeout",
+        "latency_ms": None,
+        "message": "连接超时，请检查代理地址、端口和防火墙。",
+    }
 
 
 def test_proxy_test_rejects_invalid_mode(web_admin):
@@ -1673,3 +1725,26 @@ async def test_login_start_auto_clears_on_auth_key_duplicated(web_admin, tmp_pat
     temp_wrapper.send_login_code.assert_awaited_once_with("+8613800138000")
     official.send_login_code.assert_awaited()
     assert web_admin.server._login_data.get("replace_existing") is True
+
+
+@pytest.mark.asyncio
+async def test_login_start_translates_invalid_api_credentials(web_admin):
+    client = SimpleNamespace(is_user_authorized=AsyncMock(return_value=False))
+    wrapper = SimpleNamespace(
+        client=client,
+        ensure_connected=AsyncMock(return_value=True),
+        send_login_code=AsyncMock(
+            side_effect=ValueError(
+                "The api_id/api_hash combination is invalid (caused by SendCodeRequest)"
+            )
+        ),
+    )
+    web_admin.plugin.config["api_hash"] = "0123456789abcdef0123456789abcdef"
+    web_admin.server._ensure_wrapper_ready = AsyncMock(return_value=wrapper)
+    flood_wait_error = type("FloodWaitError", (Exception,), {})
+
+    with (
+        patch.object(web_admin.module, "FloodWaitError", flood_wait_error),
+        pytest.raises(web_admin.module.WebAdminError, match="API ID / Hash 不匹配"),
+    ):
+        await web_admin.server.login_start({"phone": "+8613800138000"})

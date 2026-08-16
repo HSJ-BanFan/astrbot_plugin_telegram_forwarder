@@ -158,6 +158,23 @@ def test_dashboard_page_boot_uses_aggregate_page_api() -> None:
     assert "telegram.login_in_progress" in context_text
 
 
+def test_send_code_does_not_resave_the_entire_stale_config_snapshot() -> None:
+    """登录按钮只能保存已改动的登录字段，不能覆盖其它页面刚保存的配置。"""
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "ui_login.js").read_text(encoding="utf-8")
+
+        assert "saveChangedLoginConfig" in text
+        assert "await saveChangedLoginConfig();" in text
+        send_code_block = re.search(
+            r"sendCodeBtn.*?addEventListener\(\"click\".*?apiRequest\(\"/api/login/start\"",
+            text,
+            re.S,
+        )
+        assert send_code_block
+        assert "saveConfig(" not in send_code_block.group(0)
+        assert 'apiRequest("/api/config", "POST", { config: patch })' in text
+
+
 def test_dashboard_page_uses_sandbox_safe_storage_helpers() -> None:
     utils_text = (PAGE_ASSETS / "js" / "utils.js").read_text(encoding="utf-8")
     assert "safeStorageGet" in utils_text
@@ -478,12 +495,10 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         assert '"proxyQualityBtn"' in app_text
         assert 'apiRequest("/api/proxy/test", "POST"' in login_text
         assert (
-            'resultElement.textContent = success ? `${result.latency_ms} ms` : "超时"'
+            'resultElement.textContent = success ? `${result.latency_ms} ms` : (result.message || "连接失败")'
             in login_text
         )
-        assert (
-            'resultElement.textContent = error.message || "超时"' in login_text
-        )
+        assert 'resultElement.textContent = error.message || "连接失败"' in login_text
         assert 'error.message.includes("填写")' not in login_text
         assert 'button.addEventListener("click", async () =>' in login_text
         assert "button.textContent = originalText" in login_text
@@ -524,6 +539,45 @@ def test_proxy_test_controls_and_api_are_present_in_generated_frontends() -> Non
         assert "fieldsMatchSearch" in topology_text
         context_text = (asset_root / "js" / "context.js").read_text(encoding="utf-8")
         assert 'typeof options.refresh === "function"' in context_text
+
+
+def test_proxy_form_grid_responds_to_its_container_width() -> None:
+    for css_path in (
+        WEB_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "css" / "components.css",
+    ):
+        text = css_path.read_text(encoding="utf-8")
+        match = re.search(r"\.proxy-fields\s*\{(?P<body>.*?)\}", text, re.DOTALL)
+        assert match is not None
+        body = match.group("body")
+        assert "min-inline-size: 0" in body
+        assert "repeat(auto-fit" in body
+
+
+def test_docker_network_hints_are_present() -> None:
+    for index_path in (ROOT / "web" / "index.html", PAGE_ROOT / "index.html"):
+        text = index_path.read_text(encoding="utf-8")
+        assert "host.docker.internal" in text
+        assert "0.0.0.0" in text
+
+    schema_text = (ROOT / "_conf_schema.json").read_text(encoding="utf-8")
+    assert "host.docker.internal" in schema_text
+    assert "Docker 部署需改为 0.0.0.0" in schema_text
+
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "ui_config.js").read_text(encoding="utf-8")
+        assert "Docker 中仅容器内可达" in text
+
+
+def test_api_hash_input_requires_full_hex_value() -> None:
+    for index_path in (ROOT / "web" / "index.html", PAGE_ROOT / "index.html"):
+        text = index_path.read_text(encoding="utf-8")
+        match = re.search(r'<input id="apiHashInput"(?P<attrs>[^>]+)>', text)
+        assert match is not None
+        attrs = match.group("attrs")
+        assert 'minlength="32"' in attrs
+        assert 'maxlength="32"' in attrs
+        assert 'pattern="[0-9a-fA-F]{32}"' in attrs
 
 
 def test_runtime_buttons_are_bound_once_and_disabled_while_running() -> None:

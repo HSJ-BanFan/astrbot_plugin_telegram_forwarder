@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hmac
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -235,6 +236,13 @@ class WebAdminServer:
     @staticmethod
     def _normalize_phone(phone: str) -> str:
         return (phone or "").replace(" ", "").replace("-", "").strip()
+
+    @staticmethod
+    def _validate_api_hash(value: Any) -> str:
+        api_hash = str(value or "").strip()
+        if api_hash and not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
+            raise WebAdminError("api_hash 必须是 32 位十六进制字符串。")
+        return api_hash
 
     def _create_app(self):
         try:
@@ -1039,6 +1047,50 @@ class WebAdminServer:
         return restored
 
     @staticmethod
+    def _proxy_failure_result(
+        proxy_config: dict[str, Any], exc: Exception
+    ) -> dict[str, Any]:
+        error_text = f"{type(exc).__name__}: {exc}".casefold()
+        if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in error_text:
+            status = "timeout"
+            message = "连接超时，请检查代理地址、端口和防火墙。"
+        elif isinstance(exc, socket.gaierror):
+            status = "dns_error"
+            message = "无法解析代理主机名，请检查 IP / 域名。"
+        elif isinstance(exc, PermissionError) or "auth" in error_text:
+            status = "auth_failed"
+            message = "代理认证失败，请检查账号和密码。"
+        elif isinstance(exc, ConnectionRefusedError) or "refused" in error_text:
+            status = "connection_refused"
+            message = "连接被拒绝，请确认代理服务已启动并监听该地址与端口。"
+        elif isinstance(exc, ssl.SSLError):
+            status = "tls_error"
+            message = "代理已连接，但访问 Telegram 时 TLS 校验失败。"
+        else:
+            status = "connection_failed"
+            message = "代理连接失败，请检查协议、地址、端口和认证信息。"
+
+        host = str(proxy_config.get("host") or "").strip().strip("[]").casefold()
+        if (
+            host == "localhost" or host == "::1" or host.startswith("127.")
+        ) and status in {
+            "timeout",
+            "connection_refused",
+            "connection_failed",
+        }:
+            message += (
+                " 若 AstrBot 运行在 Docker 而代理位于宿主机，"
+                "请将代理主机改为 host.docker.internal。"
+            )
+
+        return {
+            "success": False,
+            "status": status,
+            "latency_ms": None,
+            "message": message,
+        }
+
+    @staticmethod
     def _probe_proxy_sync(
         proxy_config: dict[str, Any], mode: str, timeout: float
     ) -> dict[str, Any]:
@@ -1084,6 +1136,8 @@ class WebAdminServer:
                             break
                         response += chunk
                     status_line = response.split(b"\r\n", 1)[0]
+                    if b" 407 " in status_line:
+                        raise PermissionError("HTTP proxy authentication failed")
                     if b" 200 " not in status_line:
                         raise OSError("HTTP proxy CONNECT failed")
                 else:
@@ -1108,8 +1162,12 @@ class WebAdminServer:
             latency_ms = max(1, round((time.perf_counter() - started) * 1000))
             return {"success": True, "status": "ok", "latency_ms": latency_ms}
         except (OSError, TimeoutError, socks.ProxyError) as exc:
-            logger.info(f"[WebAdmin] 代理测试未通过 ({mode}): {type(exc).__name__}")
-            return {"success": False, "status": "timeout", "latency_ms": None}
+            result = WebAdminServer._proxy_failure_result(proxy_config, exc)
+            logger.info(
+                f"[WebAdmin] 代理测试未通过 ({mode}/{result['status']}): "
+                f"{type(exc).__name__}"
+            )
+            return result
         finally:
             if sock is not None:
                 try:
@@ -1264,6 +1322,8 @@ class WebAdminServer:
                     value = int(value or 0)
                 except (TypeError, ValueError) as exc:
                     raise WebAdminError("api_id 必须是数字。") from exc
+            elif key == "api_hash":
+                value = self._validate_api_hash(value)
             elif key in ("target_qq_session", "telegram_session"):
                 value = self._as_string_list(value)
             elif key == "debug_enabled_default":
@@ -1639,6 +1699,7 @@ class WebAdminServer:
 
     async def login_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         replace_existing = self._to_bool(payload.get("replace_existing"), False)
+        self._validate_api_hash(self.plugin.config.get("api_hash"))
         phone = self._normalize_phone(
             str(payload.get("phone") or self.plugin.config.get("phone") or "")
         )
@@ -1691,6 +1752,11 @@ class WebAdminServer:
         except WebAdminError:
             raise
         except Exception as exc:
+            if "api_id/api_hash combination is invalid" in str(exc).casefold():
+                raise WebAdminError(
+                    "Telegram API ID / Hash 不匹配，请重新从 my.telegram.org/apps "
+                    "复制同一应用的完整凭据后保存。"
+                ) from exc
             # AuthKey 冲突优先于其它异常分类（部分 Telethon 错误会叠在 RPC 链上）。
             if self._is_auth_key_duplicated_error(exc):
                 logger.warning(

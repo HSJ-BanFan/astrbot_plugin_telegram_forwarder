@@ -43,6 +43,10 @@ class Main(star.Star):
     # 频道/群组列表缓存 1 小时；获取超时 120s（慢链路也能扫全）。
     CACHE_REFRESH_SECONDS = 3600
     CACHE_WARM_TIMEOUT_SECONDS = 130
+    # 启动时后台连接 Telegram 的单次尝试预算与重试间隔。
+    # 离线/无代理时绝不阻塞 AstrBot 主服务启动；连接成功后再激活调度器。
+    STARTUP_CONNECT_TIMEOUT_SECONDS = 20
+    STARTUP_CONNECT_RETRY_SECONDS = 30
 
     def _resolve_uploaded_session_path(self, uploaded_session_path: str) -> str | None:
         plugin_dir = self.plugin_data_dir.resolve()
@@ -180,6 +184,7 @@ class Main(star.Star):
         self.bot = None
         self._runtime_bootstrap_task = None
         self._cache_warm_task = None
+        self._startup_connect_task = None
         self._web_loop = None
         self.web_admin_server = None
 
@@ -797,27 +802,64 @@ class Main(star.Star):
         return True
 
     async def initialize(self):
-        """启动插件运行时。"""
+        """启动插件运行时（不阻塞 AstrBot 主服务启动）。"""
         self._web_loop = asyncio.get_running_loop()
         self._start_web_admin_server()
 
-        # 启动 Telegram 客户端并恢复会话状态。
+        # 后台完成 Telegram 连接与授权：离线/无代理时由 _bootstrap_after_connect
+        # 按节流持续重试，连接成功后再激活调度器，避免同步等待阻塞 AstrBot 主 WebUI。
         if self.client_wrapper.client:
-            logger.debug("正在尝试连接 Telegram 客户端...")
-            await self.client_wrapper.start()
-
-        # 检查客户端是否已连接并完成授权。
-        is_authorized = self.client_wrapper.is_authorized()
-        logger.info(
-            f"Telegram 客户端授权状态: {'已授权' if is_authorized else '未授权'}"
-        )
-
-        if is_authorized:
-            await self.activate_runtime_after_authorized()
-        else:
-            logger.error(
-                "Telegram 客户端未授权，定时任务未启动。请检查 session 文件或 api_id/api_hash。"
+            self._startup_connect_task = asyncio.create_task(
+                self._bootstrap_after_connect()
             )
+        else:
+            logger.warning(
+                "Telegram 客户端未初始化，定时任务未启动。请配置 api_id/api_hash。"
+            )
+
+    async def _bootstrap_after_connect(self) -> None:
+        """后台连接 → 授权检查 → 激活调度器。
+
+        每次连接尝试有超时上限（STARTUP_CONNECT_TIMEOUT_SECONDS），失败按
+        STARTUP_CONNECT_RETRY_SECONDS 节流重试；代理恢复后自动完成启动，
+        无需重启 AstrBot 或手动触发。
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                await asyncio.wait_for(
+                    self.client_wrapper.start(),
+                    timeout=self.STARTUP_CONNECT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[Main] 连接 Telegram 超时（第 {attempt} 次），"
+                    f"{self.STARTUP_CONNECT_RETRY_SECONDS}s 后重试..."
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"[Main] 连接 Telegram 失败（第 {attempt} 次）: {e!r}，"
+                    f"{self.STARTUP_CONNECT_RETRY_SECONDS}s 后重试..."
+                )
+            else:
+                if self.client_wrapper.is_authorized():
+                    logger.info("Telegram 客户端授权状态: 已授权")
+                    await self.activate_runtime_after_authorized()
+                    return
+                if self.client_wrapper.is_connected():
+                    logger.error(
+                        "Telegram 客户端未授权，定时任务未启动。"
+                        "请检查 session 文件或 api_id/api_hash。"
+                    )
+                    return
+                logger.warning(
+                    f"[Main] Telegram 客户端连接未就绪（第 {attempt} 次），"
+                    f"{self.STARTUP_CONNECT_RETRY_SECONDS}s 后重试..."
+                )
+            await asyncio.sleep(self.STARTUP_CONNECT_RETRY_SECONDS)
 
     async def terminate(self):
         """关闭插件时清理资源。"""
@@ -826,6 +868,14 @@ class Main(star.Star):
         if self.web_admin_server:
             self.web_admin_server.stop()
             self.web_admin_server = None
+
+        # 取消后台启动连接任务。
+        if self._startup_connect_task and not self._startup_connect_task.done():
+            self._startup_connect_task.cancel()
+            try:
+                await self._startup_connect_task
+            except asyncio.CancelledError:
+                pass
 
         # 取消延迟运行时引导任务。
         if self._runtime_bootstrap_task and not self._runtime_bootstrap_task.done():
