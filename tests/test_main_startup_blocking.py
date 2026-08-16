@@ -134,7 +134,7 @@ async def _teardown_main(main, client_mod):
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
     client_mod.TelegramClientWrapper.clear_cache()
 

@@ -239,7 +239,7 @@ class WebAdminServer:
 
     @staticmethod
     def _validate_api_hash(value: Any) -> str:
-        api_hash = str(value or "").strip()
+        api_hash = "" if value is None else str(value).strip()
         if api_hash and not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
             raise WebAdminError("api_hash 必须是 32 位十六进制字符串。")
         return api_hash

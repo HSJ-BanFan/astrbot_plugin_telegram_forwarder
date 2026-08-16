@@ -48,18 +48,19 @@ function syncLoginConfigInputs(config) {
 }
 
 async function saveChangedLoginConfig() {
-  const loaded = store.state.config || {};
+  // 以服务器最新配置为基线。store.state.config 可能已被 collectForms() 等路径
+  // 改写成未保存的表单值，拿它对比会误判"没改动"而跳过 patch，导致登录仍用旧凭据。
+  const latestResult = await apiRequest("/api/config");
+  const latest = latestResult?.config || store.state.config || {};
   const formApiId = Number.parseInt(els.apiIdInput?.value, 10) || 0;
   const formApiHash = els.apiHashInput?.value.trim() || "";
   const formProxy = proxyConfigFromInputs();
-  const apiIdChanged = formApiId !== (Number.parseInt(loaded.api_id, 10) || 0);
-  const apiHashChanged = formApiHash !== String(loaded.api_hash || "");
-  const proxyChanged = !sameProxyConfig(formProxy, loaded.proxy_config);
+  const apiIdChanged = formApiId !== (Number.parseInt(latest.api_id, 10) || 0);
+  const apiHashChanged = formApiHash !== String(latest.api_hash || "");
+  const proxyChanged = !sameProxyConfig(formProxy, latest.proxy_config);
 
-  // 先读取服务器最新值，再把用户在当前页面真正改动过的字段重放上去。
-  // 旧标签页因此不会在发送验证码前把整份过期配置写回。
-  const latestResult = await apiRequest("/api/config");
-  const latest = latestResult?.config || loaded;
+  // 只把用户在当前页面真正改动过的字段重放上去，未改动字段不写回。
+  // 旧标签页因此不会在发送验证码前把整份过期配置覆盖到服务器。
   const patch = {};
   if (apiIdChanged) patch.api_id = formApiId;
   if (apiHashChanged) patch.api_hash = formApiHash;

@@ -5,7 +5,7 @@
 
 ## 入口与启动
 - **HTML 入口**: `index.html` — 包含认证屏（`#authScreen`）与应用外壳（`#appShell` + 侧边栏导航）。
-- **JS 入口**: `assets/app.js` — 导入各 UI 模块、定义 `FORWARD_GROUPS` 配置分组（调度 / 内容 / 过滤 / 转发 / QQ / Telegram / Web / 高级）。
+- **JS 入口**: `assets/app.js` — 导入各 UI 模块；配置分组 `FORWARD_GROUPS` / `FORWARD_FIELDS` 由 `config.js` 定义（见数据模型）。
 - **样式入口**: `assets/style.css` — 仅由 `@import` 行组成，由 `build_frontend.py` 在编译时内联打包为单文件。
 
 ## 对外接口

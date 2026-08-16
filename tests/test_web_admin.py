@@ -571,6 +571,16 @@ async def test_save_config_preserves_valid_api_hash(web_admin):
     web_admin.server._rebuild_client.assert_awaited_once_with()
 
 
+@pytest.mark.asyncio
+async def test_save_config_rejects_falsey_nonstring_api_hash(web_admin):
+    """0 / False 必须被当作非法值拒绝，而不是被 str(value or '') 转成空串清空配置。"""
+    web_admin.server._rebuild_client = AsyncMock()
+    for bad in (0, False):
+        with pytest.raises(web_admin.module.WebAdminError, match="32 位十六进制"):
+            await web_admin.server.save_config({"config": {"api_hash": bad}})
+    web_admin.server._rebuild_client.assert_not_awaited()
+
+
 def test_save_config_legacy_proxy_replaces_existing_structured_proxy(web_admin):
     web_admin.plugin.config.update(
         {
