@@ -101,6 +101,10 @@ class Forwarder:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
+        recall_registry = getattr(self, "recall_registry", None)
+        reconfigure = getattr(recall_registry, "reconfigure_from_config", None)
+        if callable(reconfigure):
+            reconfigure(self.config)
         active_channels = self._active_source_channel_names()
         self.storage.reset_inactive_channels(active_channels)
         logger.info("[Forwarder] 运行时配置组件已刷新。")

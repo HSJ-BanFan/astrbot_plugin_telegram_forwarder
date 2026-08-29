@@ -223,7 +223,7 @@ class QQOneBotAdapter:
         route = {target_key: target_id}
         message_ids: list[str] = []
 
-        fallback_attempted = False
+        action_succeeded = False
 
         def record_ids(new_ids: list[str]) -> None:
             message_ids.extend(new_ids)
@@ -237,18 +237,15 @@ class QQOneBotAdapter:
         async def send_action_payload(
             action: str, fallback_components: list[object], **payload: object
         ) -> None:
-            nonlocal fallback_attempted
+            nonlocal action_succeeded
             result = await call_onebot_action(call_action, action, **route, **payload)
             ensure_action_succeeded(result, action)
+            action_succeeded = True
             new_ids = extract_message_ids(result)
             if new_ids:
                 record_ids(new_ids)
-                return
-            if fallback_send is None:
-                return
-            fallback_attempted = True
-            fallback_result = await fallback_send(fallback_components)
-            record_ids(extract_message_ids(fallback_result))
+            # A successful OneBot action is authoritative even when it omits an ID.
+            # Let the caller fall back only when no OneBot action was available.
 
         async def send_components(components: list[object]) -> None:
             if not components:
@@ -285,11 +282,11 @@ class QQOneBotAdapter:
             for component in components
         ):
             await send_components(components)
-            return message_ids if fallback_attempted else message_ids or None
+            return message_ids if action_succeeded else None
 
         for component in components:
             if type(component).__name__ in {"Node", "Nodes"}:
                 await send_forward(component)
             else:
                 await send_components([component])
-        return message_ids if fallback_attempted else message_ids or None
+        return message_ids if action_succeeded else None

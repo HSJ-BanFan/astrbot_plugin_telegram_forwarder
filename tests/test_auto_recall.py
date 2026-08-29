@@ -98,6 +98,21 @@ async def test_registry_retry_once_retries_a_transient_recall_error(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_registry_keep_policy_retains_failed_receipt_without_retry():
+    registry = RecallRegistry(max_pending=2, on_error="keep")
+    receipt = make_receipt()
+    callback = AsyncMock(side_effect=TransientRecallError("temporary network failure"))
+
+    task = registry.schedule(0, callback, receipt)
+    assert task is not None
+    await task
+
+    callback.assert_awaited_once_with(receipt)
+    assert registry.pending_count == 0
+    assert registry.kept_receipts == (receipt,)
+
+
+@pytest.mark.asyncio
 async def test_registry_does_not_retry_terminal_recall_error():
     registry = RecallRegistry(max_pending=2, on_error="retry_once")
     callback = AsyncMock(side_effect=TerminalRecallError("already deleted"))
@@ -132,6 +147,29 @@ async def test_registry_close_is_idempotent_and_cancels_pending_tasks():
 
     assert task.cancelled()
     assert registry.tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_registry_reconfigure_updates_policy_without_dropping_pending_tasks():
+    registry = RecallRegistry(max_pending=1, on_error="log")
+    task = registry.schedule(60, AsyncMock(), make_receipt())
+
+    registry.reconfigure_from_config(
+        {
+            "forward_config": {
+                "auto_recall": {
+                    "max_pending": 3,
+                    "on_error": "retry_once",
+                }
+            }
+        }
+    )
+
+    assert task is not None
+    assert registry.pending_count == 1
+    assert registry.max_pending == 3
+    assert registry.on_error == "retry_once"
+    await registry.close()
 
 
 def test_send_receipt_is_frozen_and_keeps_platform_scope():
@@ -192,6 +230,27 @@ async def test_telegram_sender_schedules_each_forwarded_message_for_recall():
     client.delete_messages.assert_any_await(entity, [42], revoke=True)
     client.delete_messages.assert_any_await(entity, [43], revoke=True)
     assert client.delete_messages.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_telegram_sender_preserves_non_numeric_negative_target_name():
+    from astrbot_plugin_telegram_forwarder.core.senders.telegram import TelegramSender
+
+    entity = object()
+    client = SimpleNamespace(
+        get_entity=AsyncMock(return_value=entity),
+        forward_messages=AsyncMock(return_value=[]),
+    )
+    sender = TelegramSender(
+        client,
+        {"target_channel": "-channel-name"},
+        recall_registry=RecallRegistry(max_pending=1),
+    )
+
+    await sender.send([[SimpleNamespace(id=1)]], "source")
+
+    client.get_entity.assert_awaited_once_with("-channel-name")
+    client.forward_messages.assert_awaited_once_with(entity, [SimpleNamespace(id=1)])
 
 
 @pytest.mark.asyncio
@@ -312,7 +371,34 @@ async def test_qq_sender_falls_back_to_context_when_onebot_is_unavailable():
 
 
 @pytest.mark.asyncio
-async def test_qq_sender_falls_back_when_onebot_returns_no_receipt():
+async def test_qq_onebot_does_not_fallback_after_success_without_receipt():
+    import conftest as plugin_conftest
+
+    qq_module = plugin_conftest.load_qq_module()
+    fallback_send = AsyncMock(return_value={"message_id": 101})
+
+    class FakeBot:
+        async def call_action(self, _action, **_kwargs):
+            return {"status": "ok"}
+
+    adapter = qq_module.QQOneBotAdapter(FakeBot(), {}, None)
+    chain = qq_module.MessageChain([qq_module.Plain("hello")])
+
+    result = await adapter.send(
+        "aiocqhttp:GroupMessage:123",
+        chain,
+        target_session="aiocqhttp:GroupMessage:123",
+        source_channel="source",
+        kind="plain",
+        fallback_send=fallback_send,
+    )
+
+    assert result == []
+    fallback_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_qq_sender_does_not_duplicate_when_onebot_returns_no_receipt():
     import conftest as plugin_conftest
 
     qq_module = plugin_conftest.load_qq_module()
@@ -354,23 +440,18 @@ async def test_qq_sender_falls_back_when_onebot_returns_no_receipt():
         source_channel="source",
     )
 
-    context.send_message.assert_awaited_once_with(
-        "aiocqhttp:GroupMessage:123",
-        chain,
-    )
-    assert registry.pending_count == 1
-    await next(iter(registry.tasks))
+    context.send_message.assert_not_awaited()
+    assert registry.pending_count == 0
     assert bot.calls == [
         (
             "send_group_msg",
             {"group_id": 123, "message": [{"type": "text", "data": {"text": "hello"}}]},
         ),
-        ("delete_msg", {"message_id": 101}),
     ]
 
 
 @pytest.mark.asyncio
-async def test_qq_sender_falls_back_per_action_for_mixed_onebot_receipts():
+async def test_qq_sender_does_not_duplicate_mixed_onebot_successes_without_receipts():
     import conftest as plugin_conftest
 
     qq_module = plugin_conftest.load_qq_module()
@@ -415,14 +496,11 @@ async def test_qq_sender_falls_back_per_action_for_mixed_onebot_receipts():
         source_channel="source",
     )
 
-    context.send_message.assert_awaited_once()
-    fallback_chain = context.send_message.await_args.args[1]
-    assert [type(component).__name__ for component in fallback_chain.chain] == ["Plain"]
-    assert fallback_chain.chain[0].text == "tail"
-    assert registry.pending_count == 2
+    context.send_message.assert_not_awaited()
+    assert registry.pending_count == 1
 
     await asyncio.gather(*tuple(registry.tasks))
-    assert {call[1]["message_id"] for call in bot.calls[2:]} == {201, 202}
+    assert {call[1]["message_id"] for call in bot.calls[2:]} == {201}
 
 
 def test_schema_declares_disabled_auto_recall_defaults():
@@ -441,3 +519,20 @@ def test_schema_declares_disabled_auto_recall_defaults():
     assert items["max_pending"]["default"] == 1000
     assert items["on_error"]["options"] == ["log", "retry_once", "keep"]
     assert items["on_error"]["default"] == "log"
+
+    for key in (
+        "qq_enabled",
+        "qq_delay_seconds",
+        "telegram_enabled",
+        "telegram_delay_seconds",
+        "max_pending",
+        "on_error",
+    ):
+        assert items[key]["description"]
+        assert items[key]["hint"]
+
+    assert "0" in items["qq_delay_seconds"]["hint"]
+    assert "0" in items["telegram_delay_seconds"]["hint"]
+    assert all(
+        policy in items["on_error"]["hint"] for policy in ("log", "retry_once", "keep")
+    )

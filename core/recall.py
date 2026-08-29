@@ -121,7 +121,7 @@ RECALL_RETRY_DELAY_SECONDS = 1.0
 
 
 class RecallRegistry:
-    """持有自动撤回任务强引用，并负责统一取消与异常隔离。"""
+    """持有自动撤回任务强引用, 并负责统一取消与异常隔离。"""
 
     @classmethod
     def from_config(cls, config: object) -> RecallRegistry:
@@ -132,6 +132,15 @@ class RecallRegistry:
         )
 
     def __init__(self, max_pending: int = 1000, on_error: str = "log") -> None:
+        self.tasks: set[asyncio.Task] = set()
+        self._kept_receipts: list[SendReceipt] = []
+        self._closed = False
+        self.reconfigure(max_pending=max_pending, on_error=on_error)
+
+    def reconfigure(
+        self, *, max_pending: object = 1000, on_error: object = "log"
+    ) -> None:
+        """Update runtime policies, preserving tasks already owned by the registry."""
         try:
             resolved_max_pending = int(max_pending)
         except (TypeError, ValueError, OverflowError):
@@ -142,13 +151,36 @@ class RecallRegistry:
             if isinstance(on_error, str) and on_error in {"log", "retry_once", "keep"}
             else "log"
         )
-        self.tasks: set[asyncio.Task] = set()
-        self._closed = False
+
+    def reconfigure_from_config(self, config: object) -> None:
+        """Apply the auto-recall policies from a refreshed plugin configuration."""
+        auto_recall = get_auto_recall_config(config)
+        self.reconfigure(
+            max_pending=auto_recall.get("max_pending", 1000),
+            on_error=auto_recall.get("on_error", "log"),
+        )
 
     @property
     def pending_count(self) -> int:
         """当前仍由注册表持有的撤回任务数。"""
         return len(self.tasks)
+
+    @property
+    def kept_receipts(self) -> tuple[SendReceipt, ...]:
+        """已按 ``keep`` 策略保留、等待后续人工处理的撤回凭据。"""
+        return tuple(self._kept_receipts)
+
+    def _keep_receipt(self, receipt: SendReceipt, error: Exception) -> None:
+        if receipt not in self._kept_receipts:
+            self._kept_receipts.append(receipt)
+        logger.warning(
+            "[RecallRegistry] recall failed; keeping message and receipt "
+            "without retry platform=%s target=%s message_id=%s: %s",
+            receipt.platform,
+            receipt.target_session,
+            receipt.message_id,
+            error,
+        )
 
     def schedule(
         self,
@@ -156,7 +188,7 @@ class RecallRegistry:
         recall_fn: RecallFn,
         receipt: SendReceipt,
     ) -> asyncio.Task | None:
-        """安排一次撤回；达到容量或关闭后返回 ``None``。"""
+        """安排一次撤回; 达到容量或关闭后返回 ``None``。"""
         if self._closed:
             logger.debug(
                 "[RecallRegistry] registry is closed; receipt was not scheduled"
@@ -193,6 +225,9 @@ class RecallRegistry:
             except asyncio.CancelledError:
                 raise
             except TerminalRecallError as exc:
+                if self.on_error == "keep":
+                    self._keep_receipt(receipt, exc)
+                    return
                 logger.warning(
                     "[RecallRegistry] terminal recall failure platform=%s target=%s "
                     "message_id=%s: %s",
@@ -215,6 +250,9 @@ class RecallRegistry:
                     )
                     await asyncio.sleep(RECALL_RETRY_DELAY_SECONDS)
                     continue
+                if self.on_error == "keep":
+                    self._keep_receipt(receipt, exc)
+                    return
                 logger.warning(
                     "[RecallRegistry] transient recall failed platform=%s target=%s "
                     "message_id=%s policy=%s: %s",
@@ -226,6 +264,9 @@ class RecallRegistry:
                 )
                 return
             except Exception as exc:  # noqa: BLE001
+                if self.on_error == "keep":
+                    self._keep_receipt(receipt, exc)
+                    return
                 logger.warning(
                     "[RecallRegistry] non-retryable recall failure platform=%s "
                     "target=%s message_id=%s: %s",

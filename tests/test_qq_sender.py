@@ -7,6 +7,7 @@ import sys
 import uuid
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import conftest as plugin_conftest
@@ -2318,8 +2319,7 @@ class TestReplyPreviewIntegration:
             {"id": 99, "sender": None, "post_author": None, "text": "quoted text"},
         )()
         sender.downloader.client.get_messages = AsyncMock(return_value=[quoted])
-        bot = MagicMock()
-        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot = SimpleNamespace(get_login_info=AsyncMock(return_value={"user_id": 1}))
         sender.bot = bot
 
         reply_header = type("Reply", (), {"reply_to_msg_id": 99})()
@@ -2606,8 +2606,7 @@ class TestSendSummary:
         sender._ensure_node_name = AsyncMock(return_value="bot")
         sender.downloader.client = MagicMock()
         sender.downloader.download_media = AsyncMock(return_value=[])
-        bot = MagicMock()
-        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot = SimpleNamespace(get_login_info=AsyncMock(return_value={"user_id": 1}))
         sender.bot = bot
 
         msg1 = type("Msg", (), {"id": 1, "text": "a", "reply_to": None})()
@@ -3062,8 +3061,7 @@ class TestBigMergeFallback:
         sender._ensure_node_name = AsyncMock(return_value="bot")
         sender.downloader.client = MagicMock()
         sender._map_path = lambda path: path
-        bot = MagicMock()
-        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot = SimpleNamespace(get_login_info=AsyncMock(return_value={"user_id": 1}))
         sender.bot = bot
 
     @pytest.mark.asyncio
@@ -3206,8 +3204,7 @@ class TestBigMergeFallback:
         sender._ensure_node_name = AsyncMock(return_value="bot")
         sender.downloader.client = MagicMock()
         sender._map_path = lambda path: path
-        bot = MagicMock()
-        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot = SimpleNamespace(get_login_info=AsyncMock(return_value={"user_id": 1}))
         sender.bot = bot
         plain_msg = self._make_msg(1, text="tail")
         audio_msg = self._make_msg(2, text="caption")

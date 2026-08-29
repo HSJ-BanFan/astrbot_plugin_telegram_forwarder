@@ -339,6 +339,32 @@ def test_reload_runtime_config_resets_inactive_channels():
     forwarder.storage.reset_inactive_channels.assert_called_once_with(["demo", "other"])
 
 
+def test_reload_runtime_config_reconfigures_existing_recall_registry():
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    forwarder.config = {
+        "forward_config": {
+            "auto_recall": {
+                "max_pending": 12,
+                "on_error": "retry_once",
+            }
+        },
+        "source_channels": [],
+    }
+    forwarder.storage = MagicMock()
+    registry = MagicMock()
+    forwarder.recall_registry = registry
+
+    with (
+        patch.object(forwarder_module, "MessageFilter", MagicMock()),
+        patch.object(forwarder_module, "MessageMerger", MagicMock()),
+    ):
+        forwarder.reload_runtime_config()
+
+    assert forwarder.recall_registry is registry
+    registry.reconfigure_from_config.assert_called_once_with(forwarder.config)
+
+
 @pytest.mark.asyncio
 async def test_content_safety_disabled_skips_media_download():
     forwarder_module = load_forwarder_module()

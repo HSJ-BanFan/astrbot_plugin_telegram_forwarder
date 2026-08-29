@@ -96,7 +96,8 @@ class TelegramSender:
                 # ========== 解析目标频道 ==========
                 target = tg_target
                 if isinstance(target, str) and (
-                    target.startswith("-") or target.isdigit()
+                    target.isdigit()
+                    or (target.startswith("-") and target[1:].isdigit())
                 ):
                     target = int(target)
                 # 获取目标实体
