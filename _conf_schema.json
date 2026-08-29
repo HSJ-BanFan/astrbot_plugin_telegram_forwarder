@@ -599,6 +599,49 @@
                 "description": "监听正则",
                 "default": "",
                 "hint": "命中后会立即触发转发"
+            },
+            "auto_recall": {
+                "type": "object",
+                "description": "发送后定时自动撤回（防举报与平台风控）",
+                "items": {
+                    "qq_enabled": {
+                        "type": "bool",
+                        "description": "启用 QQ 自动撤回",
+                        "hint": "开启后，发送到 QQ 的消息将按 QQ 延迟自动撤回",
+                        "default": false
+                    },
+                    "qq_delay_seconds": {
+                        "type": "int",
+                        "description": "QQ 自动撤回延迟 (秒)",
+                        "hint": "发送后等待指定秒数再撤回；设置为 0 表示立即撤回",
+                        "default": 120
+                    },
+                    "telegram_enabled": {
+                        "type": "bool",
+                        "description": "启用 Telegram 自动撤回",
+                        "hint": "开启后，发送到 Telegram 的消息将按 Telegram 延迟自动撤回",
+                        "default": false
+                    },
+                    "telegram_delay_seconds": {
+                        "type": "int",
+                        "description": "Telegram 自动撤回延迟 (秒)",
+                        "hint": "发送后等待指定秒数再撤回；设置为 0 表示立即撤回",
+                        "default": 120
+                    },
+                    "max_pending": {
+                        "type": "int",
+                        "description": "自动撤回最大待处理任务数",
+                        "hint": "限制同时保留的撤回任务数量，超过上限的新任务不再安排",
+                        "default": 1000
+                    },
+                    "on_error": {
+                        "type": "string",
+                        "description": "自动撤回失败策略",
+                        "hint": "log：记录失败并放弃撤回；retry_once：瞬态失败重试一次",
+                        "options": ["log", "retry_once"],
+                        "default": "log"
+                    }
+                }
             }
         }
     },

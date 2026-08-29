@@ -4,9 +4,8 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from telethon.tl.types import Message  # type: ignore
-
 from astrbot.api import AstrBotConfig, logger, star
+from telethon.tl.types import Message  # type: ignore
 
 from ..common.storage import Storage
 from ..common.text_tools import (
@@ -19,6 +18,7 @@ from .downloader import MediaDownloader
 from .filters.content_safety import ContentSafetyFilter
 from .filters.message_filter import MessageFilter
 from .mergers import MessageMerger
+from .recall import RecallRegistry
 from .senders.qq import QQSender, QQSendSummary
 from .senders.telegram import TelegramSender
 
@@ -56,9 +56,14 @@ class Forwarder:
         # 初始化组件
         self.downloader = MediaDownloader(self.client, plugin_data_dir)
 
-        # 初始化发送器
-        self.tg_sender = TelegramSender(self.client, config)
-        self.qq_sender = QQSender(self.context, config, self.downloader)
+        # 初始化发送器与共享的自动撤回注册表
+        self.recall_registry = RecallRegistry.from_config(config)
+        self.qq_sender = QQSender(
+            self.context, config, self.downloader, recall_registry=self.recall_registry
+        )
+        self.tg_sender = TelegramSender(
+            self.client, config, recall_registry=self.recall_registry
+        )
 
         # 初始化过滤器和合并引擎
         self.message_filter = MessageFilter(config)
@@ -96,6 +101,10 @@ class Forwarder:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
+        recall_registry = getattr(self, "recall_registry", None)
+        reconfigure = getattr(recall_registry, "reconfigure_from_config", None)
+        if callable(reconfigure):
+            reconfigure(self.config)
         active_channels = self._active_source_channel_names()
         self.storage.reset_inactive_channels(active_channels)
         logger.info("[Forwarder] 运行时配置组件已刷新。")
@@ -2320,24 +2329,21 @@ class Forwarder:
     async def shutdown(self, timeout: float = 10.0) -> None:
         """等待运行中的任务结束；超时后取消剩余任务。"""
         self.request_stop()
-
         pending_tasks = [task for task in self._active_tasks if not task.done()]
-        if not pending_tasks:
-            return
-
-        try:
-            await asyncio.wait_for(self._shutdown_complete.wait(), timeout=timeout)
-            return
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"[Forwarder] 等待在途任务结束超时，准备取消剩余 {len(pending_tasks)} 个任务。"
-            )
-
-        for task in pending_tasks:
-            task.cancel()
-
-        with suppress(Exception):
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        if pending_tasks:
+            try:
+                await asyncio.wait_for(self._shutdown_complete.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[Forwarder] 等待在途任务结束超时，准备取消剩余 {len(pending_tasks)} 个任务。"
+                )
+                for task in pending_tasks:
+                    task.cancel()
+                with suppress(Exception):
+                    await asyncio.gather(*pending_tasks, return_exceptions=True)
+        recall_registry = getattr(self, "recall_registry", None)
+        if recall_registry is not None:
+            await recall_registry.close()
 
     async def _fetch_channel_messages(
         self,
@@ -2496,8 +2502,8 @@ class Forwarder:
                     try:
                         file_path.unlink()
                         deleted_count += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[Cleanup] 删除临时文件失败: {file_path}: {e}")
 
             if deleted_count > 0:
                 logger.debug(f"[Cleanup] 清理完成，移除了 {deleted_count} 个孤儿文件。")

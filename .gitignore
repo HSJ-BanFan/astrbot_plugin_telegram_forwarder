@@ -6,7 +6,6 @@ data.json
 user_session.session*
 *.session-journal
 data/
-docs/
 
 # Python / Tests
 __pycache__/
