@@ -79,6 +79,8 @@ def onebot_target(unified_msg_origin: str) -> tuple[str, str, int] | None:
         target_id = int(parts[2])
     except (TypeError, ValueError):
         return None
+    if target_id <= 0:
+        return None
     if "group" in message_type:
         return "send_group_msg", "send_group_forward_msg", target_id
     if "friend" in message_type or "private" in message_type:

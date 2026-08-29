@@ -245,6 +245,61 @@ async def test_telegram_sender_preserves_non_numeric_negative_target_name():
     client.forward_messages.assert_awaited_once_with(entity, [SimpleNamespace(id=1)])
 
 
+@pytest.mark.parametrize(
+    ("origin", "expected_call"),
+    [
+        ("aiocqhttp:GroupMessage:-1", None),
+        ("aiocqhttp:GroupMessage:0", None),
+        (
+            "aiocqhttp:GroupMessage:123",
+            ("send_group_msg", {"group_id": 123}),
+        ),
+        ("aiocqhttp:PrivateMessage:-1", None),
+        ("aiocqhttp:PrivateMessage:0", None),
+        (
+            "aiocqhttp:PrivateMessage:456",
+            ("send_private_msg", {"user_id": 456}),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_onebot_target_requires_positive_platform_ids(
+    qq_module, origin, expected_call
+):
+    class FakeBot:
+        def __init__(self):
+            self.calls = []
+
+        async def call_action(self, action, **kwargs):
+            self.calls.append((action, kwargs))
+            return {"status": "ok"}
+
+    bot = FakeBot()
+    adapter = qq_module.QQOneBotAdapter(bot, {}, None)
+    chain = qq_module.MessageChain([qq_module.Plain("hello")])
+
+    result = await adapter.send(
+        origin,
+        chain,
+        target_session=origin,
+        source_channel="source",
+        kind="plain",
+    )
+
+    if expected_call is None:
+        assert result is None
+        assert bot.calls == []
+    else:
+        action, route = expected_call
+        assert result == []
+        assert bot.calls == [
+            (
+                action,
+                {**route, "message": [{"type": "text", "data": {"text": "hello"}}]},
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_qq_sender_captures_onebot_receipt_and_recalls_it():
     import conftest as plugin_conftest
