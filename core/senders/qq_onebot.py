@@ -286,11 +286,13 @@ class QQOneBotAdapter:
                     await send_forward(component)
                 else:
                     await send_components([component])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "[QQOneBotAdapter] send action failed for target=%s: %s",
                 target_session,
                 exc,
             )
-            return message_ids if action_succeeded else None
+            if action_succeeded:
+                raise
+            return None
         return message_ids if action_succeeded else None

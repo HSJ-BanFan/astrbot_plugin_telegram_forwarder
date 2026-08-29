@@ -603,6 +603,81 @@ async def test_qq_sender_does_not_fallback_for_mixed_onebot_receipts():
     assert bot.calls[-1] == ("delete_msg", {"message_id": 201})
 
 
+@pytest.mark.parametrize(
+    "first_response",
+    [
+        pytest.param({"data": {"message_id": 201}}, id="with-receipt"),
+        pytest.param({"status": "ok"}, id="without-receipt"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_qq_dispatcher_does_not_ack_partial_onebot_send(
+    qq_module, first_response
+):
+    lock = asyncio.Lock()
+    bot_calls = []
+
+    class FakeBot:
+        async def call_action(self, action, **kwargs):
+            bot_calls.append((action, kwargs))
+            if action == "send_group_forward_msg":
+                return first_response
+            raise RuntimeError("plain action failed")
+
+    bot = FakeBot()
+    adapter = qq_module.QQOneBotAdapter(bot, {}, None)
+    node = type("Node", (), {})()
+    chain = qq_module.MessageChain([node, qq_module.Plain("tail")])
+
+    async def send_processed_batch_fn(**_kwargs):
+        await adapter.send(
+            "aiocqhttp:GroupMessage:123",
+            chain,
+            target_session="aiocqhttp:GroupMessage:123",
+            source_channel="source",
+            kind="plain",
+        )
+
+    target_successes = {0: set()}
+    result = await qq_module.dispatch_processed_batches_to_targets(
+        context_target_sessions=["aiocqhttp:GroupMessage:123"],
+        real_batch_count=1,
+        processed_batches=[
+            {
+                "batch_index": 0,
+                "nodes_data": [[node, qq_module.Plain("tail")]],
+                "contains_audio": False,
+            }
+        ],
+        target_successes=target_successes,
+        target_failures={},
+        deferred_batch_indexes=set(),
+        use_big_merge=False,
+        is_mixed_big_merge=False,
+        forward_cfg={},
+        self_id=1,
+        node_name="bot",
+        get_lock=lambda _target: lock,
+        target_is_open=lambda _target, _now_ts: False,
+        record_target_success=lambda _target: None,
+        record_target_failure=lambda _target, **_kwargs: None,
+        classify_send_error=qq_module.classify_send_error,
+        send_processed_batch_fn=send_processed_batch_fn,
+        send_message_fn=AsyncMock(),
+        fail_fast_limit=1,
+        target_circuit_fail_threshold=3,
+        target_circuit_cooldown_sec=60,
+        log_policy=None,
+    )
+
+    assert result.target_successes == {0: set()}
+    assert result.target_failures == {0: "send_failed"}
+    assert [action for action, _kwargs in bot_calls] == [
+        "send_group_forward_msg",
+        "send_group_msg",
+    ]
+
+
 def test_schema_declares_disabled_auto_recall_defaults():
     schema = json.loads(
         (Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(
