@@ -6,6 +6,8 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from pathlib import Path
 
+from astrbot.api import logger
+
 from ..recall import (
     RecallContext,
     RecallRegistry,
@@ -209,7 +211,7 @@ class QQOneBotAdapter:
         kind: SendKind,
         fallback_send: FallbackSendFn | None = None,
     ) -> list[str] | None:
-        """Send through OneBot, or return ``None`` when the adapter is unavailable."""
+        """Send through OneBot, or return ``None`` when no action can be attempted."""
         call_action = (
             getattr(self.bot, "call_action", None) if self.bot is not None else None
         )
@@ -222,7 +224,6 @@ class QQOneBotAdapter:
         target_key = "group_id" if send_action == "send_group_msg" else "user_id"
         route = {target_key: target_id}
         message_ids: list[str] = []
-
         action_succeeded = False
 
         def record_ids(new_ids: list[str]) -> None:
@@ -234,9 +235,7 @@ class QQOneBotAdapter:
                 kind=kind,
             )
 
-        async def send_action_payload(
-            action: str, fallback_components: list[object], **payload: object
-        ) -> None:
+        async def send_action_payload(action: str, **payload: object) -> None:
             nonlocal action_succeeded
             result = await call_onebot_action(call_action, action, **route, **payload)
             ensure_action_succeeded(result, action)
@@ -245,48 +244,51 @@ class QQOneBotAdapter:
             if new_ids:
                 record_ids(new_ids)
             # A successful OneBot action is authoritative even when it omits an ID.
-            # Let the caller fall back only when no OneBot action was available.
 
         async def send_components(components: list[object]) -> None:
             if not components:
                 return
             messages = []
-            fallback_components = []
             for component in components:
                 if (
                     type(component).__name__ == "Plain"
                     and not str(getattr(component, "text", "")).strip()
                 ):
                     continue
-                fallback_components.append(component)
                 payload = await component_to_onebot_dict(component)
                 messages.append(payload)
                 if type(component).__name__ in {"At", "AtAll"}:
                     messages.append({"type": "text", "data": {"text": " "}})
             if not messages:
                 return
-            await send_action_payload(
-                send_action, fallback_components, message=messages
-            )
+            await send_action_payload(send_action, message=messages)
 
         async def send_forward(component: object) -> None:
             component_name = type(component).__name__
             payload = await component_to_onebot_dict(component)
             if component_name == "Node":
                 payload = {"messages": [payload]}
-            await send_action_payload(forward_action, [component], **payload)
+            await send_action_payload(forward_action, **payload)
 
         components = list(getattr(message_chain, "chain", []))
-        if not any(
-            type(component).__name__ in {"Node", "Nodes", "File"}
-            for component in components
-        ):
-            await send_components(components)
-            return message_ids if action_succeeded else None
+        try:
+            if not any(
+                type(component).__name__ in {"Node", "Nodes", "File"}
+                for component in components
+            ):
+                await send_components(components)
+                return message_ids if action_succeeded else None
 
-        for component in components:
-            if type(component).__name__ in {"Node", "Nodes"}:
-                await send_forward(component)
-            else:
-                await send_components([component])
+            for component in components:
+                if type(component).__name__ in {"Node", "Nodes"}:
+                    await send_forward(component)
+                else:
+                    await send_components([component])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[QQOneBotAdapter] send action failed for target=%s: %s",
+                target_session,
+                exc,
+            )
+            return message_ids if action_succeeded else None
         return message_ids if action_succeeded else None

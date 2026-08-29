@@ -637,8 +637,8 @@
                     "on_error": {
                         "type": "string",
                         "description": "自动撤回失败策略",
-                        "hint": "log：记录失败并放弃撤回；retry_once：瞬态失败重试一次；keep：保留消息及撤回凭据，不自动重试",
-                        "options": ["log", "retry_once", "keep"],
+                        "hint": "log：记录失败并放弃撤回；retry_once：瞬态失败重试一次",
+                        "options": ["log", "retry_once"],
                         "default": "log"
                     }
                 }

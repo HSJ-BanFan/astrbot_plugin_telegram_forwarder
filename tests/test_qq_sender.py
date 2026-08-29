@@ -2547,6 +2547,7 @@ class TestDispatchLoopExtraction:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         processed_batch = {
@@ -2667,6 +2668,7 @@ class TestSendSummary:
         sender.downloader.download_media = AsyncMock(return_value=[])
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         msg = type("Msg", (), {"id": 3, "text": "", "reply_to": None})()
@@ -2698,6 +2700,7 @@ class TestTargetCircuitBreaker:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         sender.config = {
@@ -2857,6 +2860,7 @@ class TestTargetLevelFailFast:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         sender.config = {
@@ -2906,6 +2910,7 @@ class TestTargetLevelFailFast:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         calls_by_target = {"test:GroupMessage:done": 0, "test:GroupMessage:todo": 0}
@@ -2951,6 +2956,7 @@ class TestTargetLevelFailFast:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         sender.config = {
@@ -3004,6 +3010,7 @@ class TestTargetLevelFailFast:
 
         bot = MagicMock()
         bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        bot.call_action = None
         sender.bot = bot
 
         sender.config = {

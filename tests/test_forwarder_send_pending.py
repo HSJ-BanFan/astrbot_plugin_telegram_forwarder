@@ -329,10 +329,13 @@ def test_reload_runtime_config_resets_inactive_channels():
         ]
     }
     forwarder.storage = MagicMock()
+    forwarder.recall_registry = MagicMock()
 
-    with patch.object(forwarder_module, "MessageFilter", MagicMock()) as filter_cls:
-        with patch.object(forwarder_module, "MessageMerger", MagicMock()) as merger_cls:
-            forwarder.reload_runtime_config()
+    with (
+        patch.object(forwarder_module, "MessageFilter", MagicMock()) as filter_cls,
+        patch.object(forwarder_module, "MessageMerger", MagicMock()) as merger_cls,
+    ):
+        forwarder.reload_runtime_config()
 
     filter_cls.assert_called_once_with(forwarder.config)
     merger_cls.assert_called_once_with(forwarder.config)
