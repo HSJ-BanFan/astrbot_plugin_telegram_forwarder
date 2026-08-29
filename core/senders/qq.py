@@ -9,13 +9,13 @@ import os
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-
-from telethon.tl.types import Message
 
 from astrbot.api import AstrBotConfig, logger, star
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain
+from telethon.tl.types import Message
 
 try:
     from astrbot.core.utils.path_util import path_Mapping
@@ -23,6 +23,7 @@ except ImportError:
     path_Mapping = None
 
 from ..downloader import MediaDownloader
+from ..recall import RecallRegistry, extract_message_ids
 from .qq_batch_builder import (
     ProcessedBatch,
     ProcessedBatchData,
@@ -42,6 +43,7 @@ from .qq_media import (
     map_path_with_config,
     should_merge_batch_nodes,
 )
+from .qq_onebot import QQOneBotAdapter
 from .qq_reply_preview import (
     build_reply_preview,
     get_sender_display_name,
@@ -118,11 +120,20 @@ class QQSender:
     """
 
     def __init__(
-        self, context: star.Context, config: AstrBotConfig, downloader: MediaDownloader
+        self,
+        context: star.Context,
+        config: AstrBotConfig,
+        downloader: MediaDownloader,
+        recall_registry: RecallRegistry | None = None,
     ):
         self.context = context
         self.config = config
         self.downloader = downloader
+        self.recall_registry = (
+            recall_registry
+            if recall_registry is not None
+            else RecallRegistry.from_config(config)
+        )
         self._group_locks = {}  # 群锁，防止并发发送
         self.platform_id = None  # 动态捕获的平台 ID
         self.bot = None  # 动态捕获的 bot 实例
@@ -233,6 +244,9 @@ class QQSender:
             self._message_chain_local_file_size(components)
         )
 
+    def _send_with_source(self, source_channel: str):
+        return partial(self._send_with_timeout, source_channel=source_channel)
+
     async def _send_with_timeout(
         self,
         unified_msg_origin: str,
@@ -240,7 +254,8 @@ class QQSender:
         *,
         send_kind: SendKind,
         timeout_sec: float | None = None,
-    ) -> None:
+        source_channel: str = "",
+    ) -> list[str]:
         started_at = time.monotonic()
         components = list(getattr(message_chain, "chain", []))
         component_types = [type(component).__name__ for component in components]
@@ -253,11 +268,40 @@ class QQSender:
         payload_file = getattr(primary_component, "file", None)
         if timeout_sec is None:
             timeout_sec = self._resolve_send_timeout_sec(send_kind, components)
+        onebot = QQOneBotAdapter(
+            self.bot,
+            self.config,
+            self.recall_registry,
+        )
+
+        async def fallback_send(fallback_components: list[object]) -> object:
+            fallback_chain = (
+                message_chain
+                if fallback_components == components
+                else MessageChain(fallback_components)
+            )
+            return await self.context.send_message(unified_msg_origin, fallback_chain)
+
         try:
-            await asyncio.wait_for(
-                self.context.send_message(unified_msg_origin, message_chain),
+            onebot_message_ids = await asyncio.wait_for(
+                onebot.send(
+                    unified_msg_origin,
+                    message_chain,
+                    target_session=unified_msg_origin,
+                    source_channel=source_channel,
+                    kind=send_kind,
+                    fallback_send=fallback_send,
+                ),
                 timeout=timeout_sec,
             )
+            if onebot_message_ids is None:
+                send_result = await asyncio.wait_for(
+                    self.context.send_message(unified_msg_origin, message_chain),
+                    timeout=timeout_sec,
+                )
+                message_ids = extract_message_ids(send_result)
+            else:
+                message_ids = onebot_message_ids
         except asyncio.TimeoutError:
             duration = time.monotonic() - started_at
             logger.warning(
@@ -276,6 +320,14 @@ class QQSender:
             source_path=source_path,
             duration=duration,
         )
+        if onebot_message_ids is None:
+            onebot.schedule_recall(
+                message_ids,
+                target_session=unified_msg_origin,
+                source_channel=source_channel,
+                kind=send_kind,
+            )
+        return message_ids
 
     async def _handle_file_send_failure(
         self,
@@ -284,7 +336,9 @@ class QQSender:
         batch_data: ProcessedBatchData,
         unified_msg_origin: str,
         target_session: str,
+        source_channel: str = "",
     ) -> bool:
+        send_message_with_source = self._send_with_source(source_channel)
         forward_cfg = self.config.get("forward_config", {})
         return await handle_file_send_failure(
             forward_cfg=forward_cfg,
@@ -294,7 +348,7 @@ class QQSender:
             batch_data=batch_data,
             unified_msg_origin=unified_msg_origin,
             target_session=target_session,
-            send_message_fn=self._send_with_timeout,
+            send_message_fn=send_message_with_source,
             map_path=self._map_path,
             classify_send_error=self._classify_send_error,
             plugin_data_dir=getattr(self.downloader, "plugin_data_dir", None),
@@ -339,18 +393,25 @@ class QQSender:
         node_name: str,
         target_session: str,
         allow_forward_nodes: bool = True,
+        source_channel: str = "",
     ) -> None:
+        send_message_with_source = self._send_with_source(source_channel)
+        handle_file_send_failure_with_source = partial(
+            self._handle_file_send_failure,
+            source_channel=source_channel,
+        )
+
         await send_processed_batch(
             batch_data=batch_data,
             unified_msg_origin=unified_msg_origin,
             self_id=self_id,
             node_name=node_name,
             target_session=target_session,
-            send_message_fn=self._send_with_timeout,
+            send_message_fn=send_message_with_source,
             map_path=self._map_path,
             should_merge=self._should_merge_batch_nodes,
             allow_forward_nodes=allow_forward_nodes,
-            handle_file_send_failure=self._handle_file_send_failure,
+            handle_file_send_failure=handle_file_send_failure_with_source,
             log_policy=self._log_policy,
         )
 
@@ -676,6 +737,11 @@ class QQSender:
                 f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发"
             )
 
+        send_processed_batch_with_source = partial(
+            self._send_processed_batch,
+            source_channel=src_channel,
+        )
+        send_message_with_source = self._send_with_source(src_channel)
         try:
             dispatch_result = await dispatch_processed_batches_to_targets(
                 context_target_sessions=context_target_sessions,
@@ -694,8 +760,8 @@ class QQSender:
                 record_target_success=self._record_target_success,
                 record_target_failure=self._record_target_failure,
                 classify_send_error=self._classify_send_error,
-                send_processed_batch_fn=self._send_processed_batch,
-                send_message_fn=self._send_with_timeout,
+                send_processed_batch_fn=send_processed_batch_with_source,
+                send_message_fn=send_message_with_source,
                 fail_fast_limit=fail_fast_limit,
                 target_circuit_fail_threshold=target_circuit_fail_threshold,
                 target_circuit_cooldown_sec=target_circuit_cooldown_sec,

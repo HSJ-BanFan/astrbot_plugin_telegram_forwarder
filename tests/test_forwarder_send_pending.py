@@ -162,6 +162,7 @@ def load_forwarder_module():
         "astrbot_plugin_telegram_forwarder.common.text_tools",
         "astrbot_plugin_telegram_forwarder.core.client",
         "astrbot_plugin_telegram_forwarder.core.downloader",
+        "astrbot_plugin_telegram_forwarder.core.recall",
         "astrbot_plugin_telegram_forwarder.core.senders.telegram",
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
         "astrbot_plugin_telegram_forwarder.core.filters.content_safety",
@@ -201,6 +202,10 @@ def load_forwarder_module():
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.downloader", MediaDownloader=object
+        )
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.recall",
+            RecallRegistry=MagicMock(),
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.senders.telegram",
@@ -2794,3 +2799,81 @@ def test_fake_storage_clear_pending_retry_resets_last_tg_target():
 
     assert storage.pending[0]["last_target_session"] == ""
     assert storage.pending[0]["last_tg_target"] == ""
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_recall_registry_after_active_tasks():
+    forwarder_module = load_forwarder_module()
+    forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
+    forwarder._stopping = False
+    forwarder._active_send_tasks = set()
+    forwarder._active_tasks = set()
+    forwarder._shutdown_complete = asyncio.Event()
+    forwarder.recall_registry = SimpleNamespace(close=AsyncMock())
+
+    await forwarder.shutdown()
+
+    forwarder.recall_registry.close.assert_awaited_once()
+
+
+def test_forwarder_shares_one_recall_registry_with_both_senders(tmp_path):
+    forwarder_module = load_forwarder_module()
+    recall_registry = object()
+    context = object()
+    client = object()
+    downloader = object()
+    wrapper = SimpleNamespace(client=client)
+    storage = MagicMock()
+    config = {"forward_config": {}}
+
+    with (
+        patch.object(
+            forwarder_module.RecallRegistry,
+            "from_config",
+            return_value=recall_registry,
+        ) as from_config,
+        patch.object(
+            forwarder_module,
+            "MediaDownloader",
+            return_value=downloader,
+        ),
+        patch.object(
+            forwarder_module,
+            "QQSender",
+            return_value=SimpleNamespace(recall_registry=recall_registry),
+        ) as qq_cls,
+        patch.object(
+            forwarder_module,
+            "TelegramSender",
+            return_value=object(),
+        ) as tg_cls,
+        patch.object(forwarder_module.Forwarder, "_cleanup_orphaned_files"),
+        patch.object(
+            forwarder_module.Forwarder,
+            "_active_source_channel_names",
+            return_value=[],
+        ),
+        patch.object(forwarder_module, "MessageFilter"),
+        patch.object(forwarder_module, "ContentSafetyFilter"),
+        patch.object(forwarder_module, "MessageMerger"),
+    ):
+        forwarder_module.Forwarder(
+            context=context,
+            config=config,
+            storage=storage,
+            client_wrapper=wrapper,
+            plugin_data_dir=tmp_path,
+        )
+
+    from_config.assert_called_once_with(config)
+    qq_cls.assert_called_once_with(
+        context,
+        config,
+        downloader,
+        recall_registry=recall_registry,
+    )
+    tg_cls.assert_called_once_with(
+        client,
+        config,
+        recall_registry=recall_registry,
+    )

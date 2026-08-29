@@ -599,6 +599,37 @@
                 "description": "监听正则",
                 "default": "",
                 "hint": "命中后会立即触发转发"
+            },
+            "auto_recall": {
+                "type": "object",
+                "description": "发送后定时自动撤回（防举报与平台风控）",
+                "items": {
+                    "qq_enabled": {
+                        "type": "bool",
+                        "default": false
+                    },
+                    "qq_delay_seconds": {
+                        "type": "int",
+                        "default": 120
+                    },
+                    "telegram_enabled": {
+                        "type": "bool",
+                        "default": false
+                    },
+                    "telegram_delay_seconds": {
+                        "type": "int",
+                        "default": 120
+                    },
+                    "max_pending": {
+                        "type": "int",
+                        "default": 1000
+                    },
+                    "on_error": {
+                        "type": "string",
+                        "options": ["log", "retry_once", "keep"],
+                        "default": "log"
+                    }
+                }
             }
         }
     },
