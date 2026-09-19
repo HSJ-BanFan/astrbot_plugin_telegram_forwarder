@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-import time
 from typing import Any
 
-from astrbot.api import logger
-
-from .senders.qq_runtime import get_platform_bot, get_platform_instances
+try:
+    from .senders.qq_runtime import get_platform_bot, get_platform_instances
+except Exception:  # pragma: no cover
+    get_platform_bot = None
+    get_platform_instances = None
 
 try:  # pragma: no cover - AstrBot adapter may be unavailable in unit tests
     from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
@@ -16,24 +16,40 @@ try:  # pragma: no cover - AstrBot adapter may be unavailable in unit tests
 except Exception:  # pragma: no cover - import guard for non-AstrBot test runtime
     AiocqhttpAdapter = None
 
+from .platform_directory import (
+    DirectoryAdapter,
+    PlatformDirectory,
+    QQDirectoryAdapter,
+)
+
 
 class QQGroupCache:
+    """Delegating facade for QQ group discovery and caching backed by PlatformDirectory."""
+
     def __init__(
         self,
         plugin: Any,
         ttl_seconds: int = 3600,
         *,
         failure_cooldown: float = 20.0,
+        adapter: DirectoryAdapter | None = None,
     ):
         self.plugin = plugin
-        self.ttl_seconds = ttl_seconds
-        self.failure_cooldown = max(0.5, float(failure_cooldown))
-        self._lock = asyncio.Lock()
-        self._last_refresh_at = 0.0
-        self._last_failure_at = 0.0
-        self._groups: list[dict[str, Any]] = []
-        self._available = False
-        self._message = "QQ platform is unavailable."
+        self.adapter = adapter or QQDirectoryAdapter(
+            plugin,
+            get_platform_bot=get_platform_bot,
+            get_platform_instances=get_platform_instances,
+            iter_platforms_fn=self._iter_qq_platforms,
+        )
+        self._directory = PlatformDirectory(
+            adapter=self.adapter,
+            ttl_seconds=ttl_seconds,
+            failure_cooldown=failure_cooldown,
+            item_key="groups",
+            item_name="group list",
+            default_unavailable_message="QQ platform is unavailable.",
+            default_invalidated_message="QQ group cache invalidated.",
+        )
 
     async def list_groups(
         self,
@@ -41,89 +57,92 @@ class QQGroupCache:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
-        if force or not self._is_fresh():
-            await self._refresh(force=force)
-        groups = self._merge_configured_groups(configured_group_ids or [])
+        result = await self._directory.list_items(configured_group_ids, force=force)
         return {
-            "groups": groups,
-            "available": self._available,
-            "message": self._message,
+            "groups": result["groups"],
+            "available": result["available"],
+            "message": result["message"],
         }
 
     def _is_fresh(self) -> bool:
-        now = time.time()
-        # 成功刷新（含空列表）走 TTL；失败走短冷却。
-        if self._available and self._last_refresh_at > 0 and self._last_failure_at <= 0:
-            return (now - self._last_refresh_at) < self.ttl_seconds
-        anchor = self._last_failure_at or self._last_refresh_at
-        if anchor <= 0:
-            return False
-        return (now - anchor) < self.failure_cooldown
+        return self._directory._is_fresh()
 
     async def _refresh(self, *, force: bool = False) -> None:
-        async with self._lock:
-            if not force and self._is_fresh():
-                return
-
-            groups_by_id: dict[str, dict[str, Any]] = {}
-            saw_platform = False
-            saw_client = False
-            saw_successful_call = False
-
-            for platform, platform_id in self._iter_qq_platforms():
-                saw_platform = True
-                client = get_platform_bot(platform)
-                if client is None or not hasattr(client, "call_action"):
-                    continue
-                saw_client = True
-                try:
-                    result = await client.call_action("get_group_list")
-                except Exception as exc:
-                    logger.warning("[WebAdmin] Failed to load QQ groups: %s", exc)
-                    continue
-                saw_successful_call = True
-                for raw_group in self._extract_group_list(result):
-                    group = self._normalize_group(raw_group, platform_id)
-                    group_id = group["group_id"]
-                    if not group_id or group_id in groups_by_id:
-                        continue
-                    groups_by_id[group_id] = group
-
-            now = time.time()
-            if saw_successful_call:
-                self._groups = self._sort_groups(groups_by_id.values())
-                self._available = True
-                self._message = ""
-                self._last_failure_at = 0.0
-                self._last_refresh_at = now
-                return
-
-            # 刷新失败：保留上一次成功的列表，否则选择器会在平台抖动时整个清空，
-            # 用户已配置之外的群全部消失。列表降级标记为 cached，不再冒充 live。
-            if saw_client:
-                message = "QQ group list request failed."
-            elif saw_platform:
-                message = "QQ platform found, but no callable client is available."
-            else:
-                message = "QQ platform is unavailable."
-            self._groups = self._mark_cached(self._groups)
-            if self._groups:
-                message = f"{message} Showing last known group list."
-            self._available = False
-            self._message = message
-            self._last_failure_at = now
-            self._last_refresh_at = now
+        await self._directory._refresh(force=force)
 
     def invalidate(self) -> None:
         """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
-        self._groups = []
-        self._available = False
-        self._message = "QQ group cache invalidated."
-        self._last_refresh_at = 0.0
-        self._last_failure_at = 0.0
+        self._directory.invalidate()
+
+    async def warm_up(self, *, force: bool = False) -> None:
+        await self._directory.warm_up(force=force)
+
+    @property
+    def ttl_seconds(self) -> int:
+        return self._directory.ttl_seconds
+
+    @ttl_seconds.setter
+    def ttl_seconds(self, value: int) -> None:
+        self._directory.ttl_seconds = int(value)
+
+    @property
+    def failure_cooldown(self) -> float:
+        return self._directory.failure_cooldown
+
+    @failure_cooldown.setter
+    def failure_cooldown(self, value: float) -> None:
+        self._directory.failure_cooldown = max(0.5, float(value))
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        return self._directory._lock
+
+    @property
+    def _last_refresh_at(self) -> float:
+        return self._directory._last_refresh_at
+
+    @_last_refresh_at.setter
+    def _last_refresh_at(self, value: float) -> None:
+        self._directory._last_refresh_at = float(value)
+
+    @property
+    def _last_failure_at(self) -> float:
+        return self._directory._last_failure_at
+
+    @_last_failure_at.setter
+    def _last_failure_at(self, value: float) -> None:
+        self._directory._last_failure_at = float(value)
+
+    @property
+    def _groups(self) -> list[dict[str, Any]]:
+        return self._directory._items
+
+    @_groups.setter
+    def _groups(self, value: list[dict[str, Any]]) -> None:
+        self._directory._items = value
+
+    @property
+    def _available(self) -> bool:
+        return self._directory._available
+
+    @_available.setter
+    def _available(self, value: bool) -> None:
+        self._directory._available = bool(value)
+
+    @property
+    def _message(self) -> str:
+        return self._directory._message
+
+    @_message.setter
+    def _message(self, value: str) -> None:
+        self._directory._message = str(value)
 
     def _iter_qq_platforms(self) -> list[tuple[Any, str]]:
-        platforms = get_platform_instances(getattr(self.plugin, "context", None))
+        platforms = (
+            get_platform_instances(getattr(self.plugin, "context", None))
+            if get_platform_instances
+            else []
+        )
         adapter_matches: list[tuple[Any, str]] = []
         duck_matches: list[tuple[Any, str]] = []
         for platform in platforms:
@@ -149,17 +168,10 @@ class QQGroupCache:
     def _merge_configured_groups(
         self, configured_group_ids: list[str]
     ) -> list[dict[str, Any]]:
-        groups_by_id = {item["group_id"]: copy.deepcopy(item) for item in self._groups}
-        for group_id in configured_group_ids:
-            normalized = str(group_id or "").strip()
-            if not normalized or not normalized.isdigit() or normalized in groups_by_id:
-                continue
-            groups_by_id[normalized] = self._fallback_group(normalized)
-        return self._sort_groups(groups_by_id.values())
+        return self._directory._merge_configured_items(configured_group_ids)
 
     @staticmethod
     def _mark_cached(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """把保留下来的旧列表标记为 cached，避免把过期数据当成实时数据展示。"""
         for group in groups:
             if group.get("source") == "live":
                 group["source"] = "cached"
@@ -167,64 +179,26 @@ class QQGroupCache:
 
     @staticmethod
     def _extract_group_list(result: Any) -> list[dict[str, Any]]:
-        if isinstance(result, list):
-            return [item for item in result if isinstance(item, dict)]
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [item for item in data if isinstance(item, dict)]
-        return []
+        return QQDirectoryAdapter._extract_group_list(result)
 
     @classmethod
     def _normalize_group(
         cls, raw_group: dict[str, Any], platform_id: str
     ) -> dict[str, Any]:
-        group_id = str(raw_group.get("group_id", "") or "").strip()
-        return {
-            "group_id": group_id,
-            "group_name": str(raw_group.get("group_name", "") or "").strip()
-            or f"群 {group_id}",
-            "avatar": cls._avatar_url(group_id),
-            "member_count": cls._safe_int(raw_group.get("member_count"), 0),
-            "max_member_count": cls._safe_int(raw_group.get("max_member_count"), 0),
-            "source": "live",
-            "platform_id": platform_id,
-            "session": f"{platform_id}:GroupMessage:{group_id}"
-            if platform_id and group_id
-            else "",
-        }
+        return QQDirectoryAdapter._normalize_group(raw_group, platform_id)
 
     @classmethod
     def _fallback_group(cls, group_id: str) -> dict[str, Any]:
-        return {
-            "group_id": group_id,
-            "group_name": f"群 {group_id}",
-            "avatar": cls._avatar_url(group_id),
-            "member_count": 0,
-            "max_member_count": 0,
-            "source": "configured",
-            "platform_id": "",
-            "session": "",
-        }
+        return QQDirectoryAdapter._fallback_group(group_id)
 
     @staticmethod
     def _avatar_url(group_id: str) -> str:
-        return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/640" if group_id else ""
+        return QQDirectoryAdapter._avatar_url(group_id)
 
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
+        return QQDirectoryAdapter._safe_int(value, default)
 
     @staticmethod
     def _sort_groups(groups: Any) -> list[dict[str, Any]]:
-        return sorted(
-            [copy.deepcopy(item) for item in groups],
-            key=lambda item: (
-                not str(item.get("group_id", "")).isdigit(),
-                int(item["group_id"]) if str(item.get("group_id", "")).isdigit() else 0,
-                str(item.get("group_name", "")),
-            ),
-        )
+        return QQDirectoryAdapter._sort_groups(groups)
