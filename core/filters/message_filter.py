@@ -1,56 +1,88 @@
-import re
-from collections.abc import Callable
+from __future__ import annotations
 
-from telethon.tl.types import Message
+from collections.abc import Callable
+from typing import Any
+
+from telethon.tl.types import Message  # type: ignore
 
 from astrbot.api import logger
 
+try:
+    from .screening_pipeline import (
+        ContentScreeningPipeline,
+        ScreeningStage,
+        ScreeningVerdict,
+        VerdictAction,
+    )
+except (ImportError, ValueError):
+    try:
+        from core.filters.screening_pipeline import (
+            ContentScreeningPipeline,
+            ScreeningStage,
+            ScreeningVerdict,
+            VerdictAction,
+        )
+    except (ImportError, ValueError):
+        import sys
+        from pathlib import Path
+
+        _cur = Path(__file__).resolve().parent
+        if str(_cur) not in sys.path:
+            sys.path.insert(0, str(_cur))
+        from screening_pipeline import (  # type: ignore
+            ContentScreeningPipeline,
+            ScreeningStage,
+            ScreeningVerdict,
+            VerdictAction,
+        )
+
 
 class MessageFilter:
-    """消息过滤器 - 处理关键词、正则表达式、hashtag 等过滤逻辑"""
+    """消息过滤器 - 处理关键词、正则表达式等过滤逻辑（向后兼容门面）。
 
-    def __init__(self, config: dict):
+    底层基于 ContentScreeningPipeline 驱动，保留原 filter_messages 接口与黑名单过滤语义。
+    """
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.pipeline = ContentScreeningPipeline(config)
 
     def filter_messages(
         self, messages: list[tuple[str, Message]], logger_func: Callable | None = None
     ) -> list[tuple[str, Message]]:
-        """
-        应用过滤规则，返回过滤后的消息列表
-        """
-        # 获取全局配置
-        forward_config = self.config.get("forward_config", {})
+        """应用过滤规则，返回过滤后的消息列表。"""
+        forward_config = (
+            self.config.get("forward_config", {})
+            if isinstance(self.config, dict)
+            else {}
+        )
         filter_keywords = forward_config.get("filter_keywords", [])
         filter_regex = forward_config.get("filter_regex", "")
+        source_channels = (
+            self.config.get("source_channels", [])
+            if isinstance(self.config, dict)
+            else []
+        )
 
-        if not any([filter_keywords, filter_regex]):
+        if not filter_keywords and not filter_regex and not source_channels:
             return messages
 
         filtered_messages = []
         for channel_name, msg in messages:
-            msg_text = (msg.text or "").lower()
-
-            # 1. 关键词过滤
-            if filter_keywords:
-                if any(keyword.lower() in msg_text for keyword in filter_keywords):
-                    if logger_func:
+            verdict = self.pipeline.evaluate_sync(
+                msg, channel_name, stage=ScreeningStage.INGESTION
+            )
+            if verdict.is_dropped:
+                if logger_func:
+                    msg_text = (getattr(msg, "text", "") or "")[:50]
+                    if "regex" in verdict.reason.lower() or "正则" in verdict.reason:
                         logger_func(
-                            f"[Filter] Filtered by keyword: {channel_name} - {msg_text[:50]}"
+                            f"[Filter] Filtered by regex: {channel_name} - {msg_text}"
                         )
-                    continue
-
-            # 2. 正则过滤
-            if filter_regex:
-                try:
-                    if re.search(filter_regex, msg.text or ""):
-                        if logger_func:
-                            logger_func(
-                                f"[Filter] Filtered by regex: {channel_name} - {msg_text[:50]}"
-                            )
-                        continue
-                except re.error as e:
-                    logger.error(f"Invalid regex pattern: {e}")
-
+                    else:
+                        logger_func(
+                            f"[Filter] Filtered by keyword: {channel_name} - {msg_text}"
+                        )
+                continue
             filtered_messages.append((channel_name, msg))
-
         return filtered_messages
