@@ -913,6 +913,7 @@ class Forwarder:
 
                         # Stage 1: 入队前快速审查（关键词与正则匹配）
                         screened_messages = []
+                        dropped_grouped_ids = set()
                         for m in messages:
                             verdict = self.screening_pipeline.evaluate_sync(
                                 m,
@@ -923,8 +924,24 @@ class Forwarder:
                                 logger.info(
                                     f"[Screening] 频道 {channel_name} 消息 {m.id} 入队前快速拦截: {verdict.reason}"
                                 )
+                                gid = getattr(m, "_merge_group_id", None) or getattr(
+                                    m, "grouped_id", None
+                                )
+                                if gid:
+                                    dropped_grouped_ids.add(gid)
                             else:
                                 screened_messages.append(m)
+
+                        if dropped_grouped_ids:
+                            screened_messages = [
+                                m
+                                for m in screened_messages
+                                if (
+                                    getattr(m, "_merge_group_id", None)
+                                    or getattr(m, "grouped_id", None)
+                                )
+                                not in dropped_grouped_ids
+                            ]
 
                         if not screened_messages:
                             self.storage.update_last_id(channel_name, raw_max_id)

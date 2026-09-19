@@ -147,7 +147,7 @@ class PlatformDirectory:
         configured_ids: list[str] | None = None,
     ) -> None:
         async with self._lock:
-            if not force and self._is_fresh() and (self._items or self._last_failure_at > 0):
+            if not force and self._is_fresh():
                 return
 
             try:
@@ -257,6 +257,36 @@ class PlatformDirectory:
             await self._refresh(force=force)
 
 
+def match_qq_platforms(
+    platforms: list[Any] | None,
+    aiocqhttp_adapter_cls: Any = None,
+) -> list[tuple[Any, str]]:
+    """Filters platform instances to matching QQ/OneBot platforms."""
+    if not platforms:
+        return []
+    adapter_matches: list[tuple[Any, str]] = []
+    duck_matches: list[tuple[Any, str]] = []
+    for platform in platforms:
+        try:
+            meta = platform.meta()
+            platform_id = str(getattr(meta, "id", "") or "").strip()
+            platform_name = str(getattr(meta, "name", "") or "").lower()
+        except Exception:
+            platform_id = str(getattr(platform, "id", "") or "").strip()
+            platform_name = str(getattr(platform, "name", "") or "").lower()
+        if not platform_id:
+            continue
+        if aiocqhttp_adapter_cls is not None and isinstance(platform, aiocqhttp_adapter_cls):
+            adapter_matches.append((platform, platform_id))
+            continue
+        if platform_name and not any(
+            marker in platform_name for marker in ("aiocqhttp", "qq", "onebot")
+        ):
+            continue
+        duck_matches.append((platform, platform_id))
+    return adapter_matches + duck_matches
+
+
 class QQDirectoryAdapter(BaseDirectoryAdapter):
     """Directory adapter for QQ groups using AstrBot OneBot platform."""
 
@@ -355,27 +385,10 @@ class QQDirectoryAdapter(BaseDirectoryAdapter):
         if get_platform_instances is None:
             return []
         platforms = get_platform_instances(getattr(self.plugin, "context", None))
-        adapter_matches: list[tuple[Any, str]] = []
-        duck_matches: list[tuple[Any, str]] = []
-        for platform in platforms:
-            try:
-                meta = platform.meta()
-                platform_id = str(getattr(meta, "id", "") or "").strip()
-                platform_name = str(getattr(meta, "name", "") or "").lower()
-            except Exception:
-                platform_id = str(getattr(platform, "id", "") or "").strip()
-                platform_name = str(getattr(platform, "name", "") or "").lower()
-            if not platform_id:
-                continue
-            if AiocqhttpAdapter is not None and isinstance(platform, AiocqhttpAdapter):
-                adapter_matches.append((platform, platform_id))
-                continue
-            if platform_name and not any(
-                marker in platform_name for marker in ("aiocqhttp", "qq", "onebot")
-            ):
-                continue
-            duck_matches.append((platform, platform_id))
-        return adapter_matches + duck_matches
+        adapter_cls = AiocqhttpAdapter or (
+            getattr(runtime, "AiocqhttpAdapter", None) if runtime else None
+        )
+        return match_qq_platforms(platforms, adapter_cls)
 
     @staticmethod
     def _extract_group_list(result: Any) -> list[dict[str, Any]]:
@@ -553,18 +566,20 @@ class TGDirectoryAdapter(BaseDirectoryAdapter):
         except Exception as exc:
             logger.warning("[WebAdmin] Failed to load Telegram channels: %s", exc)
 
-        if channels_by_ref:
-            partial = not dialog_scan_ok
-            message = (
-                ""
-                if dialog_scan_ok
-                else "完整频道列表加载超时，当前仅显示已配置频道，可稍后手动刷新。"
-            )
+        if dialog_scan_ok:
             return DirectoryFetchResult(
                 items=list(channels_by_ref.values()),
                 available=True,
-                partial=partial,
-                message=message,
+                partial=False,
+                message="",
+            )
+
+        if channels_by_ref:
+            return DirectoryFetchResult(
+                items=list(channels_by_ref.values()),
+                available=True,
+                partial=True,
+                message="完整频道列表加载超时，当前仅显示已配置频道，可稍后手动刷新。",
             )
 
         return DirectoryFetchResult(

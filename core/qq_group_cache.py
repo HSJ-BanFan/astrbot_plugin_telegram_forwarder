@@ -20,6 +20,7 @@ from .platform_directory import (
     DirectoryAdapter,
     PlatformDirectory,
     QQDirectoryAdapter,
+    match_qq_platforms,
 )
 
 
@@ -143,27 +144,7 @@ class QQGroupCache:
             if get_platform_instances
             else []
         )
-        adapter_matches: list[tuple[Any, str]] = []
-        duck_matches: list[tuple[Any, str]] = []
-        for platform in platforms:
-            try:
-                meta = platform.meta()
-                platform_id = str(getattr(meta, "id", "") or "").strip()
-                platform_name = str(getattr(meta, "name", "") or "").lower()
-            except Exception:
-                platform_id = str(getattr(platform, "id", "") or "").strip()
-                platform_name = str(getattr(platform, "name", "") or "").lower()
-            if not platform_id:
-                continue
-            if AiocqhttpAdapter is not None and isinstance(platform, AiocqhttpAdapter):
-                adapter_matches.append((platform, platform_id))
-                continue
-            if platform_name and not any(
-                marker in platform_name for marker in ("aiocqhttp", "qq", "onebot")
-            ):
-                continue
-            duck_matches.append((platform, platform_id))
-        return adapter_matches + duck_matches
+        return match_qq_platforms(platforms, AiocqhttpAdapter)
 
     def _merge_configured_groups(
         self, configured_group_ids: list[str]

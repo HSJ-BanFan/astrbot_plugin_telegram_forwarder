@@ -345,3 +345,66 @@ def test_reload_runtime_config_syncs_with_pipeline():
     assert "new_bad_word_1" in policy.keywords
     assert "new_bad_word_2" in policy.keywords
     assert "initial_bad_word" not in policy.keywords
+
+
+@pytest.mark.asyncio
+async def test_stage_1_drops_entire_grouped_album_when_one_message_blocked():
+    """Stage 1 快速审查：若相册某条消息命中拦截规则，整组相册消息均不得持久化入队。"""
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage([])
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config = {
+        "forward_config": {
+            "filter_keywords": ["广告"],
+        },
+        "source_channels": [{"channel_username": "demo"}],
+    }
+    forwarder.screening_pipeline.reload_config(forwarder.config)
+    forwarder._channel_locks = {}
+    forwarder._channel_last_check = {}
+    forwarder._get_effective_config = lambda channel: {
+        "check_interval": 60,
+        "msg_limit": 10,
+        "filter_keywords": ["广告"],
+    }
+    forwarder.message_merger = SimpleNamespace(
+        find_defer_from_index=MagicMock(return_value=None),
+        merge_messages=MagicMock(side_effect=lambda pairs: pairs),
+    )
+    now = datetime.now()
+    forwarder._fetch_channel_messages = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=501,
+                text="精彩相册第 1 张",
+                date=now,
+                grouped_id=888,
+                reply_markup=None,
+            ),
+            SimpleNamespace(
+                id=502,
+                text="精彩相册第 2 张 广告",
+                date=now,
+                grouped_id=888,
+                reply_markup=None,
+            ),
+            SimpleNamespace(
+                id=503,
+                text="独立合法单条消息",
+                date=now,
+                grouped_id=None,
+                reply_markup=None,
+            ),
+        ]
+    )
+    forwarder._prepare_album_boundaries = AsyncMock(
+        side_effect=lambda channel, msgs, limit: msgs
+    )
+    forwarder._is_monitor_matched = MagicMock(return_value=False)
+
+    await forwarder.check_updates(force=True)
+
+    # 验证：相册 888 的 501 和 502 均被抛弃，仅独立消息 503 入队
+    assert len(storage.pending) == 1
+    assert storage.pending[0]["id"] == 503
+    assert storage.get_channel_data("demo")["last_post_id"] == 503

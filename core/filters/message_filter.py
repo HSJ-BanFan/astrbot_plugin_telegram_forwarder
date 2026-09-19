@@ -58,13 +58,19 @@ class MessageFilter:
         )
         filter_keywords = forward_config.get("filter_keywords", [])
         filter_regex = forward_config.get("filter_regex", "")
+        filter_regex_patterns = forward_config.get("filter_regex_patterns", [])
         source_channels = (
             self.config.get("source_channels", [])
             if isinstance(self.config, dict)
             else []
         )
 
-        if not filter_keywords and not filter_regex and not source_channels:
+        if (
+            not filter_keywords
+            and not filter_regex
+            and not filter_regex_patterns
+            and not source_channels
+        ):
             return messages
 
         filtered_messages = []
