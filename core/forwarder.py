@@ -3,6 +3,7 @@ import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger, star
 from telethon.tl.types import Message  # type: ignore
@@ -17,6 +18,12 @@ from .client import TelegramClientWrapper
 from .downloader import MediaDownloader
 from .filters.content_safety import ContentSafetyFilter
 from .filters.message_filter import MessageFilter
+from .filters.screening_pipeline import (
+    ContentScreeningPipeline,
+    ScreeningStage,
+    ScreeningVerdict,
+    VerdictAction,
+)
 from .mergers import MessageMerger
 from .recall import RecallRegistry
 from .senders.qq import QQSender, QQSendSummary
@@ -65,9 +72,13 @@ class Forwarder:
             self.client, config, recall_registry=self.recall_registry
         )
 
-        # 初始化过滤器和合并引擎
+        # 初始化过滤器、内容审核流水线和合并引擎
+        self._content_safety_filter = ContentSafetyFilter()
+        self._screening_pipeline = ContentScreeningPipeline(
+            config,
+            content_safety_filter=self._content_safety_filter,
+        )
         self.message_filter = MessageFilter(config)
-        self.content_safety_filter = ContentSafetyFilter()
         self.message_merger = MessageMerger(config)
 
         # 启动时清理孤儿文件
@@ -97,10 +108,55 @@ class Forwarder:
         # 缓存频道标题 (Key: ChannelUsername, Value: Title)
         self._channel_titles_cache = {}
 
+    @property
+    def screening_pipeline(self) -> ContentScreeningPipeline:
+        if not hasattr(self, "_screening_pipeline") or self._screening_pipeline is None:
+            filter_inst = getattr(self, "_content_safety_filter", None)
+            self._screening_pipeline = ContentScreeningPipeline(
+                getattr(self, "config", {}) or {},
+                content_safety_filter=filter_inst,
+            )
+        return self._screening_pipeline
+
+    @screening_pipeline.setter
+    def screening_pipeline(self, value: ContentScreeningPipeline) -> None:
+        self._screening_pipeline = value
+
+    @property
+    def content_safety_filter(self) -> Any:
+        return getattr(self, "_content_safety_filter", None)
+
+    @content_safety_filter.setter
+    def content_safety_filter(self, val: Any) -> None:
+        self._content_safety_filter = val
+        if hasattr(self, "_screening_pipeline") and self._screening_pipeline is not None:
+            self._screening_pipeline.content_safety_filter = val
+
+    @property
+    def _content_safety_calls_remaining(self) -> int:
+        if hasattr(self, "_screening_pipeline") and self._screening_pipeline is not None:
+            return self._screening_pipeline.get_remaining_ai_budget()
+        if hasattr(self, "_legacy_ai_budget"):
+            return self._legacy_ai_budget
+        cfg = getattr(self, "config", {}) or {}
+        forward_cfg = cfg.get("forward_config", cfg) if isinstance(cfg, dict) else {}
+        try:
+            return int(forward_cfg.get("ai_filter_max_calls_per_cycle", 5))
+        except (TypeError, ValueError):
+            return 5
+
+    @_content_safety_calls_remaining.setter
+    def _content_safety_calls_remaining(self, value: int) -> None:
+        self._legacy_ai_budget = int(value)
+        if hasattr(self, "_screening_pipeline") and self._screening_pipeline is not None:
+            self._screening_pipeline._ai_calls_remaining = int(value)
+
     def reload_runtime_config(self) -> None:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
+        if hasattr(self, "_screening_pipeline") and self._screening_pipeline is not None:
+            self._screening_pipeline.reload_config(self.config)
         recall_registry = getattr(self, "recall_registry", None)
         reconfigure = getattr(recall_registry, "reconfigure_from_config", None)
         if callable(reconfigure):
@@ -344,28 +400,11 @@ class Forwarder:
 
     @staticmethod
     def _is_keyword_matched(pattern_str: str, text: str) -> bool:
-        if not pattern_str or not text:
-            return False
-        pattern_str = pattern_str.lower().strip()
-        if not pattern_str:
-            return False
-        if pattern_str.isascii():
-            regex_pattern = rf"(?<![a-zA-Z0-9]){re.escape(pattern_str)}(?![a-zA-Z0-9])"
-            return bool(re.search(regex_pattern, text, re.IGNORECASE))
-        return pattern_str in text
+        return ContentScreeningPipeline._is_keyword_matched(pattern_str, text)
 
     @staticmethod
-    def _build_message_search_text(msg: Message) -> str:
-        text_content = msg.text or ""
-        button_text = ""
-        if msg.reply_markup and hasattr(msg.reply_markup, "rows"):
-            button_parts = []
-            for row in msg.reply_markup.rows:
-                for btn in row.buttons:
-                    if hasattr(btn, "text") and btn.text:
-                        button_parts.append(btn.text)
-            button_text = " ".join(button_parts)
-        return f"{text_content} {button_text}".strip()
+    def _build_message_search_text(msg: Any) -> str:
+        return ContentScreeningPipeline.extract_search_text(msg)
 
     @staticmethod
     def _is_spoiler_message(msg: Message) -> bool:
@@ -870,6 +909,31 @@ class Forwarder:
                     monitor_hit_targets = []
 
                     if messages:
+                        raw_max_id = max(m.id for m in messages)
+
+                        # Stage 1: 入队前快速审查（关键词与正则匹配）
+                        screened_messages = []
+                        for m in messages:
+                            verdict = self.screening_pipeline.evaluate_sync(
+                                m,
+                                channel_name=channel_name,
+                                stage=ScreeningStage.INGESTION,
+                            )
+                            if verdict.is_dropped:
+                                logger.info(
+                                    f"[Screening] 频道 {channel_name} 消息 {m.id} 入队前快速拦截: {verdict.reason}"
+                                )
+                            else:
+                                screened_messages.append(m)
+
+                        if not screened_messages:
+                            self.storage.update_last_id(channel_name, raw_max_id)
+                            logger.info(
+                                f"[Capture] 频道 {channel_name} 本轮抓取消息均被 Stage 1 拦截，更新进度至 ID: {raw_max_id}"
+                            )
+                            return []
+
+                        messages = screened_messages
                         message_pairs = [(channel_name, m) for m in messages]
                         defer_from_index = self.message_merger.find_defer_from_index(
                             channel_name, message_pairs
@@ -921,7 +985,11 @@ class Forwarder:
                             channel_name, pending_items
                         )
 
-                        max_id = max(m.id for m in messages)
+                        max_id = (
+                            raw_max_id
+                            if defer_from_index is None
+                            else max(m.id for m in messages)
+                        )
                         self.storage.update_last_id(channel_name, max_id)
 
                         logger.info(
@@ -1298,6 +1366,7 @@ class Forwarder:
             processed_keys: set[tuple[str, int]] = set()
             pending_idx = 0
             # AI 过滤预算按“整个 send 周期”初始化一次，避免每轮 try/retry 重置。
+            self.screening_pipeline.reset_cycle_budget()
             self._content_safety_calls_remaining = self._positive_int(
                 self.config.get("forward_config", {}).get(
                     "ai_filter_max_calls_per_cycle", 5
@@ -1470,8 +1539,13 @@ class Forwarder:
                                     )
                                 continue
 
-                            # 关键词/正则过滤
-                            should_skip = self._is_text_filter_matched(m, effective_cfg)
+                            # 关键词/正则过滤与 Stage 2 调度审查
+                            dispatch_verdict = self.screening_pipeline.evaluate_sync(
+                                m, channel_name=channel, stage=ScreeningStage.DISPATCH
+                            )
+                            should_skip = dispatch_verdict.is_dropped or self._is_text_filter_matched(
+                                m, effective_cfg
+                            )
 
                             if not should_skip:
                                 should_skip = await self._is_content_safety_matched(m)

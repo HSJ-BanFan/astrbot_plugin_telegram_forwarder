@@ -167,6 +167,7 @@ def load_forwarder_module():
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
         "astrbot_plugin_telegram_forwarder.core.filters.content_safety",
         "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
+        "astrbot_plugin_telegram_forwarder.core.filters.screening_pipeline",
         "astrbot_plugin_telegram_forwarder.core.mergers",
         "astrbot_plugin_telegram_forwarder.core.forwarder",
     )
@@ -219,13 +220,27 @@ def load_forwarder_module():
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.filters.content_safety",
             ContentSafetyFilter=object,
+            DEFAULT_QR_RISK_KEYWORDS=["loan", "借款"],
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
-            MessageFilter=object,
+            MessageFilter=type("MessageFilter", (), {"__init__": lambda self, *a, **k: None}),
         )
+
+        pipeline_path = root / "core" / "filters" / "screening_pipeline.py"
+        pipeline_spec = importlib.util.spec_from_file_location(
+            "astrbot_plugin_telegram_forwarder.core.filters.screening_pipeline",
+            pipeline_path,
+        )
+        assert pipeline_spec is not None and pipeline_spec.loader is not None
+        pipeline_mod = importlib.util.module_from_spec(pipeline_spec)
+        pipeline_mod.__package__ = "astrbot_plugin_telegram_forwarder.core.filters"
+        sys.modules[pipeline_spec.name] = pipeline_mod
+        pipeline_spec.loader.exec_module(pipeline_mod)
+
         _register_module(
-            "astrbot_plugin_telegram_forwarder.core.mergers", MessageMerger=object
+            "astrbot_plugin_telegram_forwarder.core.mergers",
+            MessageMerger=type("MessageMerger", (), {"__init__": lambda self, *a, **k: None}),
         )
 
         spec = importlib.util.spec_from_file_location(
