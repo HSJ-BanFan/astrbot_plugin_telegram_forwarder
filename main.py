@@ -43,6 +43,8 @@ class Main(star.Star):
     # 频道/群组列表缓存 1 小时；获取超时 120s（慢链路也能扫全）。
     CACHE_REFRESH_SECONDS = 3600
     CACHE_WARM_TIMEOUT_SECONDS = 130
+    DOWNLOAD_CACHE_CLEANUP_SECONDS = 3600
+    TELEGRAM_STATUS_REFRESH_SECONDS = 30
     # 启动时后台连接 Telegram 的单次尝试预算与重试间隔。
     # 离线/无代理时绝不阻塞 AstrBot 主服务启动；连接成功后再激活调度器。
     STARTUP_CONNECT_TIMEOUT_SECONDS = 20
@@ -683,6 +685,35 @@ class Main(star.Star):
             + timedelta(seconds=self.CACHE_REFRESH_SECONDS),
         )
 
+    def _schedule_download_cache_cleanup_job(self) -> None:
+        if not self.scheduler or self.scheduler.get_job(
+            "telegram_forwarder_download_cache_cleanup"
+        ):
+            return
+        downloader = getattr(self.forwarder, "downloader", None)
+        cleanup = getattr(downloader, "cleanup_stale_files", None)
+        if not callable(cleanup):
+            return
+        self.scheduler.add_job(
+            cleanup,
+            "interval",
+            seconds=self.DOWNLOAD_CACHE_CLEANUP_SECONDS,
+            max_instances=1,
+            coalesce=True,
+            id="telegram_forwarder_download_cache_cleanup",
+            replace_existing=False,
+            next_run_time=datetime.now()
+            + timedelta(seconds=self.DOWNLOAD_CACHE_CLEANUP_SECONDS),
+        )
+
+    async def _run_telegram_status_check_job(self) -> None:
+        server = self._ensure_web_admin_server()
+        if getattr(server, "_telegram_session_invalid", False):
+            wrapper = getattr(self, "client_wrapper", None)
+            if wrapper is None or not wrapper.is_authorized():
+                return
+        await server._refresh_telegram_me(timeout=8.0)
+
     async def _await_cache_warm(self) -> None:
         """让首轮抓取/发送等预热跑完，避免两边抢同一条 Telethon 连接。
 
@@ -701,10 +732,16 @@ class Main(star.Star):
 
     async def _run_check_updates_job(self):
         await self._await_cache_warm()
+        wrapper = getattr(self, "client_wrapper", None)
+        if wrapper is not None and not wrapper.is_authorized():
+            return
         await self.forwarder.check_updates()
 
     async def _run_send_pending_job(self):
         await self._await_cache_warm()
+        wrapper = getattr(self, "client_wrapper", None)
+        if wrapper is not None and not wrapper.is_authorized():
+            return
         await self.forwarder.send_pending_messages()
 
     async def activate_runtime_after_authorized(self, startup_grace: int | None = None):
@@ -772,7 +809,20 @@ class Main(star.Star):
             replace_existing=True,
         )
 
+        self.scheduler.add_job(
+            self._run_telegram_status_check_job,
+            "interval",
+            seconds=self.TELEGRAM_STATUS_REFRESH_SECONDS,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now()
+            + timedelta(seconds=self.TELEGRAM_STATUS_REFRESH_SECONDS),
+            id="telegram_forwarder_telegram_status_refresh",
+            replace_existing=True,
+        )
+
         self._schedule_cache_refresh_job()
+        self._schedule_download_cache_cleanup_job()
 
         if not self.scheduler.running:
             self.scheduler.start()
@@ -786,6 +836,9 @@ class Main(star.Star):
         )
         logger.info(
             f" - 缓存刷新: 每 {self.CACHE_REFRESH_SECONDS}s 执行一次（启动先预热，前端默认读缓存）"
+        )
+        logger.info(
+            f" - Telegram 授权校验: 每 {self.TELEGRAM_STATUS_REFRESH_SECONDS}s 执行一次"
         )
         source_channels = self.config.get("source_channels", [])
         channel_names: list[str] = []

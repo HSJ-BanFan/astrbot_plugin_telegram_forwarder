@@ -380,6 +380,46 @@ def test_refresh_telegram_me_updates_status_cache(web_admin):
     client.get_me.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_login_status", [False, True])
+async def test_auth_key_conflict_clears_cached_authorization_and_profile(
+    web_admin, use_login_status
+):
+    class AuthKeyDuplicatedError(Exception):
+        pass
+
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(
+            side_effect=AuthKeyDuplicatedError(
+                "The authorization key (session file) was used under two different "
+                "IP addresses simultaneously, and can no longer be used."
+            )
+        ),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        _authorized=True,
+        is_connected=MagicMock(return_value=True),
+    )
+    wrapper.is_authorized = lambda: wrapper._authorized and wrapper.is_connected()
+    wrapper.mark_unauthorized = lambda: setattr(wrapper, "_authorized", False)
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 123, "username": "stale"}
+
+    if use_login_status:
+        result = await web_admin.server.get_login_status()
+        assert result["authorized"] is False
+    else:
+        assert await web_admin.server._refresh_telegram_me() is None
+
+    cached = web_admin.server._cached_login_status()
+    assert wrapper._authorized is False
+    assert web_admin.server._telegram_me_cache is None
+    assert cached["authorized"] is False
+    assert cached["session_invalid"] is True
+
+
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):
     rule = {
         "__template_key": "custom",

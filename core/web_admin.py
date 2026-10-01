@@ -135,6 +135,7 @@ class WebAdminServer:
         self._login_data: dict[str, Any] = {}
         self._login_wrapper: TelegramClientWrapper | None = None
         self._telegram_me_cache: dict[str, Any] | None = None
+        self._telegram_session_invalid = False
         self._thread: threading.Thread | None = None
         self._http_server = None
         self._runtime_operations: list[dict[str, Any]] = []
@@ -741,6 +742,7 @@ class WebAdminServer:
         official_wrapper._authorized = False
         # 替换正式会话后清空旧 me 缓存，避免 status 显示上一个账号。
         self._telegram_me_cache = None
+        self._telegram_session_invalid = False
         try:
             self.tg_channel_cache.invalidate()
         except Exception as exc:
@@ -775,6 +777,7 @@ class WebAdminServer:
         return {
             "connected": bool(wrapper and wrapper.is_connected()),
             "authorized": authorized,
+            "session_invalid": self._telegram_session_invalid,
             "login_in_progress": bool(self._login_data),
             "need_password": bool(self._login_data.get("need_password")),
             "replace_existing": bool(self._login_data.get("replace_existing")),
@@ -800,10 +803,10 @@ class WebAdminServer:
                     return self._telegram_me_cache
             authorized = bool(await client.is_user_authorized())
             if not authorized:
-                self._telegram_me_cache = None
-                wrapper._authorized = False
+                self._mark_telegram_unauthorized()
                 return None
             wrapper._authorized = True
+            self._telegram_session_invalid = False
             me = await client.get_me()
             profile = {
                 "id": getattr(me, "id", None),
@@ -821,8 +824,28 @@ class WebAdminServer:
             logger.warning("[WebAdmin] refresh telegram me timed out")
             return self._telegram_me_cache
         except Exception as exc:
+            if self._is_auth_key_duplicated_error(exc):
+                logger.warning(
+                    "[WebAdmin] Telegram session was revoked after an AuthKey IP conflict"
+                )
+                self._mark_telegram_unauthorized(session_invalid=True)
+                return None
             logger.debug(f"[WebAdmin] refresh telegram me failed: {exc}")
             return self._telegram_me_cache
+
+    def _mark_telegram_unauthorized(self, *, session_invalid: bool = False) -> None:
+        wrapper = getattr(self.plugin, "client_wrapper", None)
+        marker = getattr(wrapper, "mark_unauthorized", None) if wrapper else None
+        if callable(marker):
+            marker()
+        if wrapper:
+            wrapper._authorized = False
+        self._telegram_me_cache = None
+        self._telegram_session_invalid = session_invalid
+        try:
+            self.tg_channel_cache.invalidate()
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] invalidate tg cache after logout failed: {exc}")
 
     async def get_status(self) -> dict[str, Any]:
         login_status = self._cached_login_status()
@@ -1538,6 +1561,7 @@ class WebAdminServer:
         wrapper._authorized = False
         # 导入会话后必须清空旧账号 me 缓存，否则 /api/status 可能继续显示上一个用户。
         self._telegram_me_cache = None
+        self._telegram_session_invalid = False
         wrapper._init_client()
         authorized = False
         if wrapper.client and await wrapper.ensure_connected():
@@ -1567,6 +1591,7 @@ class WebAdminServer:
             return {
                 "connected": False,
                 "authorized": False,
+                "session_invalid": self._telegram_session_invalid,
                 "login_in_progress": bool(self._login_data),
                 "need_password": bool(self._login_data.get("need_password")),
                 "replace_existing": bool(self._login_data.get("replace_existing")),
@@ -1584,6 +1609,7 @@ class WebAdminServer:
                 authorized = bool(await wrapper.client.is_user_authorized())
                 if authorized:
                     wrapper._authorized = True
+                    self._telegram_session_invalid = False
                     me = await wrapper.client.get_me()
                     me_data = {
                         "id": getattr(me, "id", None),
@@ -1592,12 +1618,23 @@ class WebAdminServer:
                         "last_name": getattr(me, "last_name", None),
                         "phone": getattr(me, "phone", None),
                     }
+                else:
+                    self._mark_telegram_unauthorized()
         except Exception as exc:
-            logger.debug(f"[WebAdmin] login status check failed: {exc}")
+            if self._is_auth_key_duplicated_error(exc):
+                logger.warning(
+                    "[WebAdmin] Telegram session was revoked after an AuthKey IP conflict"
+                )
+                self._mark_telegram_unauthorized(session_invalid=True)
+                authorized = False
+                me_data = None
+            else:
+                logger.debug(f"[WebAdmin] login status check failed: {exc}")
 
         return {
             "connected": connected,
             "authorized": authorized,
+            "session_invalid": self._telegram_session_invalid,
             "login_in_progress": bool(self._login_data),
             "need_password": bool(self._login_data.get("need_password")),
             "replace_existing": bool(self._login_data.get("replace_existing")),
@@ -1676,6 +1713,7 @@ class WebAdminServer:
         )
 
         self._telegram_me_cache = None
+        self._telegram_session_invalid = False
         wrapper.client = cast(Any, None)
         wrapper._authorized = False
         wrapper._init_client()

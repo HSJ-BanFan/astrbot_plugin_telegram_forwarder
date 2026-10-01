@@ -215,7 +215,10 @@ export function renderStatus() {
   if (els.telegramStatus) {
     let dotClass = "danger";
     let text = "未连接";
-    if (telegram.authorized) {
+    if (telegram.session_invalid) {
+      dotClass = "danger";
+      text = "授权已失效，请重新登录";
+    } else if (telegram.authorized) {
       dotClass = "success";
       text = `已授权${me?.username ? ` @${me.username}` : ""}`;
     } else if (telegram.connected) {

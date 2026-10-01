@@ -41,6 +41,8 @@ async def test_download_media_propagates_cancellation(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await downloader.download_media(msg)
 
+    assert client.download_media.await_args.kwargs["file"] == downloader.download_cache_dir
+
 
 @pytest.mark.asyncio
 async def test_download_media_timeout_retries_and_returns(tmp_path):
@@ -86,6 +88,27 @@ def test_download_timeout_scales_with_file_size(tmp_path):
         downloader._download_timeout(MagicMock(file=MagicMock(size=500 * 1024**2)))
         == 300
     )
+
+
+def test_cleanup_stale_download_files_keeps_recent_files(tmp_path):
+    import os
+
+    module = load_downloader_module()
+    now = 10_000.0
+    downloader = module.MediaDownloader(
+        MagicMock(), tmp_path, cache_retention_seconds=60
+    )
+    downloader.download_cache_dir.mkdir()
+    stale = downloader.download_cache_dir / "stale.bin"
+    recent = downloader.download_cache_dir / "recent.bin"
+    stale.write_bytes(b"old")
+    recent.write_bytes(b"new")
+    os.utime(stale, (now - 61, now - 61))
+    os.utime(recent, (now - 59, now - 59))
+
+    assert downloader.cleanup_stale_files(now=now) == 1
+    assert not stale.exists()
+    assert recent.exists()
 
 
 def _image_bytes(image) -> bytes:

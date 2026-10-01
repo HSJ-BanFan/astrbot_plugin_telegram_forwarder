@@ -1,4 +1,5 @@
 import asyncio
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -12,6 +13,10 @@ class MediaDownloader:
     负责从 Telegram 消息中下载媒体文件
     """
 
+    DOWNLOAD_CACHE_DIR = "downloads"
+    DEFAULT_CACHE_RETENTION_SECONDS = 24 * 60 * 60
+    CACHE_CLEANUP_INTERVAL_SECONDS = 60 * 60
+
     def __init__(
         self,
         client,
@@ -19,12 +24,57 @@ class MediaDownloader:
         max_file_size: int = 500 * 1024 * 1024,
         download_timeout_sec: float | None = None,
         retry_delay_sec: float = 2.0,
+        cache_retention_seconds: float = DEFAULT_CACHE_RETENTION_SECONDS,
     ):
         self.client = client
         self.plugin_data_dir = plugin_data_dir
+        self.download_cache_dir = plugin_data_dir / self.DOWNLOAD_CACHE_DIR
         self.max_file_size = max_file_size
         self.download_timeout_sec = download_timeout_sec
         self.retry_delay_sec = max(0.0, float(retry_delay_sec))
+        self.cache_retention_seconds = max(0.0, float(cache_retention_seconds))
+        self._last_cache_cleanup_at = 0.0
+
+    def cleanup_stale_files(self, *, now: float | None = None) -> int:
+        """Remove interrupted-download leftovers older than the retention window."""
+        current_time = time.time() if now is None else float(now)
+        if not self.download_cache_dir.is_dir():
+            self._last_cache_cleanup_at = current_time
+            return 0
+
+        cutoff = current_time - self.cache_retention_seconds
+        deleted_count = 0
+        try:
+            for file_path in self.download_cache_dir.iterdir():
+                try:
+                    if file_path.is_symlink() or not file_path.is_file():
+                        continue
+                    if file_path.stat().st_mtime >= cutoff:
+                        continue
+                    file_path.unlink()
+                    deleted_count += 1
+                except OSError as exc:
+                    logger.debug(
+                        f"[Downloader] 清理过期下载缓存失败 {file_path}: {exc}"
+                    )
+        except OSError as exc:
+            logger.warning(
+                f"[Downloader] 扫描下载缓存目录失败 {self.download_cache_dir}: {exc}"
+            )
+        self._last_cache_cleanup_at = current_time
+        if deleted_count:
+            logger.info(
+                f"[Downloader] 清理过期下载缓存 {deleted_count} 个文件 "
+                f"(保留 {self.cache_retention_seconds / 3600:g} 小时)"
+            )
+        return deleted_count
+
+    def _cleanup_stale_files_if_due(self) -> None:
+        if (
+            time.time() - self._last_cache_cleanup_at
+            >= self.CACHE_CLEANUP_INTERVAL_SECONDS
+        ):
+            self.cleanup_stale_files()
 
     def _download_timeout(self, msg: Message) -> float:
         if self.download_timeout_sec is not None:
@@ -138,6 +188,8 @@ class MediaDownloader:
             logger.debug(
                 f"[Downloader] 检测到消息 {msg.id} 中的{media_type}，开始下载..."
             )
+            self.download_cache_dir.mkdir(parents=True, exist_ok=True)
+            self._cleanup_stale_files_if_due()
 
             def progress_callback(current, total):
                 if total > 0:
@@ -161,7 +213,7 @@ class MediaDownloader:
                     path = await asyncio.wait_for(
                         self.client.download_media(
                             msg,
-                            file=self.plugin_data_dir,
+                            file=self.download_cache_dir,
                             progress_callback=progress_callback,
                         ),
                         timeout=timeout_sec,

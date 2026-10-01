@@ -150,12 +150,12 @@ export async function loadStatusOnly() {
   }
 }
 
-export function runtimeNeedsStatusRefresh() {
+function runtimeHasActiveWork() {
   const status = store.state.status || {};
   const runtime = status.runtime || {};
   const telegram = status.telegram || {};
   const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
-  // 登录流程需要自动刷新；业务 busy 也需要。其它页面不定时刷。
+  // 登录流程和忙碌任务需要更快的状态刷新。
   return Boolean(
     telegram.login_in_progress ||
       runtime.active_web_operations ||
@@ -164,6 +164,11 @@ export function runtimeNeedsStatusRefresh() {
       runtime.global_send_busy ||
       operations.some((operation) => operation.status === "running")
   );
+}
+
+export function runtimeNeedsStatusRefresh() {
+  const status = store.state.status || {};
+  return Boolean(status.telegram?.authorized || runtimeHasActiveWork());
 }
 
 export function syncRuntimeStatusRefresh() {
@@ -183,7 +188,7 @@ export function syncRuntimeStatusRefresh() {
     } catch (error) {
       console.warn("Runtime status refresh failed:", error);
     }
-  }, 2000);
+  }, runtimeHasActiveWork() ? 2000 : 30000);
   store.updateState({ runtimeRefreshTimer: timer });
 }
 

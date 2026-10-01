@@ -2477,13 +2477,14 @@ class Forwarder:
 
     def _cleanup_orphaned_files(self):
         """
-        启动时清理插件数据目录中的孤儿文件
+        启动时清理插件数据目录中的孤儿文件和过期下载缓存。
         """
         plugin_data_dir = self.plugin_data_dir
         if not plugin_data_dir.exists():
             return
 
         logger.debug(f"[Cleanup] 正在清理临时文件: {self.plugin_data_dir}")
+        self.downloader.cleanup_stale_files()
         allowlist = [
             "data.json",
             "user_session.session",
