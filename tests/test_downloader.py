@@ -111,6 +111,18 @@ def test_cleanup_stale_download_files_keeps_recent_files(tmp_path):
     assert recent.exists()
 
 
+def test_download_cache_rejects_symlink_root(tmp_path):
+    module = load_downloader_module()
+    downloader = module.MediaDownloader(MagicMock(), tmp_path)
+    target = tmp_path / "outside"
+    target.mkdir()
+    downloader.download_cache_dir.symlink_to(target, target_is_directory=True)
+
+    assert downloader.cleanup_stale_files(now=10_000.0) == 0
+    assert downloader._cache_dir_is_safe() is False
+    assert module.MediaDownloader.DOWNLOAD_CACHE_DIR == "telegram_download"
+
+
 def _image_bytes(image) -> bytes:
     """Serialize a Pillow image as PNG bytes.
 

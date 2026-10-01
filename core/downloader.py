@@ -13,7 +13,7 @@ class MediaDownloader:
     负责从 Telegram 消息中下载媒体文件
     """
 
-    DOWNLOAD_CACHE_DIR = "downloads"
+    DOWNLOAD_CACHE_DIR = "telegram_download"
     DEFAULT_CACHE_RETENTION_SECONDS = 24 * 60 * 60
     CACHE_CLEANUP_INTERVAL_SECONDS = 60 * 60
 
@@ -35,10 +35,25 @@ class MediaDownloader:
         self.cache_retention_seconds = max(0.0, float(cache_retention_seconds))
         self._last_cache_cleanup_at = 0.0
 
+    def _cache_dir_is_safe(self) -> bool:
+        """Ensure the dedicated cache root is a real directory, not a link."""
+        try:
+            if self.download_cache_dir.is_symlink():
+                logger.warning(
+                    f"[Downloader] 拒绝使用符号链接下载缓存目录: {self.download_cache_dir}"
+                )
+                return False
+            return self.download_cache_dir.is_dir()
+        except OSError as exc:
+            logger.warning(
+                f"[Downloader] 检查下载缓存目录失败 {self.download_cache_dir}: {exc}"
+            )
+            return False
+
     def cleanup_stale_files(self, *, now: float | None = None) -> int:
         """Remove interrupted-download leftovers older than the retention window."""
         current_time = time.time() if now is None else float(now)
-        if not self.download_cache_dir.is_dir():
+        if not self._cache_dir_is_safe():
             self._last_cache_cleanup_at = current_time
             return 0
 
@@ -188,7 +203,21 @@ class MediaDownloader:
             logger.debug(
                 f"[Downloader] 检测到消息 {msg.id} 中的{media_type}，开始下载..."
             )
-            self.download_cache_dir.mkdir(parents=True, exist_ok=True)
+            if self.download_cache_dir.exists() or self.download_cache_dir.is_symlink():
+                if not self._cache_dir_is_safe():
+                    logger.error(
+                        f"[Downloader] 下载缓存目录不安全，跳过消息 {msg.id}: "
+                        f"{self.download_cache_dir}"
+                    )
+                    return local_files
+            else:
+                self.download_cache_dir.mkdir(parents=True, exist_ok=True)
+            if not self._cache_dir_is_safe():
+                logger.error(
+                    f"[Downloader] 下载缓存目录校验失败，跳过消息 {msg.id}: "
+                    f"{self.download_cache_dir}"
+                )
+                return local_files
             self._cleanup_stale_files_if_due()
 
             def progress_callback(current, total):

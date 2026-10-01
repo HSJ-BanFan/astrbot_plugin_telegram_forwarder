@@ -213,6 +213,8 @@ class Main(star.Star):
 
         # 初始化调度器。
         self.scheduler = AsyncIOScheduler()
+        # 下载缓存清理不依赖 Telegram 授权，插件初始化后即可运行。
+        self._schedule_download_cache_cleanup_job()
 
         # 初始化命令处理器。
         self.command_handler = PluginCommands(
@@ -688,7 +690,7 @@ class Main(star.Star):
     def _schedule_download_cache_cleanup_job(self) -> None:
         if not self.scheduler or self.scheduler.get_job(
             "telegram_forwarder_download_cache_cleanup"
-        ):
+        ) is not None:
             return
         downloader = getattr(self.forwarder, "downloader", None)
         cleanup = getattr(downloader, "cleanup_stale_files", None)
@@ -822,7 +824,6 @@ class Main(star.Star):
         )
 
         self._schedule_cache_refresh_job()
-        self._schedule_download_cache_cleanup_job()
 
         if not self.scheduler.running:
             self.scheduler.start()
@@ -858,16 +859,18 @@ class Main(star.Star):
         """启动插件运行时（不阻塞 AstrBot 主服务启动）。"""
         self._web_loop = asyncio.get_running_loop()
         self._start_web_admin_server()
+        if not self.scheduler.running:
+            self.scheduler.start()
 
         # 后台完成 Telegram 连接与授权：离线/无代理时由 _bootstrap_after_connect
-        # 按节流持续重试，连接成功后再激活调度器，避免同步等待阻塞 AstrBot 主 WebUI。
+        # 按节流持续重试，连接成功后再激活抓取/发送任务，避免同步等待阻塞 AstrBot 主 WebUI。
         if self.client_wrapper.client:
             self._startup_connect_task = asyncio.create_task(
                 self._bootstrap_after_connect()
             )
         else:
             logger.warning(
-                "Telegram 客户端未初始化，定时任务未启动。请配置 api_id/api_hash。"
+                "Telegram 客户端未初始化，抓取/发送任务未启动。请配置 api_id/api_hash。"
             )
 
     async def _bootstrap_after_connect(self) -> None:

@@ -51,7 +51,7 @@
 - **Q**: Web 管理页面打不开？
   **A**: 检查 `web.enabled` 是否为 `true`、端口 `8180` 是否被占用、`web.token` 是否为弱默认值（`123456` 会被警告）。
 - **Q**: `MediaDownloader` 的大小限制和临时文件清理是怎样的？
-  **A**: 大小限制 `max_size_mb` **只对非图片媒体生效**（图片始终下载）；动画贴纸（`.tgs`）与自定义动图表情（`DocumentAttributeAnimated` / `DocumentAttributeCustomEmoji`）会被跳过（QQ 无法显示）。下载失败自动重试最多 3 次，期间若客户端断开会尝试 `connect()` 重连；`asyncio.CancelledError` 原样上抛（绝不吞掉）。媒体暂存于数据目录的 `downloads/`，正常发送后立即删除；中断遗留文件在启动时和每小时扫描一次，超过 24 小时删除。
+  **A**: 大小限制 `max_size_mb` **只对非图片媒体生效**（图片始终下载）；动画贴纸（`.tgs`）与自定义动图表情（`DocumentAttributeAnimated` / `DocumentAttributeCustomEmoji`）会被跳过（QQ 无法显示）。下载失败自动重试最多 3 次，期间若客户端断开会尝试 `connect()` 重连；`asyncio.CancelledError` 原样上抛（绝不吞掉）。媒体暂存于数据目录的 `telegram_download/`，正常发送后立即删除；中断遗留文件在启动时和每小时扫描一次，超过 24 小时删除。缓存目录若被替换为符号链接会拒绝使用。
 
 ## 相关文件清单
 - `forwarder.py` — 抓取与发送编排

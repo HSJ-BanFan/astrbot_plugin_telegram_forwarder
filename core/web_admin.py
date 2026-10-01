@@ -805,9 +805,12 @@ class WebAdminServer:
             if not authorized:
                 self._mark_telegram_unauthorized()
                 return None
+            me = await client.get_me()
+            if me is None:
+                self._mark_telegram_unauthorized()
+                return None
             wrapper._authorized = True
             self._telegram_session_invalid = False
-            me = await client.get_me()
             profile = {
                 "id": getattr(me, "id", None),
                 "username": getattr(me, "username", None),
@@ -1608,16 +1611,20 @@ class WebAdminServer:
             if connected:
                 authorized = bool(await wrapper.client.is_user_authorized())
                 if authorized:
-                    wrapper._authorized = True
-                    self._telegram_session_invalid = False
                     me = await wrapper.client.get_me()
-                    me_data = {
-                        "id": getattr(me, "id", None),
-                        "username": getattr(me, "username", None),
-                        "first_name": getattr(me, "first_name", None),
-                        "last_name": getattr(me, "last_name", None),
-                        "phone": getattr(me, "phone", None),
-                    }
+                    if me is None:
+                        self._mark_telegram_unauthorized()
+                        authorized = False
+                    else:
+                        wrapper._authorized = True
+                        self._telegram_session_invalid = False
+                        me_data = {
+                            "id": getattr(me, "id", None),
+                            "username": getattr(me, "username", None),
+                            "first_name": getattr(me, "first_name", None),
+                            "last_name": getattr(me, "last_name", None),
+                            "phone": getattr(me, "phone", None),
+                        }
                 else:
                     self._mark_telegram_unauthorized()
         except Exception as exc:

@@ -420,6 +420,35 @@ async def test_auth_key_conflict_clears_cached_authorization_and_profile(
     assert cached["session_invalid"] is True
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_login_status", [False, True])
+async def test_empty_telegram_profile_clears_authorization(
+    web_admin, use_login_status
+):
+    client = SimpleNamespace(
+        is_user_authorized=AsyncMock(return_value=True),
+        get_me=AsyncMock(return_value=None),
+    )
+    wrapper = SimpleNamespace(
+        client=client,
+        _authorized=True,
+        is_connected=MagicMock(return_value=True),
+    )
+    wrapper.is_authorized = lambda: wrapper._authorized and wrapper.is_connected()
+    wrapper.mark_unauthorized = lambda: setattr(wrapper, "_authorized", False)
+    web_admin.plugin.client_wrapper = wrapper
+    web_admin.server._telegram_me_cache = {"id": 123, "username": "stale"}
+
+    if use_login_status:
+        result = await web_admin.server.get_login_status()
+        assert result["authorized"] is False
+    else:
+        assert await web_admin.server._refresh_telegram_me() is None
+
+    assert wrapper._authorized is False
+    assert web_admin.server._telegram_me_cache is None
+
+
 def test_normalize_merge_rules_keeps_valid_rules(web_admin):
     rule = {
         "__template_key": "custom",
