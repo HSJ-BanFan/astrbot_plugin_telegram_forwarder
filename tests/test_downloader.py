@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import os
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +41,10 @@ async def test_download_media_propagates_cancellation(tmp_path):
 
     with pytest.raises(asyncio.CancelledError):
         await downloader.download_media(msg)
+
+    assert (
+        client.download_media.await_args.kwargs["file"] == downloader.download_cache_dir
+    )
 
 
 @pytest.mark.asyncio
@@ -86,6 +91,112 @@ def test_download_timeout_scales_with_file_size(tmp_path):
         downloader._download_timeout(MagicMock(file=MagicMock(size=500 * 1024**2)))
         == 300
     )
+
+
+def test_cleanup_stale_download_files_keeps_recent_files(tmp_path):
+    import os
+
+    module = load_downloader_module()
+    now = 10_000.0
+    downloader = module.MediaDownloader(
+        MagicMock(), tmp_path, cache_retention_seconds=60
+    )
+    downloader.download_cache_dir.mkdir()
+    stale = downloader.download_cache_dir / "stale.bin"
+    recent = downloader.download_cache_dir / "recent.bin"
+    stale.write_bytes(b"old")
+    recent.write_bytes(b"new")
+    os.utime(stale, (now - 61, now - 61))
+    os.utime(recent, (now - 59, now - 59))
+
+    assert downloader.cleanup_stale_files(now=now) == 1
+    assert not stale.exists()
+    assert recent.exists()
+
+
+def test_download_cache_rejects_symlink_root(tmp_path):
+    module = load_downloader_module()
+    downloader = module.MediaDownloader(MagicMock(), tmp_path)
+    target = tmp_path / "outside"
+    target.mkdir()
+    downloader.download_cache_dir.symlink_to(target, target_is_directory=True)
+
+    assert downloader.cleanup_stale_files(now=10_000.0) == 0
+    assert downloader._cache_dir_is_safe() is False
+    assert module.MediaDownloader.DOWNLOAD_CACHE_DIR == "telegram_download"
+
+
+@pytest.fixture(params=["outside", "inside"])
+def junction_cache(tmp_path, request):
+    if os.name != "nt":
+        pytest.skip("Windows junction regression")
+    import _winapi
+
+    data_dir = tmp_path / "plugin_data"
+    data_dir.mkdir()
+    target = (tmp_path if request.param == "outside" else data_dir) / "unrelated"
+    target.mkdir()
+    link = data_dir / "telegram_download"
+    _winapi.CreateJunction(str(target), str(link))
+    try:
+        yield data_dir, target
+    finally:
+        # Remove only the directory entry, never traverse the junction target.
+        assert link.parent.resolve().is_relative_to(tmp_path.resolve())
+        link.rmdir()
+
+
+def test_cleanup_rejects_junction_without_deleting_target_files(junction_cache):
+    data_dir, target = junction_cache
+    sentinel = target / "keep.bin"
+    sentinel.write_bytes(b"unrelated data")
+    os.utime(sentinel, (0, 0))
+    downloader = load_downloader_module().MediaDownloader(MagicMock(), data_dir)
+
+    assert downloader.cleanup_stale_files(now=100_000) == 0
+    assert sentinel.read_bytes() == b"unrelated data"
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_junction_without_writing_target(junction_cache):
+    data_dir, target = junction_cache
+    client = MagicMock()
+
+    async def write_download(msg, *, file, progress_callback):
+        path = file / "photo.jpg"
+        path.write_bytes(b"download")
+        return str(path)
+
+    client.download_media = write_download
+    downloader = load_downloader_module().MediaDownloader(client, data_dir)
+    msg = SimpleNamespace(
+        id=1,
+        media=object(),
+        sticker=False,
+        photo=object(),
+        video=None,
+        audio=None,
+        voice=None,
+        file=None,
+    )
+
+    assert await downloader.download_media(msg) == []
+    assert list(target.iterdir()) == []
+
+
+def test_cleanup_rejects_cache_path_outside_plugin_data(tmp_path):
+    data_dir = tmp_path / "plugin_data"
+    data_dir.mkdir()
+    outside = tmp_path / "unrelated"
+    outside.mkdir()
+    sentinel = outside / "keep.bin"
+    sentinel.write_bytes(b"unrelated data")
+    os.utime(sentinel, (0, 0))
+    downloader = load_downloader_module().MediaDownloader(MagicMock(), data_dir)
+    downloader.download_cache_dir = outside
+
+    assert downloader.cleanup_stale_files(now=100_000) == 0
+    assert sentinel.exists()
 
 
 def _image_bytes(image) -> bytes:

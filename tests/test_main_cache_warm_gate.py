@@ -2,6 +2,7 @@
 
 import asyncio
 import shutil
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -131,5 +132,38 @@ async def test_cache_warm_gate_is_noop_without_warm_task():
         await plugin._run_send_pending_job()
 
         plugin.forwarder.send_pending_messages.assert_awaited_once()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_telegram_status_job_refreshes_cached_account_profile():
+    plugin, tmp_dir = build_main()
+    try:
+        refresh = AsyncMock()
+        plugin._ensure_web_admin_server = lambda: SimpleNamespace(
+            _refresh_telegram_me=refresh
+        )
+
+        await plugin._run_telegram_status_check_job()
+
+        refresh.assert_awaited_once_with(timeout=8.0)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_runtime_jobs_skip_when_telegram_session_is_unauthorized():
+    plugin, tmp_dir = build_main()
+    try:
+        plugin.client_wrapper = SimpleNamespace(
+            is_authorized=lambda: False,
+        )
+
+        await plugin._run_check_updates_job()
+        await plugin._run_send_pending_job()
+
+        plugin.forwarder.check_updates.assert_not_awaited()
+        plugin.forwarder.send_pending_messages.assert_not_awaited()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

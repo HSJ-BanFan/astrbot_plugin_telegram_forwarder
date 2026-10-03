@@ -648,6 +648,20 @@ def test_clear_cache_closes_cached_session_before_removal():
     assert session_path not in client_module.get_auth_cache()
 
 
+def test_mark_unauthorized_forgets_cached_authorization():
+    client_module = load_client_module()
+    session_path = "synthetic/session/user_session"
+    wrapper = object.__new__(client_module.TelegramClientWrapper)
+    wrapper._authorized = True
+    wrapper._session_path = MagicMock(return_value=session_path)
+    client_module.get_auth_cache()[session_path] = True
+
+    wrapper.mark_unauthorized()
+
+    assert wrapper._authorized is False
+    assert session_path not in client_module.get_auth_cache()
+
+
 def test_disconnect_and_clear_cache_closes_session_even_when_client_looks_disconnected():
     client_module = load_client_module()
     session_path = "synthetic/session/user_session"

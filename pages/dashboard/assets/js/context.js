@@ -150,12 +150,12 @@ export async function loadStatusOnly() {
   }
 }
 
-export function runtimeNeedsStatusRefresh() {
+function runtimeHasActiveWork() {
   const status = store.state.status || {};
   const runtime = status.runtime || {};
   const telegram = status.telegram || {};
   const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
-  // 登录流程需要自动刷新；业务 busy 也需要。其它页面不定时刷。
+  // 登录流程和忙碌任务需要更快的状态刷新。
   return Boolean(
     telegram.login_in_progress ||
       runtime.active_web_operations ||
@@ -166,25 +166,34 @@ export function runtimeNeedsStatusRefresh() {
   );
 }
 
+export function runtimeNeedsStatusRefresh() {
+  const status = store.state.status || {};
+  return Boolean(status.telegram?.authorized || runtimeHasActiveWork());
+}
+
 export function syncRuntimeStatusRefresh() {
-  if (!runtimeNeedsStatusRefresh()) {
+  if (!runtimeNeedsStatusRefresh() || !store.state.token || els.appShell.hidden) {
     if (store.state.runtimeRefreshTimer) {
       window.clearTimeout(store.state.runtimeRefreshTimer);
-      store.updateState({ runtimeRefreshTimer: null });
+      store.updateState({ runtimeRefreshTimer: null, runtimeRefreshDelay: null });
     }
     return;
   }
-  if (store.state.runtimeRefreshTimer || !store.state.token || els.appShell.hidden) return;
+  const delay = runtimeHasActiveWork() ? 2000 : 30000;
+  if (store.state.runtimeRefreshTimer) {
+    if (store.state.runtimeRefreshDelay === delay) return;
+    window.clearTimeout(store.state.runtimeRefreshTimer);
+  }
   const timer = window.setTimeout(async () => {
-    store.updateState({ runtimeRefreshTimer: null });
+    store.updateState({ runtimeRefreshTimer: null, runtimeRefreshDelay: null });
     if (!store.state.token || els.appShell.hidden) return;
     try {
       await loadStatusOnly();
     } catch (error) {
       console.warn("Runtime status refresh failed:", error);
     }
-  }, 2000);
-  store.updateState({ runtimeRefreshTimer: timer });
+  }, delay);
+  store.updateState({ runtimeRefreshTimer: timer, runtimeRefreshDelay: delay });
 }
 
 let collectFormsCallback = null;

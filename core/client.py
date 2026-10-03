@@ -463,6 +463,7 @@ class TelegramClientWrapper:
             except Exception as e:
                 logger.debug(f"[Client] skip get_dialogs after auth: {e}")
             return True, False
+        self.mark_unauthorized()
         return False, False
 
     def _init_client(self):
@@ -660,6 +661,7 @@ class TelegramClientWrapper:
             # ========== 检查授权状态 ==========
             authorized = await self.client.is_user_authorized()
             if not authorized:
+                self.mark_unauthorized()
                 logger.warning(
                     f"[Client] 客户端未授权。会话路径: {self.plugin_data_dir / 'user_session.session'}"
                 )
@@ -684,7 +686,7 @@ class TelegramClientWrapper:
 
         except Exception as e:
             logger.error(f"[Client] Telegram 客户端错误: {e}")
-            self._authorized = False
+            self.mark_unauthorized()
 
     def is_connected(self):
         """检查客户端连接状态"""
@@ -693,6 +695,11 @@ class TelegramClientWrapper:
     def is_authorized(self):
         """检查客户端是否已授权"""
         return getattr(self, "_authorized", False) and self.is_connected()
+
+    def mark_unauthorized(self) -> None:
+        """Forget cached authorization after Telegram rejects the current session."""
+        self._authorized = False
+        get_auth_cache().pop(self._session_path(), None)
 
     @staticmethod
     def _close_client_session(client) -> None:

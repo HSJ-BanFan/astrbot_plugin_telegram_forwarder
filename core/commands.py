@@ -33,7 +33,7 @@ class PluginCommands:
         self.context = context
         self.config = config
         self.forwarder = forwarder
-        self.scheduler = scheduler  # 用于 pause/resume 真正暂停调度器
+        self.scheduler = scheduler
         self._paused = False  # 全局暂停标志
         self.temp_data = {}
 
@@ -550,7 +550,7 @@ class PluginCommands:
         yield event.plain_result("\n".join(lines))
 
     async def pause(self, event: AstrMessageEvent):
-        """暂停抓取和发送（暂停调度器）"""
+        """暂停抓取和发送，保留调度器的授权检查与缓存维护。"""
         if self._paused:
             yield event.plain_result("⚠️ 插件已经处于暂停状态。")
             return
@@ -564,9 +564,7 @@ class PluginCommands:
         if not hasattr(self.forwarder, "request_stop"):
             self.forwarder._stopping = True
 
-        if self.scheduler and self.scheduler.running:
-            self.scheduler.pause()
-            logger.info("[Commands] 调度器已暂停")
+        # Forwarder._stopping gates business jobs; maintenance must keep running.
 
         message = "⏸️ 已暂停抓取与发送。"
         if cancelled_count:

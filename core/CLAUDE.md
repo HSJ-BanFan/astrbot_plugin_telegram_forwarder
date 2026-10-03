@@ -11,7 +11,7 @@
 - 对各个平台的细分发送进行解耦支持（如 `senders`、`filters`、`mergers` 子模块）。
 
 ## 入口与启动
-- **运行时入口**: `forwarder.py` / `Forwarder` 类。由根目录的 `main.py` 实例化，并在 APScheduler 中以三 job（`cache_refresh` / `check_updates` / `send_pending_messages`）周期性拉起，启动后有 60s grace。
+- **运行时入口**: `forwarder.py` / `Forwarder` 类。由根目录的 `main.py` 实例化，并由 APScheduler 周期性执行抓取、发送、状态检查和缓存清理任务，启动后有 60s grace。
 - **命令入口**: `commands.py` / `PluginCommands` 类。处理 `/tg` 命令组：`add` / `rm` / `ls` / `check` / `status` / `pause` / `resume` / `queue` / `clearqueue` / `get` / `set` / `login` / `debug` / `help`。
 - **Web 后端入口**: `web_admin.py` / `WebAdminServer` 类。由 `main.py:Main._start_web_admin_server()` 在 `initialize()` 阶段启动，独立 Flask 线程。
 - **启动连接**: `Main.initialize()` 不阻塞 —— 后台任务 `_bootstrap_after_connect()` 以 20s 超时 + 30s 节流重试连接 Telegram，离线/无代理时 AstrBot 主服务照常启动，代理恢复后自动激活调度器（无需重启）。
@@ -27,7 +27,7 @@
 
 ## 数据模型
 - `Forwarder.stats`: 字典，记录 `forward_success` / `forward_failed` / `forward_attempts` / `acked_messages` / `failed_messages` / `deferred_messages` / `last_reset`。
-- `QQGroupCache` / `TGChannelCache`: 90s TTL，记录 `groups` / `channels` 列表、`available` 标志、人类可读 `message`。
+- `QQGroupCache` / `TGChannelCache`: 1h TTL（部分 Telegram 结果 5min），记录 `groups` / `channels` 列表、`available` 标志、人类可读 `message`。
 - Web 登录流程的临时状态由 `WebAdminServer` 内部维护（`_login_*` 字段，受锁保护）。
 
 ## 核心设计模式
@@ -51,7 +51,7 @@
 - **Q**: Web 管理页面打不开？
   **A**: 检查 `web.enabled` 是否为 `true`、端口 `8180` 是否被占用、`web.token` 是否为弱默认值（`123456` 会被警告）。
 - **Q**: `MediaDownloader` 的大小限制和临时文件清理是怎样的？
-  **A**: 大小限制 `max_size_mb` **只对非图片媒体生效**（图片始终下载）；动画贴纸（`.tgs`）与自定义动图表情（`DocumentAttributeAnimated` / `DocumentAttributeCustomEmoji`）会被跳过（QQ 无法显示）。下载失败自动重试最多 3 次，期间若客户端断开会尝试 `connect()` 重连；`asyncio.CancelledError` 原样上抛（绝不吞掉）。下载器**不负责**临时文件清理——下载产出的本地路径会挂到批次的 `local_files`，由 `qq_send_summary.collect_processed_batch_local_files()` 汇总，最终在发送成功后由 `Forwarder` 清理。
+  **A**: 大小限制 `max_size_mb` **只对非图片媒体生效**（图片始终下载）；动画贴纸（`.tgs`）与自定义动图表情（`DocumentAttributeAnimated` / `DocumentAttributeCustomEmoji`）会被跳过（QQ 无法显示）。下载失败自动重试最多 3 次，期间若客户端断开会尝试 `connect()` 重连；`asyncio.CancelledError` 原样上抛（绝不吞掉）。媒体暂存于数据目录的 `telegram_download/`，正常发送后立即删除；中断遗留文件在启动时和每小时扫描一次，超过 24 小时删除。缓存目录若被替换为符号链接会拒绝使用。
 
 ## 相关文件清单
 - `forwarder.py` — 抓取与发送编排
@@ -64,6 +64,7 @@
 - 子模块：`senders/`、`mergers/`、`filters/`（各有独立 CLAUDE.md）
 
 ## 变更记录 (Changelog)
+- **2026-10-01**: 为下载残留增加 24h TTL 清理；增加 Telegram session 定期校验与 AuthKey 双 IP 失效状态回写。
 - **2026-08-16**: 修正调度为三 job + 60s grace；补充启动后台连接（`_bootstrap_after_connect`）、并发连接守卫与新增回归测试。
 - **2026-07-04**: 新增 `web_admin.py` / `qq_group_cache.py` / `tg_channel_cache.py` 的职责描述；补全对外接口、数据模型、测试覆盖与 FAQ；引入子模块文档链接。
 - **2026-06-08**: 初始化模块级自适应文档。
