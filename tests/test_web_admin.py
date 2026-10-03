@@ -1479,7 +1479,7 @@ async def test_runtime_pause_requests_active_send_stop(web_admin):
 
     assert web_admin.plugin.command_handler._paused is True
     request_stop.assert_called_once_with()
-    web_admin.plugin.scheduler.pause.assert_called_once_with()
+    web_admin.plugin.scheduler.pause.assert_not_called()
     assert "已请求停止 1 个在途发送任务" in result["message"]
 
 

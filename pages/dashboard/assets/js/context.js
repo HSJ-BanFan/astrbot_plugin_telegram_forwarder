@@ -172,24 +172,28 @@ export function runtimeNeedsStatusRefresh() {
 }
 
 export function syncRuntimeStatusRefresh() {
-  if (!runtimeNeedsStatusRefresh()) {
+  if (!runtimeNeedsStatusRefresh() || !store.state.token || els.appShell.hidden) {
     if (store.state.runtimeRefreshTimer) {
       window.clearTimeout(store.state.runtimeRefreshTimer);
-      store.updateState({ runtimeRefreshTimer: null });
+      store.updateState({ runtimeRefreshTimer: null, runtimeRefreshDelay: null });
     }
     return;
   }
-  if (store.state.runtimeRefreshTimer || !store.state.token || els.appShell.hidden) return;
+  const delay = runtimeHasActiveWork() ? 2000 : 30000;
+  if (store.state.runtimeRefreshTimer) {
+    if (store.state.runtimeRefreshDelay === delay) return;
+    window.clearTimeout(store.state.runtimeRefreshTimer);
+  }
   const timer = window.setTimeout(async () => {
-    store.updateState({ runtimeRefreshTimer: null });
+    store.updateState({ runtimeRefreshTimer: null, runtimeRefreshDelay: null });
     if (!store.state.token || els.appShell.hidden) return;
     try {
       await loadStatusOnly();
     } catch (error) {
       console.warn("Runtime status refresh failed:", error);
     }
-  }, runtimeHasActiveWork() ? 2000 : 30000);
-  store.updateState({ runtimeRefreshTimer: timer });
+  }, delay);
+  store.updateState({ runtimeRefreshTimer: timer, runtimeRefreshDelay: delay });
 }
 
 let collectFormsCallback = null;

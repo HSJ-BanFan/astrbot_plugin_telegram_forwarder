@@ -50,11 +50,11 @@ ISSUE49_INSTALL_PREFIX_LEN = 207
 WINDOWS_MAX_PATH = 260
 
 
-def _archive_tree_ish() -> str:
+def _archive_tree_ish(root: Path = ROOT) -> str:
     """Prefer the index tree so uncommitted packaging fixes are still verifiable."""
     result = subprocess.run(
         ["git", "write-tree"],
-        cwd=ROOT,
+        cwd=root,
         capture_output=True,
         text=True,
         check=False,
@@ -64,14 +64,14 @@ def _archive_tree_ish() -> str:
     return "HEAD"
 
 
-def _git_archive_paths() -> list[str]:
+def _git_archive_paths(root: Path = ROOT) -> list[str]:
     """List paths that would appear in a GitHub source / git-archive package."""
-    tree_ish = _archive_tree_ish()
+    tree_ish = _archive_tree_ish(root)
     with tempfile.TemporaryDirectory(prefix="tgfwd-archive-") as tmp:
         archive_path = Path(tmp) / "plugin.tar"
         result = subprocess.run(
             ["git", "archive", "--format=tar", "-o", str(archive_path), tree_ish],
-            cwd=ROOT,
+            cwd=root,
             capture_output=True,
             text=True,
             check=False,
@@ -124,14 +124,29 @@ def test_git_archive_paths_fit_windows_max_path_under_issue49_prefix() -> None:
     )
 
 
-def test_docs_are_not_tracked_in_git() -> None:
-    """docs/ is gitignored developer material; force-adds reintroduce #49."""
-    result = subprocess.run(
-        ["git", "ls-files", "--", "docs"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
+def test_tracked_docs_are_excluded_from_install_archive(tmp_path: Path) -> None:
+    """Docs belong in Git, but even deeply nested docs must not ship (#49)."""
+    # An isolated index verifies new tracked docs without changing the real index.
+    (tmp_path / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
+    (tmp_path / "main.py").write_text("# Runtime entry point\n", encoding="utf-8")
+    docs = (
+        "docs/adr/decision.md",
+        "docs/specs/nested/design/research/windows/install/long-path-notes.md",
     )
-    tracked = [line for line in result.stdout.splitlines() if line.strip()]
-    assert tracked == [], f"docs/ should not be tracked, found: {tracked}"
+    for relative_path in docs:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Developer documentation\n", encoding="utf-8")
+    for args in (
+        ["init", "--quiet"],
+        ["add", "--", ".gitattributes", "main.py", "docs"],
+    ):
+        subprocess.run(
+            ["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True
+        )
+
+    paths = _git_archive_paths(tmp_path)
+
+    assert "main.py" in paths, "install archive must retain runtime files"
+    leaked = [path for path in paths if path.startswith("docs/")]
+    assert leaked == [], f"tracked docs leaked into install archive: {leaked}"

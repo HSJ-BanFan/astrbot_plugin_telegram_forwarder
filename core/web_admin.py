@@ -2054,8 +2054,7 @@ class WebAdminServer:
         )
         if not hasattr(self.plugin.forwarder, "request_stop"):
             self.plugin.forwarder._stopping = True
-        if self.plugin.scheduler and self.plugin.scheduler.running:
-            self.plugin.scheduler.pause()
+        # Forwarder._stopping gates business jobs; maintenance must keep running.
         message = "已暂停抓取与发送。"
         if cancelled_count:
             message += f" 已请求停止 {cancelled_count} 个在途发送任务。"

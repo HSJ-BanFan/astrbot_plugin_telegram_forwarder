@@ -38,13 +38,24 @@ class MediaDownloader:
     def _cache_dir_is_safe(self) -> bool:
         """Ensure the dedicated cache root is a real directory, not a link."""
         try:
-            if self.download_cache_dir.is_symlink():
+            if not self.download_cache_dir.is_dir():
+                return False
+            # Windows junctions are reparse points, not symbolic links.
+            if self.download_cache_dir.is_symlink() or getattr(
+                self.download_cache_dir.lstat(), "st_reparse_tag", 0
+            ):
                 logger.warning(
-                    f"[Downloader] 拒绝使用符号链接下载缓存目录: {self.download_cache_dir}"
+                    f"[Downloader] 拒绝使用链接下载缓存目录: {self.download_cache_dir}"
                 )
                 return False
-            return self.download_cache_dir.is_dir()
-        except OSError as exc:
+            expected = self.plugin_data_dir.resolve() / self.DOWNLOAD_CACHE_DIR
+            if self.download_cache_dir.resolve() != expected:
+                logger.warning(
+                    f"[Downloader] 下载缓存目录超出预期路径: {self.download_cache_dir}"
+                )
+                return False
+            return True
+        except (OSError, RuntimeError) as exc:
             logger.warning(
                 f"[Downloader] 检查下载缓存目录失败 {self.download_cache_dir}: {exc}"
             )
