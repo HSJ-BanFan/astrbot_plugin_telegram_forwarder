@@ -1,0 +1,18 @@
+# 仓库档案。这个仓库是什么、怎么验、agent 能不能自己合。
+# 换一个 agent 也该知道的事写在这里，不写进任何人的记忆。
+# 没有这个文件的仓库默认不许动。
+
+name = "astrbot_plugin_telegram_forwarder"
+nature = "product"          # product | library | archive | proving-ground
+verify = "pytest -q"          # 一条能跑的命令；写不出就留 unknown
+notes = "CI 会跑 compileall + pytest"
+
+[merge]
+agent_may_merge = true
+requires = ["verify-exit-0", "independent-verify", "diff-in-scope"]
+
+[comment]
+agent_may_comment = true
+
+[label]
+agent_may_label = true
