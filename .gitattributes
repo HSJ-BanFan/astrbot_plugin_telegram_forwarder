@@ -10,6 +10,7 @@
 # requirements.txt, metadata.yaml, _conf_schema.json, logo.png, relogin.py.
 docs/ export-ignore
 tests/ export-ignore
+verify.sh export-ignore
 scripts/ export-ignore
 .github/ export-ignore
 resources/ export-ignore

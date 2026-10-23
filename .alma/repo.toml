@@ -4,8 +4,8 @@
 
 name = "astrbot_plugin_telegram_forwarder"
 nature = "product"          # product | library | archive | proving-ground
-verify = "pytest -q"          # 一条能跑的命令；写不出就留 unknown
-notes = "CI 会跑 compileall + pytest"
+verify = "bash verify.sh"     # 一条能跑的命令；写不出就留 unknown
+notes = "CI 会跑 compileall + pytest；本地测试在 .venv 里，由 verify.sh 选环境"
 
 [merge]
 agent_may_merge = true
