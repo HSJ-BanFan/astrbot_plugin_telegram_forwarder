@@ -482,8 +482,17 @@ class QQSender:
         该方法是 QQ 发送流程与平台运行时之间的衔接点。
         它会优先尊重配置中已经出现过的平台 ID，再按启发式规则选择最像 QQ 的平台实例。
         一旦选中，就把 `platform_id` 与 `bot` 缓存下来，避免每次发送都重复探测。
+
+        缓存只能省掉「重复探测同一个平台」，不能盖过本次目标里明确写定的平台。
+        启动阶段没有目标可参考，只能按启发式选一个；把它当成定论，手写在另一个
+        账号上的专属目标就会一直从先选中的那个 bot 发出去，且不会报错到用户面前。
         """
-        if self.platform_id and self.bot:
+        preferred = [pid for pid in (preferred_platform_ids or []) if pid]
+        if (
+            self.platform_id
+            and self.bot
+            and (not preferred or self.platform_id in preferred)
+        ):
             return
 
         platforms = self._get_platform_instances()
@@ -499,7 +508,12 @@ class QQSender:
             return
 
         platform, pid, pname_raw = selected
+        previous_platform_id = self.platform_id
         self.platform_id = pid
+        if pid != previous_platform_id:
+            # 换了平台就是换了身份。node_name 属于上一个 bot，留着会把旧号
+            # 的昵称盖在合并转发的节点上。
+            self.node_name = None
         logger.debug(
             f"[QQSender] 捕获到 QQ 平台: platform_id={pid}, platform_name={pname_raw or 'unknown'}"
         )
