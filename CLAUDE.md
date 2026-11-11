@@ -2,8 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent skills
+
+### Issue tracker
+
+工单在 GitHub Issues 中跟踪，列名、阶段与协作约定见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个分类标签 `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`，语义见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单一上下文：领域语言与架构不变式在 `docs/agents/domain.md`，决策记录在 `docs/adr/`，需求在 `docs/specs/`。
+
 ## 变更记录 (Changelog)
 
+- **2026-11-11**: 补 `Agent skills` 索引块（指向 `docs/agents/`、`docs/adr/`、`docs/specs/`）。
 - **2026-08-16**: 更新测试策略（补充依赖安装前置；覆盖率描述改为现实口径，约 78%、无强制门禁）。
 - **2026-08-15**: 修正过期内容。新增 `ContentSafetyFilter`（AI 审核 + 二维码风险过滤）到核心组件与过滤引擎；调度改为三 job + 60s grace（含缓存预热门控）；`/tg` 命令 14 条、Web API 25 条；同步模块索引文件数（filters 3 / senders 15 / web 19 / tests 25 / dashboard 20）与测试覆盖清单。
 - **2026-07-04 (补扫)**: 深入补扫 `relogin.py` 重登流程、`_conf_schema.json` 配置字段、`core/downloader.py` 媒体细节与两份 Web 设计 spec；修正 `core/filters` 接口描述偏差（实际为 `filter_messages` / `filter_keywords` / `filter_regex` 黑名单语义，非 `should_keep` / include/exclude）；新增 4 个独立单测（`test_message_filter` / `test_qq_circuit` / `test_qq_file_fallback` / `test_qq_dispatcher`，共 62 条用例），全量 338 passed。
