@@ -2,8 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent skills
+
+- 工单与生命周期：`docs/agents/issue-tracker.md`
+- 分类标签语义：`docs/agents/triage-labels.md`
+- 领域模型与架构不变式：`docs/agents/domain.md`（改 `core/` 前必读）
+- 需求：`docs/specs/` · 决策：`docs/adr/`（`ADR-00N-<slug>.md`）
+
+## 无人值守约定
+
+本节写给无人在场的自主 agent（dsh-superagent 的执行器 Session）。有人参与的会话不受此节约束。
+
+- 缺陷先建立一个能变红的反馈回路，再谈原因（skill: `diagnosing-bugs`）
+- 实现走测试先行（skill: `implement` / `tdd`）；每次提交必须带对应单测
+- 要跨既有调用方预期、要改模块职责、要多模块协同重设计 → 先写 ADR 再动手；写不了 ADR 就停下问一个问题
+- 提 PR 用 skill: `pr`；PR 描述首行必须是 `This is by an automated agent, not a human.`
+- 审 PR 用 skill: `code-review`（Standards / Spec 两轴），只审不改
+- 需要人决策：在工单线程里问**一个**具体问题；不要猜，也不要把未完成的 draft PR 当成答案
+
 ## 变更记录 (Changelog)
 
+- **2026-11-11**: 新增 `Agent skills` 索引与 `无人值守约定`，把 `docs/agents/` 与 ADR/specs 接入自主 agent 的注入链。
 - **2026-08-16**: 更新测试策略（补充依赖安装前置；覆盖率描述改为现实口径，约 78%、无强制门禁）。
 - **2026-08-15**: 修正过期内容。新增 `ContentSafetyFilter`（AI 审核 + 二维码风险过滤）到核心组件与过滤引擎；调度改为三 job + 60s grace（含缓存预热门控）；`/tg` 命令 14 条、Web API 25 条；同步模块索引文件数（filters 3 / senders 15 / web 19 / tests 25 / dashboard 20）与测试覆盖清单。
 - **2026-07-04 (补扫)**: 深入补扫 `relogin.py` 重登流程、`_conf_schema.json` 配置字段、`core/downloader.py` 媒体细节与两份 Web 设计 spec；修正 `core/filters` 接口描述偏差（实际为 `filter_messages` / `filter_keywords` / `filter_regex` 黑名单语义，非 `should_keep` / include/exclude）；新增 4 个独立单测（`test_message_filter` / `test_qq_circuit` / `test_qq_file_fallback` / `test_qq_dispatcher`，共 62 条用例），全量 338 passed。
