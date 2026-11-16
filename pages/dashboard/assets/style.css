@@ -3334,6 +3334,7 @@ select:focus {
 
 @media (max-width: 600px) {
   .merge-panel .panel-head {
+    flex-direction: column;
     align-items: stretch;
   }
 
