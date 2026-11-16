@@ -76,6 +76,15 @@ def build_cache(client=None, *, platform_id="aiocqhttp"):
     return module.QQGroupCache(plugin, ttl_seconds=300, failure_cooldown=0.01)
 
 
+def build_cache_for_platform(*, platform_id, platform_name):
+    platform = SimpleNamespace(
+        meta=lambda: SimpleNamespace(id=platform_id, name=platform_name)
+    )
+    module = load_qq_group_cache_module([platform], lambda _platform: None)
+    plugin = SimpleNamespace(context=SimpleNamespace())
+    return module.QQGroupCache(plugin, ttl_seconds=300, failure_cooldown=0.01)
+
+
 @pytest.mark.asyncio
 async def test_qq_group_cache_keeps_last_known_list_when_refresh_fails():
     client = FakeQQClient(
@@ -142,3 +151,47 @@ async def test_qq_group_cache_failure_still_merges_configured_groups():
     by_id = {item["group_id"]: item for item in result["groups"]}
     assert by_id["111"]["source"] == "cached"
     assert by_id["999"]["source"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_official_qq_group_cache_requires_manual_complete_sessions():
+    target = (
+        "default_1906433733:"
+        "GroupMessage:35D268C5BC2B9A04321625F380F13643"
+    )
+    cache = build_cache_for_platform(
+        platform_id="default_1906433733",
+        platform_name="qq_official",
+    )
+
+    result = await cache.list_groups([target], force=True)
+
+    assert result["available"] is False
+    assert result["manual_required"] is True
+    assert "手写完整" in result["message"]
+    assert result["groups"] == [
+        {
+            "group_id": "35D268C5BC2B9A04321625F380F13643",
+            "group_name": "QQ 群 35D268C5BC2B9A04321625F380F13643",
+            "avatar": "",
+            "member_count": 0,
+            "max_member_count": 0,
+            "source": "configured",
+            "platform_id": "default_1906433733",
+            "session": target,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_configured_official_group_session_survives_without_live_client():
+    target = (
+        "default_1906433733:"
+        "GroupMessage:35D268C5BC2B9A04321625F380F13643"
+    )
+    cache = build_cache(None)
+
+    result = await cache.list_groups([target], force=True)
+
+    assert result["groups"][0]["session"] == target
+    assert result["groups"][0]["source"] == "configured"
