@@ -11,6 +11,11 @@ from unittest.mock import MagicMock
 import pytest
 
 
+_repo_root = Path(__file__).resolve().parents[1]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -111,7 +116,6 @@ mock_downloader = MagicMock()
 mock_downloader.MediaDownloader = type("MediaDownloader", (), {})
 
 # 注册包路径，确保 qq.py 的相对导入可以解析。
-_repo_root = Path(__file__).resolve().parents[1]
 _pkg = "astrbot_plugin_telegram_forwarder"
 
 
