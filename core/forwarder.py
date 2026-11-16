@@ -2176,6 +2176,11 @@ class Forwarder:
                     SendTerminalReason.CLIENT_UNAVAILABLE,
                     len(remaining_pending),
                 )
+            if report.failed_retained:
+                return report.build(
+                    SendTerminalReason.RETAINED_FAILURES,
+                    len(remaining_pending),
+                )
             if report.no_destination and not report.attempted:
                 return report.build(
                     SendTerminalReason.NO_DESTINATION,
@@ -2206,7 +2211,7 @@ class Forwarder:
                 return False
 
             if should_abort_send():
-                return QQSendSummary()
+                return QQSendSummary(attempted_batch_indexes=())
 
             forward_cfg = self.config.get("forward_config", {})
             strict_ack = forward_cfg.get("send_result_strict_ack", False)

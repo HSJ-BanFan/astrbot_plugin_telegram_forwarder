@@ -13,6 +13,7 @@ class SendTerminalReason(str, Enum):
     WAITING_FOR_RETRY = "waiting_for_retry"
     CLIENT_UNAVAILABLE = "client_unavailable"
     NO_DESTINATION = "no_destination"
+    RETAINED_FAILURES = "retained_failures"
     NO_SENDABLE_BATCHES = "no_sendable_batches"
     STOP_REQUESTED = "stop_requested"
     QUEUE_CLEARED = "queue_cleared"
@@ -240,6 +241,17 @@ class RuntimeSendReport:
 
     @property
     def send_reason(self) -> SendTerminalReason:
+        attention_reasons = {
+            SendTerminalReason.CANCELLED.value,
+            SendTerminalReason.STOP_REQUESTED.value,
+            SendTerminalReason.QUEUE_CLEARED.value,
+            SendTerminalReason.CLIENT_UNAVAILABLE.value,
+            SendTerminalReason.RETAINED_FAILURES.value,
+            SendTerminalReason.NO_DESTINATION.value,
+        }
+        for report in self.send_reports:
+            if _enum_value(report.reason) in attention_reasons:
+                return report.reason
         if self.send_reports:
             return self.send_reports[-1].reason
         return SendTerminalReason.COMPLETED
@@ -266,6 +278,7 @@ class RuntimeSendReport:
             SendTerminalReason.STOP_REQUESTED.value,
             SendTerminalReason.QUEUE_CLEARED.value,
             SendTerminalReason.CLIENT_UNAVAILABLE.value,
+            SendTerminalReason.RETAINED_FAILURES.value,
             SendTerminalReason.CANCELLED.value,
         }
         if has_send_activity and send_reason_value in partial_reasons:
@@ -352,6 +365,7 @@ def _send_reason_label(reason: SendTerminalReason) -> str:
         SendTerminalReason.WAITING_FOR_RETRY.value: "记录均处于重试等待期",
         SendTerminalReason.CLIENT_UNAVAILABLE.value: "Telegram 客户端不可用",
         SendTerminalReason.NO_DESTINATION.value: "没有配置发送目标",
+        SendTerminalReason.RETAINED_FAILURES.value: "存在失败保留",
         SendTerminalReason.NO_SENDABLE_BATCHES.value: "没有形成可发送批次",
         SendTerminalReason.STOP_REQUESTED.value: "已请求停止",
         SendTerminalReason.QUEUE_CLEARED.value: "队列已清空",
