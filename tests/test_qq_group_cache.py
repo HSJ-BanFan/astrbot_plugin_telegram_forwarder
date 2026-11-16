@@ -195,3 +195,22 @@ async def test_configured_official_group_session_survives_without_live_client():
 
     assert result["groups"][0]["session"] == target
     assert result["groups"][0]["source"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_configured_group_prefers_session_without_merging_platforms():
+    cache = build_cache(None)
+
+    result = await cache.list_groups(
+        [
+            "12345",
+            "platform-a:GroupMessage:12345",
+            "platform-b:GroupMessage:12345",
+        ],
+        force=True,
+    )
+
+    assert [item["session"] for item in result["groups"]] == [
+        "platform-a:GroupMessage:12345",
+        "platform-b:GroupMessage:12345",
+    ]

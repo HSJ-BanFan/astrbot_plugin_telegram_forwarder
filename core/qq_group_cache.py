@@ -195,7 +195,14 @@ class QQGroupCache:
             if session:
                 if session in groups_by_id:
                     continue
-            elif group_id in live_group_ids:
+                numeric_key = group_id
+                numeric_group = groups_by_id.get(numeric_key)
+                if numeric_group and not numeric_group.get("session"):
+                    groups_by_id.pop(numeric_key, None)
+            elif group_id in live_group_ids or any(
+                item.get("group_id") == group_id
+                for item in groups_by_id.values()
+            ):
                 continue
             groups_by_id[identity] = self._fallback_group(
                 group_id,

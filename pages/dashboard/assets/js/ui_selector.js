@@ -2,6 +2,12 @@ import { store } from './store.js';
 import { bindLiveSearchInput, escapeHtml, fieldsMatchSearch } from './utils.js';
 import { showToast, loadQQGroups, loadTGChannels } from './context.js';
 import { collectForms, renderAll } from '../app.js';
+import { mergeQQTargetValue, parseManualQQTarget } from './qq_targets.js';
+
+export {
+  isNumericGroupTarget,
+  parseManualQQTarget,
+} from './qq_targets.js';
 
 export function splitList(value) {
   if (!value) return [];
@@ -33,53 +39,6 @@ export function renderSelectorChip({ label, meta = "", selected = false, classNa
       ${metaHtml}
     </button>
   `;
-}
-
-export function isNumericGroupTarget(target) {
-  return /^\d+$/.test(String(target || "").trim());
-}
-
-export function parseManualQQTarget(target) {
-  const value = String(target || "").trim();
-  if (!value) return null;
-
-  let groupId = "";
-  let platformId = "";
-  let session = "";
-  if (isNumericGroupTarget(value)) {
-    groupId = value;
-  } else {
-    const firstSeparator = value.indexOf(":");
-    const secondSeparator = firstSeparator >= 0
-      ? value.indexOf(":", firstSeparator + 1)
-      : -1;
-    platformId = firstSeparator > 0 ? value.slice(0, firstSeparator).trim() : "";
-    const messageType = secondSeparator > firstSeparator
-      ? value.slice(firstSeparator + 1, secondSeparator).trim()
-      : "";
-    groupId = secondSeparator >= 0 ? value.slice(secondSeparator + 1).trim() : "";
-    if (!platformId || messageType !== "GroupMessage" || !groupId) return null;
-    session = `${platformId}:GroupMessage:${groupId}`;
-  }
-
-  return {
-    target: session || groupId,
-    group_id: groupId,
-    platform_id: platformId,
-    session,
-    group: {
-      group_id: groupId,
-      group_name: session ? `QQ 群 ${groupId}` : `群 ${groupId}`,
-      avatar: groupId && isNumericGroupTarget(groupId)
-        ? `https://p.qlogo.cn/gh/${groupId}/${groupId}/640`
-        : "",
-      member_count: 0,
-      max_member_count: 0,
-      source: "configured",
-      platform_id: platformId,
-      session,
-    },
-  };
 }
 
 export function ensureQQGroupForTarget(target) {
@@ -338,13 +297,13 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
       return;
     }
     const current = uniqueList(splitList(manualInput.value));
-    if (!current.includes(info.target)) {
-      manualInput.value = joinList([...current, info.target]);
-    }
+    const next = mergeQQTargetValue(current, info.target);
+    const changed = joinList(next) !== joinList(current);
+    manualInput.value = joinList(next);
     root.dataset.manualQQTarget = "";
     renderQQTargetSelector({ root, manualInput, inheritLabel, compact });
     manualInput.dispatchEvent(new Event("change"));
-    showToast("手写 QQ 目标已添加。");
+    showToast(changed ? "手写 QQ 目标已添加。" : "该 QQ 目标已存在。");
   };
   if (manualQQInput) {
     manualQQInput.addEventListener("input", () => {

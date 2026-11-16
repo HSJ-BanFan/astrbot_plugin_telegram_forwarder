@@ -699,7 +699,6 @@ function renderTopologyInto(root, {
     tgChannels: store.state.tgChannels,
     qqGroups: store.state.qqGroups,
     qqGroupsManualRequired: store.state.qqGroupsManualRequired,
-    qqGroupsMessage: store.state.qqGroupsMessage,
   });
 
   if (root.dataset.lastTopologyKey === dataKey) {
