@@ -39,17 +39,73 @@ export function isNumericGroupTarget(target) {
   return /^\d+$/.test(String(target || "").trim());
 }
 
-export function groupIdFromTarget(target) {
+export function parseManualQQTarget(target) {
   const value = String(target || "").trim();
-  if (isNumericGroupTarget(value)) return value;
-  const parts = value.split(":");
-  if (parts.length >= 3 && parts[1] === "GroupMessage" && /^\d+$/.test(parts[2])) {
-    return parts[2];
+  if (!value) return null;
+
+  let groupId = "";
+  let platformId = "";
+  let session = "";
+  if (isNumericGroupTarget(value)) {
+    groupId = value;
+  } else {
+    const firstSeparator = value.indexOf(":");
+    const secondSeparator = firstSeparator >= 0
+      ? value.indexOf(":", firstSeparator + 1)
+      : -1;
+    platformId = firstSeparator > 0 ? value.slice(0, firstSeparator).trim() : "";
+    const messageType = secondSeparator > firstSeparator
+      ? value.slice(firstSeparator + 1, secondSeparator).trim()
+      : "";
+    groupId = secondSeparator >= 0 ? value.slice(secondSeparator + 1).trim() : "";
+    if (!platformId || messageType !== "GroupMessage" || !groupId) return null;
+    session = `${platformId}:GroupMessage:${groupId}`;
   }
-  return "";
+
+  return {
+    target: session || groupId,
+    group_id: groupId,
+    platform_id: platformId,
+    session,
+    group: {
+      group_id: groupId,
+      group_name: session ? `QQ 群 ${groupId}` : `群 ${groupId}`,
+      avatar: groupId && isNumericGroupTarget(groupId)
+        ? `https://p.qlogo.cn/gh/${groupId}/${groupId}/640`
+        : "",
+      member_count: 0,
+      max_member_count: 0,
+      source: "configured",
+      platform_id: platformId,
+      session,
+    },
+  };
+}
+
+export function ensureQQGroupForTarget(target) {
+  const info = parseManualQQTarget(target);
+  if (!info) return null;
+  const groups = Array.isArray(store.state.qqGroups) ? store.state.qqGroups : [];
+  const existing = groups.find((group) => {
+    if (info.session) return String(group.session || "").trim() === info.session;
+    return String(group.group_id || "") === info.group_id;
+  });
+  if (!existing) {
+    store.updateState({ qqGroups: [...groups, info.group] });
+  }
+  return info;
+}
+
+export function groupIdFromTarget(target) {
+  return parseManualQQTarget(target)?.group_id || "";
 }
 
 export function groupByTarget(target) {
+  const value = String(target || "").trim();
+  const exactSession = store.state.qqGroups.find(
+    (group) => String(group.session || "").trim() === value,
+  );
+  if (exactSession) return exactSession;
   const groupId = groupIdFromTarget(target);
   if (!groupId) return null;
   return store.state.qqGroups.find((group) => String(group.group_id) === groupId) || null;
@@ -139,9 +195,19 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
       keyword,
     ),
   );
-  const statusText = store.state.qqGroupsAvailable
-    ? `${store.state.qqGroups.length} 个 QQ 群`
-    : store.state.qqGroupsMessage || "QQ 平台未就绪";
+  const statusParts = [
+    store.state.qqGroupsAvailable
+      ? `${store.state.qqGroups.length} 个 QQ 群`
+      : store.state.qqGroupsMessage || "QQ 平台未就绪",
+  ];
+  if (
+    store.state.qqGroupsManualRequired
+    && store.state.qqGroupsMessage
+    && !statusParts.includes(store.state.qqGroupsMessage)
+  ) {
+    statusParts.push(store.state.qqGroupsMessage);
+  }
+  const statusText = statusParts.join("；");
   const selectedHtml = targets.length
     ? targets
         .map((target) => {
@@ -206,6 +272,19 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
       <button class="btn btn-soft" data-selector-refresh type="button">刷新群列表</button>
     </div>
     <div class="selector-status">${escapeHtml(statusText)}</div>
+    <div class="selector-manual-target">
+      <label>
+        <span>手写完整 QQ 会话</span>
+        <input
+          data-manual-qq-target
+          type="text"
+          placeholder="群号，或 平台ID:GroupMessage:group_openid"
+          value="${escapeHtml(root.dataset.manualQQTarget || "")}"
+        />
+      </label>
+      <button class="btn btn-soft" data-add-manual-qq-target type="button">添加目标</button>
+      <small>QQ 官方机器人无法自动列群，请填写 AstrBot 消息日志或会话信息中的完整会话名。</small>
+    </div>
     ${
       compact
         ? `
@@ -247,6 +326,41 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
       showToast("QQ 群列表已刷新。");
     });
   }
+
+  const manualQQInput = root.querySelector("[data-manual-qq-target]");
+  const addManualQQTarget = () => {
+    if (!manualQQInput) return;
+    root.dataset.manualQQTarget = manualQQInput.value;
+    const info = ensureQQGroupForTarget(manualQQInput.value);
+    if (!info) {
+      showToast("QQ 目标格式无效，请填写群号或完整的 GroupMessage 会话名。");
+      manualQQInput.focus();
+      return;
+    }
+    const current = uniqueList(splitList(manualInput.value));
+    if (!current.includes(info.target)) {
+      manualInput.value = joinList([...current, info.target]);
+    }
+    root.dataset.manualQQTarget = "";
+    renderQQTargetSelector({ root, manualInput, inheritLabel, compact });
+    manualInput.dispatchEvent(new Event("change"));
+    showToast("手写 QQ 目标已添加。");
+  };
+  if (manualQQInput) {
+    manualQQInput.addEventListener("input", () => {
+      root.dataset.manualQQTarget = manualQQInput.value;
+    });
+    manualQQInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addManualQQTarget();
+      }
+    });
+  }
+  root.querySelector("[data-add-manual-qq-target]")?.addEventListener(
+    "click",
+    addManualQQTarget,
+  );
 
   // QQ group click binding
   root.querySelectorAll("[data-qq-group]").forEach((button) => {

@@ -47,6 +47,7 @@ function applyDashboardPayload(dashboardPayload) {
     config: dashboardPayload.config || {},
     qqGroups: Array.isArray(qqGroups.groups) ? qqGroups.groups : [],
     qqGroupsAvailable: Boolean(qqGroups.available),
+    qqGroupsManualRequired: Boolean(qqGroups.manual_required),
     qqGroupsMessage: qqGroups.message || "",
     tgChannels: Array.isArray(tgChannels.channels) ? tgChannels.channels : [],
     tgChannelsAvailable: Boolean(tgChannels.available),
@@ -71,6 +72,7 @@ export async function loadQQGroups({ force = false } = {}) {
     store.updateState({
       qqGroups: Array.isArray(data.groups) ? data.groups : [],
       qqGroupsAvailable: Boolean(data.available),
+      qqGroupsManualRequired: Boolean(data.manual_required),
       qqGroupsMessage: data.message || "",
     });
     return data;
@@ -78,9 +80,15 @@ export async function loadQQGroups({ force = false } = {}) {
     store.updateState({
       qqGroups: [],
       qqGroupsAvailable: false,
+      qqGroupsManualRequired: false,
       qqGroupsMessage: error.message,
     });
-    return { groups: [], available: false, message: error.message };
+    return {
+      groups: [],
+      available: false,
+      manual_required: false,
+      message: error.message,
+    };
   }
 }
 

@@ -1217,7 +1217,7 @@ class WebAdminServer:
 
     async def list_qq_groups(self, force: bool = False) -> dict[str, Any]:
         return await self.qq_group_cache.list_groups(
-            self._configured_qq_group_ids(),
+            self._configured_qq_targets(),
             force=force,
         )
 
@@ -1227,22 +1227,28 @@ class WebAdminServer:
             force=force,
         )
 
-    def _configured_qq_group_ids(self) -> list[str]:
-        group_ids: list[str] = []
+    def _configured_qq_targets(self) -> list[str]:
+        targets: list[str] = []
 
         def add_target(raw_target: Any) -> None:
             target = str(raw_target or "").strip()
             if not target:
                 return
-            group_id = ""
             if target.isdigit():
-                group_id = target
+                if target not in targets:
+                    targets.append(target)
             else:
-                parts = target.split(":")
-                if len(parts) >= 3 and parts[1] == "GroupMessage":
-                    group_id = parts[2].strip()
-            if group_id and group_id.isdigit() and group_id not in group_ids:
-                group_ids.append(group_id)
+                parts = target.split(":", 2)
+                if (
+                    len(parts) == 3
+                    and parts[1] == "GroupMessage"
+                    and all(part.strip() for part in parts)
+                ):
+                    normalized = (
+                        f"{parts[0].strip()}:GroupMessage:{parts[2].strip()}"
+                    )
+                    if normalized not in targets:
+                        targets.append(normalized)
 
         for target in self._as_string_list(self.plugin.config.get("target_qq_session")):
             add_target(target)
@@ -1251,7 +1257,7 @@ class WebAdminServer:
                 continue
             for target in self._as_string_list(channel.get("target_qq_sessions")):
                 add_target(target)
-        return group_ids
+        return targets
 
     def _configured_tg_channel_refs(self) -> list[str]:
         channel_refs: list[str] = []

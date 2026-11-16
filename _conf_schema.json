@@ -3,7 +3,7 @@
         "description": "QQ 目标会话列表",
         "type": "list",
         "item_type": "string",
-        "hint": "转发到 QQ 会话列表（支持群号，或完整会话名，例如 平台ID:GroupMessage:群号 / 平台ID:FriendMessage:用户ID）",
+        "hint": "转发到 QQ 会话列表（支持群号，或完整会话名，例如 平台ID:GroupMessage:群号）。QQ 官方机器人无法自动列群，请填写 平台ID:GroupMessage:group_openid",
         "default": []
     },
     "target_channel": {

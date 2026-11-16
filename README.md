@@ -216,7 +216,7 @@ python scripts/build_frontend.py --check  # 校验产物是否与源同步（pyt
 
 | 配置项 (Field) | 类型 (Type) | 默认值 (Default) | 说明 (Description) |
 | :--- | :--- | :--- | :--- |
-| `target_qq_session` | `list[string]` | `[]` | 接收消息的 QQ 目标会话列表（支持群号，或完整会话名如 `平台ID:GroupMessage:群号`）。 |
+| `target_qq_session` | `list[string]` | `[]` | 接收消息的 QQ 目标会话列表（支持群号，或完整会话名如 `平台ID:GroupMessage:群号`）。QQ 官方机器人不提供群列表 API，请在 Web「转发关系」手写 `平台ID:GroupMessage:group_openid`。 |
 | `target_channel` | `string` | `""` | 接收消息的 TG 目标频道 ID（例如 `@my_channel_name` 或 `-100xxxxxxx`）。 |
 
 ---
