@@ -51,6 +51,49 @@ def _batch_index_keys(
     return keys
 
 
+def _merge_delivery_indexes(*values) -> tuple[int, ...]:
+    return tuple(dict.fromkeys(index for value in values for index in value))
+
+
+def _extend_send_summary(
+    summary: QQSendSummary,
+    *,
+    attempted: tuple[int, ...] = (),
+    telegram_acked: tuple[int, ...] = (),
+    telegram_failed: tuple[int, ...] = (),
+) -> QQSendSummary:
+    return QQSendSummary(
+        acked_batch_indexes=tuple(getattr(summary, "acked_batch_indexes", ())),
+        failed_batch_indexes=tuple(getattr(summary, "failed_batch_indexes", ())),
+        deferred_batch_indexes=tuple(
+            getattr(summary, "deferred_batch_indexes", ())
+        ),
+        error_types=dict(getattr(summary, "error_types", {})),
+        target_sessions=tuple(getattr(summary, "target_sessions", ())),
+        target_sessions_by_batch=dict(
+            getattr(summary, "target_sessions_by_batch", {})
+        ),
+        completed_target_sessions=dict(
+            getattr(summary, "completed_target_sessions", {})
+        ),
+        synthetic_ack_batch_indexes=tuple(
+            getattr(summary, "synthetic_ack_batch_indexes", ())
+        ),
+        attempted_batch_indexes=_merge_delivery_indexes(
+            getattr(summary, "attempted_batch_indexes", ()),
+            attempted,
+        ),
+        telegram_acked_batch_indexes=_merge_delivery_indexes(
+            getattr(summary, "telegram_acked_batch_indexes", ()),
+            telegram_acked,
+        ),
+        telegram_failed_batch_indexes=_merge_delivery_indexes(
+            getattr(summary, "telegram_failed_batch_indexes", ()),
+            telegram_failed,
+        ),
+    )
+
+
 class Forwarder:
     """
     消息转发器核心类 (Monitor + Dispatcher)
@@ -1073,6 +1116,18 @@ class Forwarder:
                     )
                 )
             ),
+            attempted_batch_indexes=_merge_delivery_indexes(
+                getattr(current, "attempted_batch_indexes", ()),
+                getattr(incoming, "attempted_batch_indexes", ()),
+            ),
+            telegram_acked_batch_indexes=_merge_delivery_indexes(
+                getattr(current, "telegram_acked_batch_indexes", ()),
+                getattr(incoming, "telegram_acked_batch_indexes", ()),
+            ),
+            telegram_failed_batch_indexes=_merge_delivery_indexes(
+                getattr(current, "telegram_failed_batch_indexes", ()),
+                getattr(incoming, "telegram_failed_batch_indexes", ()),
+            ),
         )
 
     @staticmethod
@@ -1771,11 +1826,17 @@ class Forwarder:
                     if client_unavailable_keys
                     else SendTerminalReason.NO_SENDABLE_BATCHES
                 )
-                return report.build(reason, len(self.storage.get_all_pending()))
+                remaining_pending = self.storage.get_all_pending()
+                remaining_keys = _pending_item_keys(remaining_pending)
+                report.deferred_retained.update(
+                    client_unavailable_keys & remaining_keys
+                )
+                return report.build(reason, len(remaining_pending))
 
             attempted_send_count = sum(len(msgs) for msgs, _ in final_batches)
             send_summary = None
             batch_meta = []
+            tg_target = str(self.config.get("target_channel", "") or "").strip()
             for msgs, channel in final_batches:
                 effective_cfg = self._get_effective_config(channel)
                 target_sessions = effective_cfg.get("effective_target_qq_sessions", [])
@@ -1788,7 +1849,11 @@ class Forwarder:
                         "target_sessions": list(target_sessions),
                     }
                 )
-            attempted_keys = {
+                if not target_sessions and not tg_target:
+                    report.no_destination.update(
+                        (channel, msg.id) for msg in msgs
+                    )
+            selected_send_keys = {
                 (meta["channel"], msg_id)
                 for meta in batch_meta
                 for msg_id in meta["ids"]
@@ -1817,7 +1882,6 @@ class Forwarder:
                         SendTerminalReason.STOP_REQUESTED,
                         len(self.storage.get_all_pending()),
                     )
-                report.attempted.update(attempted_keys)
                 send_summary = await self._send_sorted_messages_in_batches(
                     final_batches
                 )
@@ -1856,6 +1920,7 @@ class Forwarder:
                             for index, meta in enumerate(batch_meta)
                             if meta.get("qq_attempted", False)
                         },
+                        attempted_batch_indexes=tuple(range(len(batch_meta))),
                     )
                 else:
                     synthetic_ack_indexes = tuple(range(len(batch_meta)))
@@ -1865,9 +1930,21 @@ class Forwarder:
                         deferred_batch_indexes=(),
                         error_types={},
                         synthetic_ack_batch_indexes=synthetic_ack_indexes,
+                        attempted_batch_indexes=synthetic_ack_indexes,
                     )
             finally:
                 effective_strict_ack = False
+                delivery_feedback_available = send_summary is not None and hasattr(
+                    send_summary, "attempted_batch_indexes"
+                )
+                attempted_indexes = (
+                    getattr(send_summary, "attempted_batch_indexes", ())
+                    if delivery_feedback_available
+                    else range(len(batch_meta))
+                )
+                report.attempted.update(
+                    _batch_index_keys(batch_meta, attempted_indexes)
+                )
                 should_writeback = not self._queue_clear_stale(clear_generation)
                 if not should_writeback:
                     writeback_terminal_reason = SendTerminalReason.QUEUE_CLEARED
@@ -1923,11 +2000,41 @@ class Forwarder:
                         removable_summary = send_summary
                         stats_summary = send_summary
 
-                    acknowledged_candidates = _batch_index_keys(
-                        batch_meta,
-                        set(send_summary.acked_batch_indexes)
-                    - set(getattr(send_summary, "synthetic_ack_batch_indexes", ())),
+                    qq_acked_indexes = set(
+                        send_summary.acked_batch_indexes
+                    ) - set(
+                        getattr(send_summary, "synthetic_ack_batch_indexes", ())
                     )
+                    if delivery_feedback_available:
+                        telegram_acked_indexes = set(
+                            getattr(
+                                send_summary,
+                                "telegram_acked_batch_indexes",
+                                (),
+                            )
+                        )
+                        acknowledged_indexes = {
+                            index
+                            for index, meta in enumerate(batch_meta)
+                            if (meta.get("target_sessions") or tg_target)
+                            and (
+                                not meta.get("target_sessions")
+                                or index in qq_acked_indexes
+                            )
+                            and (
+                                not tg_target
+                                or index in telegram_acked_indexes
+                            )
+                        }
+                        acknowledged_candidates = _batch_index_keys(
+                            batch_meta,
+                            acknowledged_indexes,
+                        )
+                    else:
+                        acknowledged_candidates = _batch_index_keys(
+                            batch_meta,
+                            qq_acked_indexes,
+                        )
                     failed_candidates = _batch_index_keys(
                         batch_meta,
                         removable_summary.failed_batch_indexes,
@@ -2025,7 +2132,7 @@ class Forwarder:
                         deferred_candidates & remaining_keys
                     )
                     report.removed_without_ack.update(
-                        attempted_keys
+                        selected_send_keys
                         - remaining_keys
                         - report.acknowledged
                         - report.failed_retained
@@ -2054,14 +2161,29 @@ class Forwarder:
                         f"[Send] 本轮完成: ACK {acked_count} | 失败保留 {failed_count} | 延后重试 {deferred_count} | 剩余队列 {len(new_all_pending)}"
                     )
 
+            remaining_pending = self.storage.get_all_pending()
+            remaining_keys = _pending_item_keys(remaining_pending)
+            report.deferred_retained.update(
+                client_unavailable_keys & remaining_keys
+            )
             if writeback_terminal_reason is not None:
                 return report.build(
                     writeback_terminal_reason,
-                    len(self.storage.get_all_pending()),
+                    len(remaining_pending),
+                )
+            if client_unavailable_keys:
+                return report.build(
+                    SendTerminalReason.CLIENT_UNAVAILABLE,
+                    len(remaining_pending),
+                )
+            if report.no_destination and not report.attempted:
+                return report.build(
+                    SendTerminalReason.NO_DESTINATION,
+                    len(remaining_pending),
                 )
             return report.build(
                 SendTerminalReason.COMPLETED,
-                len(self.storage.get_all_pending()),
+                len(remaining_pending),
             )
 
     async def _send_sorted_messages_in_batches(self, batches_with_channel: list[tuple]):
@@ -2100,6 +2222,22 @@ class Forwarder:
                 error_types={},
                 synthetic_ack_batch_indexes=synthetic_ack_indexes,
             )
+            attempted_indexes: list[int] = []
+            telegram_acked_indexes: list[int] = []
+            telegram_failed_indexes: list[int] = []
+
+            def finish(summary: QQSendSummary | None) -> QQSendSummary:
+                return _extend_send_summary(
+                    summary or default_qq_summary,
+                    attempted=tuple(attempted_indexes),
+                    telegram_acked=tuple(telegram_acked_indexes),
+                    telegram_failed=tuple(telegram_failed_indexes),
+                )
+
+            async def send_qq(**kwargs):
+                attempted_indexes.extend(kwargs["batch_indexes"])
+                return await self._send_to_qq_and_count(**kwargs)
+
             qq_summary = None
             merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
             merge_mode = forward_cfg.get("qq_big_merge_mode", "独立频道")
@@ -2179,7 +2317,7 @@ class Forwarder:
                 for src_channel, msg_groups in qq_send_groups.items():
                     if should_abort_send():
                         close_exclusive_tasks()
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
                     effective_cfg = self._get_effective_config(src_channel)
                     target_sessions = effective_cfg["effective_target_qq_sessions"]
                     if not target_sessions:
@@ -2191,7 +2329,7 @@ class Forwarder:
                         exclusive_tasks.append(
                             (
                                 [index for index, _ in msg_groups],
-                                self._send_to_qq_and_count(
+                                send_qq(
                                     src_channel=src_channel,
                                     batches=[msgs for _, msgs in msg_groups],
                                     batch_indexes=[index for index, _ in msg_groups],
@@ -2212,12 +2350,12 @@ class Forwarder:
                 if exclusive_tasks:
                     if should_abort_send():
                         close_exclusive_tasks()
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
                     exclusive_results = await asyncio.gather(
                         *(task for _, task in exclusive_tasks), return_exceptions=True
                     )
                     if should_abort_send():
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
                     for (batch_indexes, _), result in zip(
                         exclusive_tasks, exclusive_results
                     ):
@@ -2249,15 +2387,15 @@ class Forwarder:
                         f"频道数 {len(involved_list)} | 逻辑批次 {len(mixable_batches)} ≥ {merge_threshold}"
                     )
                     if should_abort_send():
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
 
                     first_channel = involved_list[0]
                     display_name = await self._get_display_name(first_channel)
                     effective_cfg = self._get_effective_config(first_channel)
                     if should_abort_send():
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
 
-                    mixed_summary = await self._send_to_qq_and_count(
+                    mixed_summary = await send_qq(
                         src_channel=first_channel,
                         batches=[
                             [msgs for _, msgs in mixable_batches]
@@ -2274,7 +2412,7 @@ class Forwarder:
                     # 未达混合阈值 → 按频道普通发送
                     for src_channel in sorted(mixable_channels):
                         if should_abort_send():
-                            return qq_summary or QQSendSummary()
+                            return finish(qq_summary)
                         groups = qq_send_groups.get(src_channel, [])
                         if not groups:
                             continue
@@ -2282,8 +2420,8 @@ class Forwarder:
                         display_name = await self._get_display_name(src_channel)
                         effective_cfg = self._get_effective_config(src_channel)
                         if should_abort_send():
-                            return qq_summary or QQSendSummary()
-                        channel_summary = await self._send_to_qq_and_count(
+                            return finish(qq_summary)
+                        channel_summary = await send_qq(
                             src_channel=src_channel,
                             batches=[msgs for _, msgs in groups],
                             batch_indexes=[index for index, _ in groups],
@@ -2300,7 +2438,7 @@ class Forwarder:
                 # 非混合模式 → 逐频道发送
                 for src_channel, msg_groups in qq_send_groups.items():
                     if should_abort_send():
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
                     effective_cfg = self._get_effective_config(src_channel)
                     target_sessions = effective_cfg["effective_target_qq_sessions"]
                     if not target_sessions:
@@ -2308,10 +2446,10 @@ class Forwarder:
 
                     display_name = await self._get_display_name(src_channel)
                     if should_abort_send():
-                        return qq_summary or QQSendSummary()
+                        return finish(qq_summary)
 
                     if merge_mode == "关闭":
-                        channel_summary = await self._send_to_qq_and_count(
+                        channel_summary = await send_qq(
                             src_channel=src_channel,
                             batches=[msgs for _, msgs in msg_groups],
                             batch_indexes=[index for index, _ in msg_groups],
@@ -2325,7 +2463,7 @@ class Forwarder:
                         )
                     elif merge_mode == "独立频道":
                         if len(msg_groups) >= merge_threshold:
-                            channel_summary = await self._send_to_qq_and_count(
+                            channel_summary = await send_qq(
                                 src_channel=src_channel,
                                 batches=[
                                     [msgs for _, msgs in msg_groups]
@@ -2340,7 +2478,7 @@ class Forwarder:
                                 qq_summary, channel_summary
                             )
                         else:
-                            channel_summary = await self._send_to_qq_and_count(
+                            channel_summary = await send_qq(
                                 src_channel=src_channel,
                                 batches=[msgs for _, msgs in msg_groups],
                                 batch_indexes=[index for index, _ in msg_groups],
@@ -2357,17 +2495,19 @@ class Forwarder:
                 qq_summary = self._merge_send_summaries(qq_summary, budget_summary)
 
             # ─── Telegram 转发部分 ───
-            tg_target = self.config.get("target_channel", "").strip()
+            tg_target = str(self.config.get("target_channel", "") or "").strip()
             if tg_target:
                 if should_abort_send():
-                    return qq_summary or default_qq_summary
+                    return finish(qq_summary)
                 pending_by_key = {
                     (item["channel"], item["id"]): item
                     for item in self.storage.get_all_pending()
                 }
-                for msgs, src_channel in batches_with_channel:
+                for batch_index, (msgs, src_channel) in enumerate(
+                    batches_with_channel
+                ):
                     if should_abort_send():
-                        return qq_summary or default_qq_summary
+                        return finish(qq_summary)
                     batch_ids = [msg.id for msg in msgs]
                     if batch_ids and all(
                         pending_by_key.get((src_channel, msg_id), {}).get(
@@ -2376,16 +2516,19 @@ class Forwarder:
                         == tg_target
                         for msg_id in batch_ids
                     ):
+                        telegram_acked_indexes.append(batch_index)
                         continue
                     try:
                         effective_cfg = self._get_effective_config(src_channel)
+                        attempted_indexes.append(batch_index)
                         await self.tg_sender.send(
                             batches=[msgs],
                             src_channel=src_channel,
                             effective_cfg=effective_cfg,
                         )
+                        telegram_acked_indexes.append(batch_index)
                         if should_abort_send():
-                            return qq_summary or default_qq_summary
+                            return finish(qq_summary)
                         self.stats["forward_success"] += len(msgs)
                         self.storage.mark_pending_tg_forwarded(
                             src_channel, batch_ids, tg_target
@@ -2396,12 +2539,13 @@ class Forwarder:
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
+                        telegram_failed_indexes.append(batch_index)
                         self.stats["forward_failed"] += len(msgs)
                         logger.error(
                             f"[Stats] TG 转发失败 {len(msgs)} 条  {src_channel} → {tg_target} : {e}"
                         )
 
-            return qq_summary or default_qq_summary
+            return finish(qq_summary)
 
     async def _send_to_qq_and_count(
         self,

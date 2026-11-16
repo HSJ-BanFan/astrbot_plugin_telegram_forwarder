@@ -12,6 +12,7 @@ class SendTerminalReason(str, Enum):
     NO_MONITORED_MATCH = "no_monitored_match"
     WAITING_FOR_RETRY = "waiting_for_retry"
     CLIENT_UNAVAILABLE = "client_unavailable"
+    NO_DESTINATION = "no_destination"
     NO_SENDABLE_BATCHES = "no_sendable_batches"
     STOP_REQUESTED = "stop_requested"
     QUEUE_CLEARED = "queue_cleared"
@@ -31,6 +32,13 @@ class CaptureReason(str, Enum):
 
 @dataclass(frozen=True)
 class SendReport:
+    """一次队列处理操作的可核对结果。
+
+    `attempted` 只包含至少调用了一个发送目标的消息；`acknowledged` 只包含
+    所有已配置目标都确认成功的消息。没有目标、未确认移除和仍然保留的记录
+    因此不会再被队列数量变化误当成发送成功。
+    """
+
     reason: SendTerminalReason
     queue_size_at_start: int = 0
     remaining_count: int = 0
@@ -48,6 +56,7 @@ class SendReport:
     )
     waiting_for_retry: frozenset[PendingMessageKey] = field(default_factory=frozenset)
     not_selected: frozenset[PendingMessageKey] = field(default_factory=frozenset)
+    no_destination: frozenset[PendingMessageKey] = field(default_factory=frozenset)
 
     attempted: frozenset[PendingMessageKey] = field(default_factory=frozenset)
     acknowledged: frozenset[PendingMessageKey] = field(default_factory=frozenset)
@@ -64,6 +73,7 @@ class SendReport:
             "outside_monitor_scope",
             "waiting_for_retry",
             "not_selected",
+            "no_destination",
             "attempted",
             "acknowledged",
             "failed_retained",
@@ -84,6 +94,7 @@ class SendReport:
             "outside_monitor_scope_count": len(self.outside_monitor_scope),
             "waiting_for_retry_count": len(self.waiting_for_retry),
             "not_selected_count": len(self.not_selected),
+            "no_destination_count": len(self.no_destination),
             "attempted_count": len(self.attempted),
             "acknowledged_count": len(self.acknowledged),
             "failed_retained_count": len(self.failed_retained),
@@ -121,6 +132,7 @@ class SendReportBuilder:
     outside_monitor_scope: set[PendingMessageKey] = field(default_factory=set)
     waiting_for_retry: set[PendingMessageKey] = field(default_factory=set)
     not_selected: set[PendingMessageKey] = field(default_factory=set)
+    no_destination: set[PendingMessageKey] = field(default_factory=set)
     attempted: set[PendingMessageKey] = field(default_factory=set)
     acknowledged: set[PendingMessageKey] = field(default_factory=set)
     failed_retained: set[PendingMessageKey] = field(default_factory=set)
@@ -143,6 +155,7 @@ class SendReportBuilder:
             outside_monitor_scope=frozenset(self.outside_monitor_scope),
             waiting_for_retry=frozenset(self.waiting_for_retry),
             not_selected=frozenset(self.not_selected),
+            no_destination=frozenset(self.no_destination),
             attempted=frozenset(self.attempted),
             acknowledged=frozenset(self.acknowledged),
             failed_retained=frozenset(self.failed_retained),
@@ -186,6 +199,10 @@ class RuntimeSendReport:
     @property
     def filtered_count(self) -> int:
         return len(self._union("filtered"))
+
+    @property
+    def no_destination_count(self) -> int:
+        return len(self._union("no_destination"))
 
     @property
     def attempted_count(self) -> int:
@@ -244,9 +261,27 @@ class RuntimeSendReport:
             or report.removed_without_ack
             for report in self.send_reports
         )
-        if (
+        send_reason_value = _enum_value(self.send_reason)
+        partial_reasons = {
+            SendTerminalReason.STOP_REQUESTED.value,
+            SendTerminalReason.QUEUE_CLEARED.value,
+            SendTerminalReason.CLIENT_UNAVAILABLE.value,
+            SendTerminalReason.CANCELLED.value,
+        }
+        if has_send_activity and send_reason_value in partial_reasons:
+            send_prefix = (
+                "本次发送部分完成"
+                f"（{_send_reason_label(self.send_reason)}）"
+            )
+        elif has_send_activity and self.removed_without_ack_count:
+            send_prefix = (
+                "本次发送部分确认"
+                if self.acknowledged_count
+                else "本次发送结果未确认"
+            )
+        elif (
             has_send_activity
-            or _enum_value(self.send_reason) == SendTerminalReason.COMPLETED.value
+            or send_reason_value == SendTerminalReason.COMPLETED.value
         ):
             send_prefix = "本次发送完成"
         else:
@@ -262,6 +297,7 @@ class RuntimeSendReport:
             f"失败保留 {self.failed_retained_count} 条，"
             f"延后保留 {self.deferred_retained_count} 条，"
             f"未确认移除 {self.removed_without_ack_count} 条，"
+            f"无发送目标 {self.no_destination_count} 条，"
             f"剩余 {self.remaining_count} 条。"
         )
         details = []
@@ -277,6 +313,11 @@ class RuntimeSendReport:
             details.append(
                 f"另有 {self.refetch_miss_removed_count} 条重取失败次数超限，已移除。"
             )
+        if self.no_destination_count:
+            details.append(
+                f"{self.no_destination_count} 条消息没有配置 QQ 或 Telegram 目标，"
+                "未进入发送。"
+            )
         return " ".join([summary, *details])
 
     def to_dict(self) -> dict[str, object]:
@@ -286,6 +327,7 @@ class RuntimeSendReport:
             "send_reasons": [report.reason.value for report in self.send_reports],
             "expired_count": self.expired_count,
             "filtered_count": self.filtered_count,
+            "no_destination_count": self.no_destination_count,
             "refetch_miss_retained_count": self.refetch_miss_retained_count,
             "refetch_miss_removed_count": self.refetch_miss_removed_count,
             "attempted_count": self.attempted_count,
@@ -309,6 +351,7 @@ def _send_reason_label(reason: SendTerminalReason) -> str:
         SendTerminalReason.NO_MONITORED_MATCH.value: "监听范围没有匹配记录",
         SendTerminalReason.WAITING_FOR_RETRY.value: "记录均处于重试等待期",
         SendTerminalReason.CLIENT_UNAVAILABLE.value: "Telegram 客户端不可用",
+        SendTerminalReason.NO_DESTINATION.value: "没有配置发送目标",
         SendTerminalReason.NO_SENDABLE_BATCHES.value: "没有形成可发送批次",
         SendTerminalReason.STOP_REQUESTED.value: "已请求停止",
         SendTerminalReason.QUEUE_CLEARED.value: "队列已清空",
