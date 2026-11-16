@@ -1,8 +1,7 @@
-from typing import cast
-
-from telethon.tl.types import Message
+from typing import ClassVar, cast
 
 from astrbot.api import logger
+from telethon.tl.types import Message
 
 from .base import MergeRule
 from .keyword_next import KeywordNextNMerge
@@ -13,7 +12,7 @@ class MessageMerger:
     """消息合并引擎 - 管理和执行消息合并规则"""
 
     # 可用的规则类注册表
-    RULE_CLASSES = {
+    RULE_CLASSES: ClassVar[dict[str, type[MergeRule]]] = {
         "SomeACGPreviewPlusOriginal": SomeACGPreviewPlusOriginal,
         "KeywordNextNMerge": KeywordNextNMerge,
     }
@@ -93,7 +92,7 @@ class MessageMerger:
             if i in used_indices:
                 continue
 
-            channel_name, message1 = msg1
+            channel_name, _ = msg1
 
             # 检查此频道是否配置了合并规则
             rules = self.merge_rules.get(channel_name, [])
@@ -106,16 +105,9 @@ class MessageMerger:
                 f"[Merge] 发现频道 '{channel_name}' 的合并规则，正在检查消息 {i}"
             )
 
-            matched_rule = None
-            group_result = {"messages": [msg1], "indices": [i]}
-            for rule in rules:
-                candidate_group = self._find_group(
-                    i, messages, channel_name, rule, used_indices
-                )
-                if len(candidate_group["messages"]) > 1:
-                    matched_rule = rule
-                    group_result = candidate_group
-                    break
+            matched_rule, group_result = self._find_matching_group(
+                i, messages, channel_name, used_indices
+            )
 
             group_msgs = group_result["messages"]
             group_indices_list = group_result["indices"]
@@ -148,16 +140,60 @@ class MessageMerger:
         channel_name: str,
         messages: list[tuple[str, Message]],
     ) -> int | None:
-        """返回应该暂缓处理的起始索引。"""
-        defer_indices = []
-        for rule in self.merge_rules.get(channel_name, []):
-            finder = getattr(rule, "find_defer_from_index", None)
-            if not callable(finder):
+        """只等待未被完整合并组占用的消息，且不从中间拆开已有分组。"""
+        rules = self.merge_rules.get(channel_name, [])
+        if not any(
+            callable(getattr(rule, "find_defer_from_index", None)) for rule in rules
+        ):
+            return None
+
+        used_indices: set[int] = set()
+        complete_groups: list[list[int]] = []
+        for start_index, (message_channel, _) in enumerate(messages):
+            if message_channel != channel_name or start_index in used_indices:
                 continue
-            defer_index = finder(messages, channel_name)
-            if defer_index is not None:
-                defer_indices.append(defer_index)
-        return min(defer_indices) if defer_indices else None
+            matched_rule, group = self._find_matching_group(
+                start_index, messages, channel_name, used_indices
+            )
+            if matched_rule is not None:
+                used_indices.update(group["indices"])
+                complete_groups.append(group["indices"])
+                continue
+
+            available_tail = [
+                message
+                for index, message in enumerate(messages[start_index:], start_index)
+                if index not in used_indices
+            ]
+            for rule in rules:
+                finder = getattr(rule, "find_defer_from_index", None)
+                if (
+                    callable(finder)
+                    and finder([messages[start_index]], channel_name) == 0
+                    and finder(available_tail, channel_name) == 0
+                ):
+                    defer_index = start_index
+                    for indices in reversed(complete_groups):
+                        if max(indices) >= defer_index:
+                            defer_index = min(defer_index, min(indices))
+                    return defer_index
+            used_indices.add(start_index)
+        return None
+
+    def _find_matching_group(
+        self,
+        start_index: int,
+        messages: list[tuple[str, Message]],
+        channel_name: str,
+        used_indices: set[int],
+    ) -> tuple[MergeRule | None, dict]:
+        for rule in self.merge_rules.get(channel_name, []):
+            group = self._find_group(
+                start_index, messages, channel_name, rule, used_indices
+            )
+            if len(group["messages"]) > 1:
+                return rule, group
+        return None, {"messages": [messages[start_index]], "indices": [start_index]}
 
     def _find_group(
         self,

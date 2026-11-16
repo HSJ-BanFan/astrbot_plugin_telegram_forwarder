@@ -190,3 +190,24 @@ def test_a_reserved_original_cannot_count_as_another_rules_missing_message():
     )
 
     assert merger.find_defer_from_index("SomeACG", someacg_messages()) == 0
+
+
+def test_someacg_still_groups_originals_without_a_keyword_wait_rule():
+    merger = load_merger_module().MessageMerger(
+        {
+            "merge_rules": [
+                {
+                    "channel": "SomeACG",
+                    "rule_class": "SomeACGPreviewPlusOriginal",
+                    "params": {"time_window_seconds": 60},
+                }
+            ]
+        }
+    )
+    messages = someacg_messages()
+
+    assert merger.find_defer_from_index("SomeACG", messages) is None
+    merger.merge_messages(messages)
+    assert messages[0][1]._merge_group_id == messages[3][1]._merge_group_id
+    assert not hasattr(messages[1][1], "_merge_group_id")
+    assert not hasattr(messages[2][1], "_merge_group_id")
