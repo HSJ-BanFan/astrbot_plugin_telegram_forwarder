@@ -2671,7 +2671,7 @@ async def test_send_pending_marks_failed_batches_with_backoff():
         )
     ]
     assert storage.cleared == []
-    assert report.reason is SendTerminalReason.COMPLETED
+    assert report.reason is SendTerminalReason.RETAINED_FAILURES
     assert report.attempted == frozenset({("demo", 401)})
     assert report.failed_retained == frozenset({("demo", 401)})
     assert report.acknowledged == frozenset()

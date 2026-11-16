@@ -164,3 +164,28 @@ def test_runtime_report_does_not_call_unconfirmed_removal_completed():
 
     assert "本次发送结果未确认" in message
     assert "本次发送完成" not in message
+
+
+def test_runtime_report_keeps_nested_retained_failure_after_empty_manual_send():
+    monitored = SendReport(
+        reason=SendTerminalReason.RETAINED_FAILURES,
+        queue_size_at_start=1,
+        remaining_count=1,
+        attempted=frozenset({("demo", 1)}),
+        failed_retained=frozenset({("demo", 1)}),
+    )
+    manual = SendReport(
+        reason=SendTerminalReason.QUEUE_EMPTY,
+        queue_size_at_start=0,
+        remaining_count=0,
+    )
+    capture = CheckUpdatesReport(
+        reason=CaptureReason.COMPLETED,
+        added_count=1,
+        immediate_send=monitored,
+    )
+
+    message = RuntimeSendReport.combine(capture, manual).format_message()
+
+    assert "本次发送部分完成（存在失败保留）" in message
+    assert "本次发送完成" not in message
