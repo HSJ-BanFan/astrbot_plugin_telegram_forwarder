@@ -23,6 +23,39 @@ def build_main():
 
 
 @pytest.mark.asyncio
+async def test_runtime_cache_warm_passes_configured_official_qq_targets():
+    plugin, tmp_dir = build_main()
+    try:
+        target = (
+            "default_1906433733:"
+            "GroupMessage:35D268C5BC2B9A04321625F380F13643"
+        )
+        server = SimpleNamespace(
+            _refresh_telegram_me=AsyncMock(return_value=None),
+            qq_group_cache=SimpleNamespace(
+                list_groups=AsyncMock(return_value={"groups": []})
+            ),
+            tg_channel_cache=SimpleNamespace(
+                list_channels=AsyncMock(return_value={"channels": []})
+            ),
+            _configured_qq_targets=lambda: [target],
+            _configured_tg_channel_refs=lambda: [],
+        )
+        plugin.web_admin_server = server
+        plugin._ensure_web_admin_server = lambda: server
+        plugin.CACHE_WARM_TIMEOUT_SECONDS = 1
+
+        await plugin.warm_runtime_caches(force=True)
+
+        server.qq_group_cache.list_groups.assert_awaited_once_with(
+            [target],
+            force=True,
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_check_updates_job_waits_for_cache_warm():
     plugin, tmp_dir = build_main()
     try:
