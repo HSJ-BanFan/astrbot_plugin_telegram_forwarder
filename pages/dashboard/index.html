@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telegram Forwarder</title>
-    <link rel="stylesheet" href="./assets/style.css?v=11d55ace4d" />
-    <script src="./assets/js/gsap.min.js?v=11d55ace4d"></script>
+    <link rel="stylesheet" href="./assets/style.css?v=93e8020187" />
+    <script src="./assets/js/gsap.min.js?v=93e8020187"></script>
   </head>
   <body>
     <div class="bg-aurora" aria-hidden="true"><i></i><i></i></div>
@@ -404,15 +404,20 @@
         </section>
 
         <section class="section" id="section-merge">
-          <div class="panel list-panel">
+          <div class="panel list-panel merge-panel">
             <div class="panel-head">
               <div>
-                <h2>合并规则</h2>
-                <p>触发关键词后，将触发消息和后续 N 条消息作为一个逻辑组处理。</p>
+                <h2>配置消息分组</h2>
+                <p>每条规则只作用于指定频道，同频道规则按列表顺序尝试。</p>
               </div>
               <button class="btn btn-primary" id="addMergeRuleBtn" type="button">新增规则</button>
             </div>
-            <div class="channel-list" id="mergeRuleList"></div>
+            <div class="merge-toolbar">
+              <label class="merge-search">查找规则<input id="mergeRuleSearch" type="search" placeholder="搜索名称、频道或触发关键词" autocomplete="off" /></label>
+              <div class="merge-list-tools"><span id="mergeRuleStats" role="status" aria-live="polite"></span><button class="btn btn-soft" id="expandMergeRulesBtn" type="button">全部展开</button></div>
+            </div>
+            <p class="merge-order-hint">先能组成完整分组的规则生效，已归组的消息不会被其他规则占用。修改后点击右上角保存。</p>
+            <div class="channel-list merge-list" id="mergeRuleList"></div>
           </div>
         </section>
 
@@ -465,6 +470,6 @@
 
     <div class="toast" id="toast"></div>
     <script src="/api/plugin/page/bridge-sdk.js"></script>
-    <script src="./assets/app.js?v=11d55ace4d" type="module" defer></script>
+    <script src="./assets/app.js?v=93e8020187" type="module" defer></script>
   </body>
 </html>

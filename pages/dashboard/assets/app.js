@@ -16,7 +16,8 @@ import {
 } from './js/context.js';
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
-import { initChannels, collectChannels, collectMergeRules, renderChannels, renderMergeRules } from './js/ui_channels.js';
+import { initChannels, collectChannels, renderChannels } from './js/ui_channels.js';
+import { initMergeRules, collectMergeRules, renderMergeRules } from './js/ui_merge_rules.js';
 import { renderQQTargetSelector, renderTGChannelSelector } from './js/ui_selector.js';
 import { renderSidebarStatusCard, renderRootConfig, renderForwardTabs, renderForwardConfig, renderRawConfig, collectRootConfig, collectForwardConfig } from './js/ui_config.js';
 import { animateTopologyInto, renderTargetTopology, renderTopologySurfaces, syncTopologyControls, topologyUiState, TOPOLOGY_FILTERS, setTopologySectionHandler } from './js/ui_topology.js';
@@ -95,6 +96,9 @@ function cacheElements() {
     "channelList",
     "addMergeRuleBtn",
     "mergeRuleList",
+    "mergeRuleSearch",
+    "mergeRuleStats",
+    "expandMergeRulesBtn",
     "forwardTabs",
     "forwardConfigForm",
     "webEnabledInput",
@@ -119,11 +123,17 @@ function cacheElements() {
   });
 }
 
-export function collectForms() {
+export function collectForms({ validate = false } = {}) {
   collectRootConfig();
   collectForwardConfig();
   collectChannels({ keepEmpty: false });
-  collectMergeRules({ keepEmpty: false });
+  try {
+    collectMergeRules({ validate });
+  } catch (error) {
+    setSection("merge");
+    els.mergeRuleList?.querySelector('[aria-invalid="true"]')?.focus();
+    throw error;
+  }
 }
 
 export function renderAll() {
@@ -402,6 +412,7 @@ async function boot() {
   initLogin();
   initOverview();
   initChannels();
+  initMergeRules();
 
   // Bind events for entrypoint page
   bindMainEvents();

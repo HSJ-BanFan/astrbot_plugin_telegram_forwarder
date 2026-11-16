@@ -1061,6 +1061,7 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 12px;
   min-width: 0;
+  align-items: start;
 }
 
 .form-grid.single {
@@ -1140,6 +1141,8 @@
 .field {
   display: grid;
   gap: 7px;
+  min-width: 0;
+  align-content: start;
   color: var(--muted);
   font-size: 13px;
   font-weight: 600;

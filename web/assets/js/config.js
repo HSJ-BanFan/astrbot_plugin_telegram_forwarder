@@ -103,6 +103,18 @@ export const CHANNEL_GROUPS = [
   { id: "targets", label: "目标" },
 ];
 export const MERGE_RULE_CLASSES = [
-  { value: "KeywordNextNMerge", label: "关键词后 N 条合并" },
-  { value: "SomeACGPreviewPlusOriginal", label: "SomeACG 预览图+原图" },
+  {
+    value: "KeywordNextNMerge",
+    label: "关键词与后续消息",
+    description: "关键词或正则命中后，将触发消息与后续消息组成一组。",
+    hint: "命中过滤词时，整组合并消息会一起过滤。",
+    defaults: { trigger_keywords: [], trigger_regex: "", next_count: 2, time_window_seconds: 60 },
+  },
+  {
+    value: "SomeACGPreviewPlusOriginal",
+    label: "预览图与原图",
+    description: "仅用于 @SomeACG，按 Pixiv 链接与文件名关联预览图和原图。",
+    hint: "按作品关联，不使用关键词或后续条数。",
+    defaults: { time_window_seconds: 10 },
+  },
 ];

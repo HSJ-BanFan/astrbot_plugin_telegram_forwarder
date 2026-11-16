@@ -53,6 +53,10 @@
   background: var(--primary-soft);
 }
 
+.channel-summary:focus-visible {
+  outline-offset: -3px;
+}
+
 .channel-title-text {
   display: flex;
   align-items: center;
