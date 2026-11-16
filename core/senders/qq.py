@@ -91,10 +91,11 @@ MEDIA_SEND_KINDS = {
 
 @dataclass(frozen=True)
 class QQSendSummary:
-    """面向上层调用方法的 QQ 批次发送结果。
+    """面向上层调用方法的批次发送结果。
 
-    这里按“逻辑批次”维度汇总结果，而不是按单条消息或单个目标汇总。
-    这样 `Forwarder` 在决定确认、重试或延后时，只需要关心批次索引即可。
+    QQ 结果保留原有的逐目标语义；附加字段记录本次操作实际调用的发送通道，
+    以及 Telegram 目标是否确认成功。`Forwarder` 用这些信息区分真实发送、
+    没有目标、部分成功和仅清理队列。
     """
 
     acked_batch_indexes: tuple[int, ...] = ()
@@ -104,6 +105,10 @@ class QQSendSummary:
     target_sessions: tuple[str, ...] = ()
     target_sessions_by_batch: dict[int, tuple[str, ...]] = field(default_factory=dict)
     completed_target_sessions: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    synthetic_ack_batch_indexes: tuple[int, ...] = ()
+    attempted_batch_indexes: tuple[int, ...] = ()
+    telegram_acked_batch_indexes: tuple[int, ...] = ()
+    telegram_failed_batch_indexes: tuple[int, ...] = ()
 
 
 class QQSender:

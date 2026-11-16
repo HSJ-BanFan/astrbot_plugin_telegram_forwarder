@@ -3,11 +3,14 @@
 import asyncio
 import importlib.util
 import sys
+import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from core.send_report import SendTerminalReason
 
 
 class FakeStorage:
@@ -18,6 +21,7 @@ class FakeStorage:
         self.retry_updates: list[tuple[str, list[int], dict]] = []
         self.cleared: list[tuple[str, list[int]]] = []
         self.get_all_pending_calls = 0
+        self.cleanup_calls = 0
 
     def get_all_pending(self) -> list[dict]:
         self.get_all_pending_calls += 1
@@ -40,8 +44,20 @@ class FakeStorage:
     def update_last_id(self, channel_name: str, last_id: int) -> None:
         self.get_channel_data(channel_name)["last_post_id"] = last_id
 
-    def cleanup_expired_pending(self, retention: int) -> int:
-        return 0
+    def cleanup_expired_pending(self, retention: int) -> frozenset[tuple[str, int]]:
+        self.cleanup_calls += 1
+        now = time.time()
+        removed = frozenset(
+            (item["channel"], item["id"])
+            for item in self.pending
+            if not item.get("is_cold_start", False) and now - item["time"] > retention
+        )
+        self.pending = [
+            item
+            for item in self.pending
+            if (item["channel"], item["id"]) not in removed
+        ]
+        return removed
 
     def remove_ids_from_pending(self, channel_name: str, msg_ids: list[int]) -> None:
         self.removed.append((channel_name, list(msg_ids)))
@@ -165,6 +181,7 @@ def load_forwarder_module():
         "astrbot_plugin_telegram_forwarder.core.recall",
         "astrbot_plugin_telegram_forwarder.core.senders.telegram",
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
+        "astrbot_plugin_telegram_forwarder.core.send_report",
         "astrbot_plugin_telegram_forwarder.core.filters.content_safety",
         "astrbot_plugin_telegram_forwarder.core.filters.message_filter",
         "astrbot_plugin_telegram_forwarder.core.mergers",
@@ -215,6 +232,24 @@ def load_forwarder_module():
             "astrbot_plugin_telegram_forwarder.core.senders.qq",
             QQSender=object,
             QQSendSummary=QQSendSummary,
+        )
+        from core.send_report import (
+            CaptureReason,
+            CheckUpdatesReport,
+            PendingMessageKey,
+            SendReport,
+            SendReportBuilder,
+            SendTerminalReason,
+        )
+
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.core.send_report",
+            CaptureReason=CaptureReason,
+            CheckUpdatesReport=CheckUpdatesReport,
+            PendingMessageKey=PendingMessageKey,
+            SendReport=SendReport,
+            SendReportBuilder=SendReportBuilder,
+            SendTerminalReason=SendTerminalReason,
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.filters.content_safety",
@@ -309,7 +344,7 @@ def make_forwarder(forwarder_module, storage: FakeStorage, *, strict_ack: bool):
     forwarder.config = {
         "forward_config": {
             "batch_size_limit": 2,
-            "retention_period": 86400,
+            "retention_period": 10**12,
             "send_result_strict_ack": strict_ack,
         },
         "source_channels": [{"channel_username": "demo", "priority": 0}],
@@ -1024,10 +1059,12 @@ async def test_send_pending_keeps_legacy_remove_behavior_when_strict_ack_disable
         )
     )
 
-    await forwarder.send_pending_messages()
+    report = await forwarder.send_pending_messages()
 
     assert storage.removed == [("demo", [201, 202])]
     assert storage.pending == []
+    assert report.acknowledged == frozenset({("demo", 201)})
+    assert report.removed_without_ack == frozenset({("demo", 202)})
 
 
 @pytest.mark.asyncio
@@ -1132,10 +1169,58 @@ async def test_send_pending_keeps_legacy_remove_behavior_when_sender_raises_and_
         side_effect=RuntimeError("sender exploded")
     )
 
-    await forwarder.send_pending_messages()
+    report = await forwarder.send_pending_messages()
 
     assert storage.removed == [("demo", [302, 303])]
     assert storage.pending == []
+    assert report.acknowledged == frozenset()
+    assert report.removed_without_ack == frozenset(
+        {("demo", 302), ("demo", 303)}
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_pending_does_not_report_legacy_no_target_removal_as_ack():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 304,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=False)
+    effective_config = forwarder._get_effective_config("demo")
+    effective_config["effective_target_qq_sessions"] = []
+    forwarder._get_effective_config = lambda channel: effective_config
+    forwarder.config["target_channel"] = ""
+    forwarder.client.get_messages = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=304,
+                text="keep",
+                date=304,
+                photo=None,
+                video=None,
+                voice=None,
+                audio=None,
+                document=None,
+                reply_markup=None,
+            )
+        ]
+    )
+
+    report = await forwarder.send_pending_messages()
+
+    assert storage.pending == []
+    assert report.attempted == frozenset()
+    assert report.acknowledged == frozenset()
+    assert report.removed_without_ack == frozenset({("demo", 304)})
 
 
 @pytest.mark.asyncio
@@ -2570,7 +2655,7 @@ async def test_send_pending_marks_failed_batches_with_backoff():
         )
     )
 
-    await forwarder.send_pending_messages()
+    report = await forwarder.send_pending_messages()
 
     assert storage.retry_updates == [
         (
@@ -2586,6 +2671,10 @@ async def test_send_pending_marks_failed_batches_with_backoff():
         )
     ]
     assert storage.cleared == []
+    assert report.reason is SendTerminalReason.RETAINED_FAILURES
+    assert report.attempted == frozenset({("demo", 401)})
+    assert report.failed_retained == frozenset({("demo", 401)})
+    assert report.acknowledged == frozenset()
 
 
 @pytest.mark.asyncio
@@ -2906,3 +2995,583 @@ def test_forwarder_shares_one_recall_registry_with_both_senders(tmp_path):
         config,
         recall_registry=recall_registry,
     )
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_real_expired_source_identities():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "channel-a",
+                "id": 7,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "channel-b",
+                "id": 7,
+                "time": 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["retention_period"] = 60
+    forwarder._send_sorted_messages_in_batches = AsyncMock()
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is SendTerminalReason.NO_ELIGIBLE_RECORDS
+    assert report.expired == frozenset({("channel-a", 7), ("channel-b", 7)})
+    assert report.attempted == frozenset()
+    assert report.remaining_count == 0
+    forwarder._send_sorted_messages_in_batches.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_filtered_and_refetch_miss_separately():
+    forwarder_module = load_forwarder_module()
+    now = time.time()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 701,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 702,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": ["skip-me"],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": ["test:GroupMessage:1"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.client.get_messages = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=701,
+                text="skip-me",
+                date=701,
+                photo=None,
+                video=None,
+                voice=None,
+                audio=None,
+                document=None,
+                reply_markup=None,
+            )
+        ]
+    )
+    forwarder._send_sorted_messages_in_batches = AsyncMock()
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is SendTerminalReason.NO_SENDABLE_BATCHES
+    assert report.filtered == frozenset({("demo", 701)})
+    assert report.refetch_miss_retained == frozenset({("demo", 702)})
+    assert report.refetch_miss_removed == frozenset()
+    assert report.remaining_count == 1
+    forwarder._send_sorted_messages_in_batches.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_multi_target_success_counts_one_source_message():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 711,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["target_channel"] = "tg-target"
+    forwarder.qq_sender = SimpleNamespace(
+        send=AsyncMock(
+            return_value=QQSendSummary(
+                acked_batch_indexes=(0,),
+                failed_batch_indexes=(),
+                deferred_batch_indexes=(),
+                error_types={},
+                target_sessions=("test:GroupMessage:1",),
+            )
+        )
+    )
+    forwarder.tg_sender = SimpleNamespace(send=AsyncMock(return_value=None))
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.attempted == frozenset({("demo", 711)})
+    assert report.acknowledged == frozenset({("demo", 711)})
+    assert len(report.acknowledged) <= len(report.attempted)
+    forwarder.qq_sender.send.assert_awaited_once()
+    forwarder.tg_sender.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_no_destination_as_unconfirmed_not_attempted():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 712,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": [],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = SimpleNamespace(send=AsyncMock())
+    forwarder.tg_sender = SimpleNamespace(send=AsyncMock())
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is SendTerminalReason.NO_DESTINATION
+    assert report.no_destination == frozenset({("demo", 712)})
+    assert report.attempted == frozenset()
+    assert report.acknowledged == frozenset()
+    assert report.removed_without_ack == frozenset({("demo", 712)})
+    forwarder.qq_sender.send.assert_not_awaited()
+    forwarder.tg_sender.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_telegram_success_as_confirmed():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 713,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["target_channel"] = "tg-target"
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": [],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = SimpleNamespace(send=AsyncMock())
+    forwarder.tg_sender = SimpleNamespace(send=AsyncMock(return_value=None))
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is SendTerminalReason.COMPLETED
+    assert report.attempted == frozenset({("demo", 713)})
+    assert report.acknowledged == frozenset({("demo", 713)})
+    assert report.removed_without_ack == frozenset()
+    forwarder.qq_sender.send.assert_not_awaited()
+    forwarder.tg_sender.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_telegram_failure_as_unconfirmed():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 717,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["target_channel"] = "tg-target"
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": [],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = SimpleNamespace(send=AsyncMock())
+    forwarder.tg_sender = SimpleNamespace(
+        send=AsyncMock(side_effect=RuntimeError("telegram unavailable"))
+    )
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.attempted == frozenset({("demo", 717)})
+    assert report.acknowledged == frozenset()
+    assert report.removed_without_ack == frozenset({("demo", 717)})
+    forwarder.qq_sender.send.assert_not_awaited()
+    forwarder.tg_sender.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_mid_operation_client_outage_as_deferred():
+    forwarder_module = load_forwarder_module()
+    now = time.time()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 714,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 715,
+                "time": now - 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 716,
+                "time": now - 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["batch_size_limit"] = 2
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": ["skip"],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": ["test:GroupMessage:1"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.client.get_messages = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=714,
+                text="forward me",
+                date=714,
+                photo=None,
+                video=None,
+                voice=None,
+                audio=None,
+                document=None,
+                reply_markup=None,
+            ),
+            SimpleNamespace(
+                id=715,
+                text="skip me",
+                date=715,
+                photo=None,
+                video=None,
+                voice=None,
+                audio=None,
+                document=None,
+                reply_markup=None,
+            ),
+        ]
+    )
+    forwarder._ensure_client_ready = AsyncMock(side_effect=[True, False])
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+        )
+    )
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is SendTerminalReason.CLIENT_UNAVAILABLE
+    assert report.attempted == frozenset({("demo", 714)})
+    assert report.acknowledged == frozenset({("demo", 714)})
+    assert report.filtered == frozenset({("demo", 715)})
+    assert report.deferred_retained == frozenset({("demo", 716)})
+    assert report.remaining_count == 1
+
+
+@pytest.mark.asyncio
+async def test_send_pending_keeps_cross_channel_same_id_and_album_identities():
+    forwarder_module = load_forwarder_module()
+    now = time.time()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "channel-a",
+                "id": 7,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "channel-b",
+                "id": 7,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "album",
+                "id": 20,
+                "time": now,
+                "grouped_id": 900,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "album",
+                "id": 21,
+                "time": now,
+                "grouped_id": 900,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["batch_size_limit"] = 3
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0, 1, 2),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+        )
+    )
+
+    report = await forwarder.send_pending_messages()
+
+    expected = frozenset(
+        {("channel-a", 7), ("channel-b", 7), ("album", 20), ("album", 21)}
+    )
+    assert report.attempted == expected
+    assert report.acknowledged == expected
+    sent_batches = forwarder._send_sorted_messages_in_batches.await_args.args[0]
+    assert len(sent_batches) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_reason"),
+    [
+        ("empty", SendTerminalReason.QUEUE_EMPTY),
+        ("stopped", SendTerminalReason.STOP_REQUESTED),
+        ("queue_cleared", SendTerminalReason.QUEUE_CLEARED),
+        ("curfew", SendTerminalReason.CURFEW),
+        ("waiting_retry", SendTerminalReason.WAITING_FOR_RETRY),
+        ("client_unavailable", SendTerminalReason.CLIENT_UNAVAILABLE),
+    ],
+)
+async def test_send_pending_reports_early_exit_reason(mode, expected_reason):
+    forwarder_module = load_forwarder_module()
+    pending = []
+    if mode != "empty":
+        pending.append(
+            {
+                "channel": "demo",
+                "id": 801,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "next_retry_at": (time.time() + 3600 if mode == "waiting_retry" else 0),
+            }
+        )
+    storage = FakeStorage(pending)
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    if mode == "stopped":
+        forwarder._stopping = True
+    elif mode == "queue_cleared":
+        forwarder._queue_clear_active = True
+    elif mode == "curfew":
+        forwarder._is_curfew = lambda: True
+    elif mode == "client_unavailable":
+        forwarder._ensure_client_ready = AsyncMock(return_value=False)
+
+    report = await forwarder.send_pending_messages()
+
+    assert report.reason is expected_reason
+    assert report.attempted == frozenset()
+    if mode in {"queue_cleared", "curfew", "client_unavailable", "waiting_retry"}:
+        assert report.remaining_count == 1
+        assert storage.retry_updates == []
+    if mode == "client_unavailable":
+        assert report.deferred_retained == frozenset({("demo", 801)})
+
+
+@pytest.mark.asyncio
+async def test_send_pending_reports_monitor_scope_and_not_selected():
+    forwarder_module = load_forwarder_module()
+    now = time.time()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 901,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 902,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": True,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+
+    scoped_report = await forwarder.send_pending_messages(
+        monitored_only=True,
+        monitor_targets={("demo", 999)},
+    )
+
+    assert scoped_report.reason is SendTerminalReason.NO_MONITORED_MATCH
+    assert scoped_report.outside_monitor_scope == frozenset(
+        {("demo", 901), ("demo", 902)}
+    )
+
+    forwarder.config["forward_config"]["batch_size_limit"] = 1
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+        )
+    )
+    report = await forwarder.send_pending_messages()
+
+    assert report.not_selected == frozenset({("demo", 901)})
+
+
+@pytest.mark.asyncio
+async def test_send_report_excludes_messages_captured_after_initial_snapshot():
+    forwarder_module = load_forwarder_module()
+    now = time.time()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 1001,
+                "time": now,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def fetch_messages(channel, ids):
+        fetch_started.set()
+        await release_fetch.wait()
+        return [
+            SimpleNamespace(
+                id=1001,
+                text="original",
+                date=1001,
+                photo=None,
+                video=None,
+                voice=None,
+                audio=None,
+                document=None,
+                reply_markup=None,
+            )
+        ]
+
+    forwarder.client.get_messages = AsyncMock(side_effect=fetch_messages)
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+        )
+    )
+
+    send_task = asyncio.create_task(forwarder.send_pending_messages())
+    await fetch_started.wait()
+    storage.add_batch_to_pending_queue(
+        "demo",
+        [
+            {
+                "id": 1002,
+                "time": time.time(),
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ],
+    )
+    release_fetch.set()
+
+    report = await send_task
+
+    assert report.queue_size_at_start == 1
+    assert report.attempted == frozenset({("demo", 1001)})
+    assert report.acknowledged == frozenset({("demo", 1001)})
+    assert report.remaining_count == 1
+    assert [item["id"] for item in storage.pending] == [1002]

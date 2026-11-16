@@ -31,6 +31,7 @@ from telethon.sessions import StringSession
 
 from .client import TelegramClientWrapper
 from .qq_group_cache import QQGroupCache
+from .send_report import CheckUpdatesReport, RuntimeSendReport
 from .tg_channel_cache import TGChannelCache
 
 PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
@@ -2006,25 +2007,24 @@ class WebAdminServer:
             operation["message"] = (
                 f"正在强制抓取频道更新。{self._format_queue_count(before_fetch)}"
             )
-            await self.plugin.forwarder.check_updates(force=True)
+            capture_result = await self.plugin.forwarder.check_updates(force=True)
+            capture_report = (
+                capture_result if capture_result is not None else CheckUpdatesReport()
+            )
             after_fetch = self._pending_queue_count()
             operation["message"] = (
                 f"正在发送待发送队列。{self._format_queue_count(after_fetch)}"
             )
-            await self.plugin.forwarder.send_pending_messages(force_immediate=True)
-            after_send = self._pending_queue_count()
-            if after_fetch == 0 and after_send == 0:
-                operation["_success_message"] = "执行完成：抓取后没有待发送消息。"
-            elif after_send == 0 and after_fetch:
-                operation["_success_message"] = "执行完成：本轮待发送队列已处理完。"
-            elif after_fetch is not None and after_send is not None:
-                operation["_success_message"] = (
-                    f"执行完成：待发送队列 {after_fetch} -> {after_send} 条。"
-                )
-            elif after_send is not None:
-                operation["_success_message"] = (
-                    f"执行完成：当前待发送队列 {after_send} 条。"
-                )
+            manual_result = await self.plugin.forwarder.send_pending_messages(
+                force_immediate=True
+            )
+            manual_report = manual_result if manual_result is not None else None
+            runtime_report = RuntimeSendReport.combine(
+                capture_report,
+                manual_report,
+            )
+            operation["result"] = runtime_report.to_dict()
+            operation["_success_message"] = runtime_report.format_message()
 
         self._track_runtime_task(run_once(), operation=operation)
         return {
