@@ -123,3 +123,44 @@ def test_runtime_report_keeps_nested_send_completion_when_manual_queue_is_empty(
     assert "本次发送未执行（队列为空）" not in message
     assert runtime.attempted_count == 1
     assert runtime.acknowledged_count == 1
+
+
+def test_runtime_report_describes_partial_send_after_client_outage():
+    runtime = RuntimeSendReport(
+        capture=CheckUpdatesReport(added_count=2),
+        send_reports=(
+            SendReport(
+                reason=SendTerminalReason.CLIENT_UNAVAILABLE,
+                queue_size_at_start=2,
+                remaining_count=1,
+                attempted=frozenset({("demo", 1)}),
+                acknowledged=frozenset({("demo", 1)}),
+                deferred_retained=frozenset({("demo", 2)}),
+            ),
+        ),
+    )
+
+    message = runtime.format_message()
+
+    assert "本次发送部分完成（Telegram 客户端不可用）" in message
+    assert "延后保留 1 条" in message
+
+
+def test_runtime_report_does_not_call_unconfirmed_removal_completed():
+    runtime = RuntimeSendReport(
+        capture=CheckUpdatesReport(added_count=1),
+        send_reports=(
+            SendReport(
+                reason=SendTerminalReason.COMPLETED,
+                queue_size_at_start=1,
+                remaining_count=0,
+                attempted=frozenset({("demo", 1)}),
+                removed_without_ack=frozenset({("demo", 1)}),
+            ),
+        ),
+    )
+
+    message = runtime.format_message()
+
+    assert "本次发送结果未确认" in message
+    assert "本次发送完成" not in message
