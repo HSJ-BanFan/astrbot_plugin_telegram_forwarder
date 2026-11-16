@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 
 from astrbot.api import logger
@@ -297,29 +298,30 @@ class Storage:
         if changed:
             self.save()
 
-    def cleanup_expired_pending(self, retention_seconds: int):
-        """清理所有频道中过期的消息"""
-        import time
-
+    def cleanup_expired_pending(
+        self,
+        retention_seconds: int,
+    ) -> frozenset[tuple[str, int]]:
+        """清理过期消息并返回本次实际移除的消息身份。"""
         now = time.time()
-        cleaned_total = 0
+        removed: set[tuple[str, int]] = set()
         for channel_name, info in self.persistence.get("channels", {}).items():
             old_queue = info.get("pending_queue", [])
-            # 冷启动消息不参与过期清理
-            new_queue = [
-                m
-                for m in old_queue
-                if m.get("is_cold_start", False)
-                or (now - m["time"] <= retention_seconds)
-            ]
+            new_queue = []
+            for item in old_queue:
+                if item.get("is_cold_start", False) or (
+                    now - item["time"] <= retention_seconds
+                ):
+                    new_queue.append(item)
+                else:
+                    removed.add((channel_name, item["id"]))
             if len(new_queue) != len(old_queue):
-                cleaned_total += len(old_queue) - len(new_queue)
                 info["pending_queue"] = new_queue
 
-        if cleaned_total > 0:
+        if removed:
             self.save()
-            logger.debug(f"[Storage] 全局清理了 {cleaned_total} 条过期消息。")
-        return cleaned_total
+            logger.debug(f"[Storage] 全局清理了 {len(removed)} 条过期消息。")
+        return frozenset(removed)
 
     def reset_inactive_channels(self, active_channels: list):
         """

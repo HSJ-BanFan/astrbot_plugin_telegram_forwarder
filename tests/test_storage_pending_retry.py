@@ -417,3 +417,78 @@ def test_mark_pending_qq_targets_completed_ignores_blank_or_none_targets():
         assert item["completed_qq_targets"] == ["target-a"]
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cleanup_expired_pending_returns_actual_source_keys(monkeypatch):
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    try:
+        data_path = tmp_dir / "data.json"
+        data_path.write_text(
+            json.dumps(
+                {
+                    "channels": {
+                        "channel-a": {
+                            "pending_queue": [
+                                {"id": 7, "time": 100.0},
+                                {"id": 8, "time": 995.0},
+                                {"id": 9, "time": 100.0, "is_cold_start": True},
+                            ]
+                        },
+                        "channel-b": {"pending_queue": [{"id": 7, "time": 100.0}]},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        storage = storage_module.Storage(data_path)
+        clock_calls = []
+        save_calls = []
+        original_save = storage.save
+        monkeypatch.setattr(
+            storage_module.time,
+            "time",
+            lambda: clock_calls.append(1) or 1000.0,
+        )
+        monkeypatch.setattr(
+            storage,
+            "save",
+            lambda: save_calls.append(1) or original_save(),
+        )
+
+        removed = storage.cleanup_expired_pending(10)
+
+        assert removed == frozenset({("channel-a", 7), ("channel-b", 7)})
+        assert len(clock_calls) == 1
+        assert len(save_calls) == 1
+        assert [
+            (item["channel"], item["id"]) for item in storage.get_all_pending()
+        ] == [("channel-a", 8), ("channel-a", 9)]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_cleanup_expired_pending_skips_save_when_nothing_expires(monkeypatch):
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    try:
+        storage = storage_module.Storage(tmp_dir / "data.json")
+        storage.add_batch_to_pending_queue(
+            "demo",
+            [{"id": 11, "time": 990.0, "is_cold_start": False}],
+        )
+        save_calls = []
+        monkeypatch.setattr(
+            storage_module.time,
+            "time",
+            lambda: 1000.0,
+        )
+        monkeypatch.setattr(storage, "save", lambda: save_calls.append(1))
+
+        removed = storage.cleanup_expired_pending(10)
+
+        assert removed == frozenset()
+        assert save_calls == []
+        assert storage.get_all_pending()[0]["id"] == 11
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

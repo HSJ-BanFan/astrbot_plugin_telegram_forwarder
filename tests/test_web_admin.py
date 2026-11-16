@@ -7,6 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.send_report import (
+    CaptureReason,
+    CheckUpdatesReport,
+    SendReport,
+    SendTerminalReason,
+)
+
 
 class FakeConfig(dict):
     def __init__(self, *args, **kwargs):
@@ -1511,18 +1518,27 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
 @pytest.mark.asyncio
 async def test_runtime_check_reports_expired_queue_without_send_attempts(web_admin):
     pending = []
-    stats = {"forward_attempts": 10, "forward_success": 8, "forward_failed": 2}
+    expired = frozenset(("expired_channel", message_id) for message_id in range(5))
 
     async def check_updates(*, force=False):
-        pending.extend({"channel": "expired_channel", "id": i} for i in range(5))
+        return CheckUpdatesReport(
+            reason=CaptureReason.COMPLETED,
+            added_count=5,
+        )
 
     async def send_pending_messages(*, force_immediate=False):
         pending.clear()
+        return SendReport(
+            reason=SendTerminalReason.NO_ELIGIBLE_RECORDS,
+            queue_size_at_start=5,
+            remaining_count=0,
+            expired=expired,
+        )
 
     web_admin.plugin.forwarder = SimpleNamespace(
         _stopping=False,
         storage=SimpleNamespace(get_all_pending=lambda: pending),
-        stats=stats.copy(),
+        stats={"forward_attempts": 10, "forward_success": 8, "forward_failed": 2},
         check_updates=check_updates,
         send_pending_messages=send_pending_messages,
     )
@@ -1532,15 +1548,111 @@ async def test_runtime_check_reports_expired_queue_without_send_attempts(web_adm
     await web_admin.server.runtime_check()
     await asyncio.gather(*web_admin.server._runtime_tasks)
     status = await web_admin.server.get_status()
-    message = status["runtime"]["operations"][0]["message"]
+    operation = status["runtime"]["operations"][0]
+    message = operation["message"]
 
     assert status["queue"]["total"] == 0
-    assert status["stats"] == stats
-    assert "未进入发送" in message
-    assert "5" in message
-    assert "过期" in message
+    assert "抓取新增 5 条" in message
+    assert "尝试发送 0 条" in message
+    assert "过期清理 5 条，未进入发送" in message
+    assert "过滤移除 0 条" in message
+    assert "失败保留 0 条" in message
+    assert "延后保留 0 条" in message
+    assert "剩余 0 条" in message
     assert "retention_period" in message
     assert "本轮待发送队列已处理完" not in message
+    assert operation["result"]["expired_count"] == 5
+    assert operation["result"]["attempted_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_check_ignores_concurrent_global_stats_mutation(web_admin):
+    stats = {"forward_attempts": 10, "forward_success": 8, "forward_failed": 2}
+
+    async def check_updates(*, force=False):
+        return CheckUpdatesReport(added_count=1)
+
+    async def send_pending_messages(*, force_immediate=False):
+        stats.update(
+            forward_attempts=999,
+            forward_success=888,
+            forward_failed=777,
+        )
+        return SendReport(
+            reason=SendTerminalReason.COMPLETED,
+            queue_size_at_start=1,
+            remaining_count=0,
+            attempted=frozenset({("test_channel", 1)}),
+            acknowledged=frozenset({("test_channel", 1)}),
+        )
+
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=False,
+        storage=SimpleNamespace(get_all_pending=list),
+        stats=stats,
+        check_updates=check_updates,
+        send_pending_messages=send_pending_messages,
+    )
+    web_admin.plugin.scheduler = None
+    web_admin.plugin.client_wrapper.is_connected = lambda: False
+
+    await web_admin.server.runtime_check()
+    await asyncio.gather(*web_admin.server._runtime_tasks)
+    status = await web_admin.server.get_status()
+    operation = status["runtime"]["operations"][0]
+
+    assert operation["status"] == "success"
+    assert "尝试发送 1 条" in operation["message"]
+    assert "确认移除 1 条" in operation["message"]
+    assert "尝试发送 999 条" not in operation["message"]
+    assert operation["result"]["attempted_count"] == 1
+    assert operation["result"]["acknowledged_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_check_combines_nested_and_manual_reports(web_admin):
+    monitored = SendReport(
+        reason=SendTerminalReason.COMPLETED,
+        queue_size_at_start=1,
+        remaining_count=0,
+        attempted=frozenset({("test_channel", 7)}),
+        acknowledged=frozenset({("test_channel", 7)}),
+    )
+    manual = SendReport(
+        reason=SendTerminalReason.COMPLETED,
+        queue_size_at_start=2,
+        remaining_count=1,
+        attempted=frozenset({("test_channel", 7), ("test_channel", 8)}),
+        acknowledged=frozenset({("test_channel", 7)}),
+        failed_retained=frozenset({("test_channel", 8)}),
+    )
+
+    async def check_updates(*, force=False):
+        return CheckUpdatesReport(added_count=2, immediate_send=monitored)
+
+    async def send_pending_messages(*, force_immediate=False):
+        return manual
+
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=False,
+        storage=SimpleNamespace(get_all_pending=list),
+        stats={"forward_attempts": 0},
+        check_updates=check_updates,
+        send_pending_messages=send_pending_messages,
+    )
+    web_admin.plugin.scheduler = None
+    web_admin.plugin.client_wrapper.is_connected = lambda: False
+
+    await web_admin.server.runtime_check()
+    await asyncio.gather(*web_admin.server._runtime_tasks)
+    operation = (await web_admin.server.get_status())["runtime"]["operations"][0]
+
+    assert operation["result"]["added_count"] == 2
+    assert operation["result"]["attempted_count"] == 2
+    assert operation["result"]["acknowledged_count"] == 1
+    assert operation["result"]["failed_retained_count"] == 1
+    assert operation["result"]["remaining_count"] == 1
+    assert "失败保留 1 条" in operation["message"]
 
 
 @pytest.mark.asyncio

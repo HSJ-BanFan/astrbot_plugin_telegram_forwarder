@@ -104,6 +104,7 @@ class QQSendSummary:
     target_sessions: tuple[str, ...] = ()
     target_sessions_by_batch: dict[int, tuple[str, ...]] = field(default_factory=dict)
     completed_target_sessions: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    synthetic_ack_batch_indexes: tuple[int, ...] = ()
 
 
 class QQSender:
