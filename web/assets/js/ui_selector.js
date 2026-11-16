@@ -1,7 +1,6 @@
 import { store } from './store.js';
 import { bindLiveSearchInput, escapeHtml, fieldsMatchSearch } from './utils.js';
-import { showToast, loadQQGroups, loadTGChannels } from './context.js';
-import { collectForms, renderAll } from '../app.js';
+import { showToast, loadQQGroups, loadTGChannels, collectCurrentForms, renderCurrentConfig } from './context.js';
 import { mergeQQTargetValue, parseManualQQTarget } from './qq_targets.js';
 
 export {
@@ -279,9 +278,9 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
   const refreshBtn = root.querySelector("[data-selector-refresh]");
   if (refreshBtn) {
     refreshBtn.addEventListener("click", async () => {
-      collectForms();
+      collectCurrentForms();
       await loadQQGroups({ force: true });
-      renderAll();
+      renderCurrentConfig();
       showToast("QQ 群列表已刷新。");
     });
   }
@@ -472,9 +471,9 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
   const refreshBtn = root.querySelector("[data-selector-refresh]");
   if (refreshBtn) {
     refreshBtn.addEventListener("click", async () => {
-      collectForms();
+      collectCurrentForms();
       await loadTGChannels({ force: true });
-      renderAll();
+      renderCurrentConfig();
       showToast("Telegram 频道列表已刷新。");
     });
   }

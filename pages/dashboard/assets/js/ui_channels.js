@@ -2,7 +2,7 @@ import { store } from './store.js';
 import { escapeHtml, channelKey } from './utils.js';
 import { renderQQTargetSelector, renderTGChannelSelector, channelTitleUI, splitList, joinList } from './ui_selector.js';
 import { els } from './context.js';
-import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from './config.js';
+import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS } from './config.js';
 
 export function defaultChannel() {
   return {
@@ -281,172 +281,9 @@ export function renderChannels() {
   });
 }
 
-export function defaultMergeRule() {
-  return {
-    __template_key: "default",
-    name: "",
-    channel: "",
-    rule_class: "KeywordNextNMerge",
-    params: {
-      trigger_keywords: [],
-      trigger_regex: "",
-      next_count: 2,
-      time_window_seconds: 60,
-    },
-  };
-}
-
-export function normalizeMergeRule(rule = {}) {
-  const defaults = defaultMergeRule();
-  return {
-    ...defaults,
-    ...rule,
-    params: {
-      ...defaults.params,
-      ...(rule.params || {}),
-    },
-  };
-}
-
-export function mergeRuleKey(rule, index) {
-  const normalized = normalizeMergeRule(rule);
-  return normalized.name || normalized.channel || normalized.rule_class
-    ? `rule:${normalized.name}:${normalized.channel}:${normalized.rule_class}:${index}`
-    : `idx:${index}`;
-}
-
-export function mergeRuleTitle(rule) {
-  const normalized = normalizeMergeRule(rule);
-  if (normalized.name) {
-    return normalized.name;
-  }
-  const classLabel = MERGE_RULE_CLASSES.find((item) => item.value === normalized.rule_class)?.label || normalized.rule_class || "未选择规则";
-  return normalized.channel ? `@${normalized.channel} · ${classLabel}` : `新规则 · ${classLabel}`;
-}
-
-export function collectMergeRules({ keepEmpty = true } = {}) {
-  const cards = Array.from(document.querySelectorAll(".merge-card[data-merge-index]"));
-  if (!cards.length) {
-    if (!Array.isArray(store.state.config.merge_rules)) {
-      store.state.config.merge_rules = [];
-    }
-    return;
-  }
-
-  store.state.config.merge_rules = cards
-    .map((card) => {
-      const index = Number.parseInt(card.dataset.mergeIndex, 10);
-      const current = normalizeMergeRule(store.state.config.merge_rules?.[index] || {});
-      const field = (name) => card.querySelector(`[data-merge-field="${name}"]`);
-      const param = (name) => card.querySelector(`[data-merge-param="${name}"]`);
-      const getText = (node, fallback = "") => (node ? node.value.trim() : fallback);
-      const getInt = (node, fallback) => {
-        if (!node) return fallback;
-        const parsed = Number.parseInt(String(node.value).trim(), 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-      };
-      const collected = {
-        __template_key: "default",
-        name: getText(field("name"), current.name),
-        channel: getText(field("channel"), current.channel).replace(/^[@#]/, ""),
-        rule_class: getText(field("rule_class"), current.rule_class),
-        params: {
-          ...current.params,
-          trigger_keywords: splitList(param("trigger_keywords")?.value || ""),
-          trigger_regex: getText(param("trigger_regex"), current.params.trigger_regex || ""),
-          next_count: getInt(param("next_count"), current.params.next_count || 2),
-          time_window_seconds: getInt(param("time_window_seconds"), current.params.time_window_seconds || 60),
-        },
-      };
-      const oldKey = card.dataset.mergeKey;
-      const newKey = mergeRuleKey(collected, index);
-      if (oldKey && newKey !== oldKey && store.state.expandedMergeRules.has(oldKey)) {
-        store.state.expandedMergeRules.delete(oldKey);
-        store.state.expandedMergeRules.add(newKey);
-      }
-      return collected;
-    })
-    .filter((rule) => keepEmpty || (rule.channel && rule.rule_class));
-}
-
-export function renderMergeRules() {
-  const rules = Array.isArray(store.state.config?.merge_rules) ? store.state.config.merge_rules : [];
-  if (!els.mergeRuleList) return;
-  els.mergeRuleList.innerHTML = rules.length
-    ? rules
-        .map((rule, index) => {
-          const cfg = normalizeMergeRule(rule);
-          const params = cfg.params || {};
-          const key = mergeRuleKey(cfg, index);
-          const collapsed = !store.state.expandedMergeRules.has(key);
-          return `
-            <article class="channel-card merge-card ${collapsed ? "collapsed" : ""}" data-merge-index="${index}" data-merge-key="${escapeHtml(key)}">
-              <button class="channel-summary" type="button" data-toggle-merge="${index}">
-                <div>
-                  <div class="channel-title-text">${escapeHtml(mergeRuleTitle(cfg))}</div>
-                  <div class="channel-meta">
-                    <span>后续 ${escapeHtml(params.next_count ?? params.merge_count ?? 2)} 条</span>
-                    <span>超时 ${escapeHtml(params.time_window_seconds ?? 60)} 秒</span>
-                  </div>
-                </div>
-                <span class="chevron">⌄</span>
-              </button>
-              <div class="channel-body">
-                <section class="channel-section active">
-                  <div class="form-grid">
-                    <label class="field">规则名称<input data-merge-field="name" value="${escapeHtml(cfg.name)}" placeholder="例如：主频道预览图合并" /></label>
-                    <label class="field">频道用户名<input data-merge-field="channel" value="${escapeHtml(cfg.channel)}" /></label>
-                    <label class="field">规则类型
-                      <select data-merge-field="rule_class">
-                        ${MERGE_RULE_CLASSES.map((item) => `<option value="${escapeHtml(item.value)}" ${cfg.rule_class === item.value ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
-                      </select>
-                    </label>
-                  </div>
-                  <div class="form-grid">
-                    <label class="field">触发关键词<textarea data-merge-param="trigger_keywords" rows="4">${escapeHtml(joinList(params.trigger_keywords || params.keywords || []))}</textarea></label>
-                    <label class="field">触发正则<input data-merge-param="trigger_regex" value="${escapeHtml(params.trigger_regex || "")}" /></label>
-                    <label class="field">后续消息数<input data-merge-param="next_count" type="number" min="1" value="${escapeHtml(params.next_count ?? params.merge_count ?? 2)}" /></label>
-                    <label class="field">合并超时(秒)<input data-merge-param="time_window_seconds" type="number" min="1" value="${escapeHtml(params.time_window_seconds ?? 60)}" /></label>
-                  </div>
-                  <p class="field-hint">命中过滤词时，整个合并组会一起过滤；超时未凑够后续消息时，会按已经抓到的消息继续处理。</p>
-                </section>
-                <div class="channel-actions">
-                  <button class="btn btn-soft danger" data-remove-merge="${index}" type="button">删除规则</button>
-                </div>
-              </div>
-            </article>
-          `;
-        })
-        .join("")
-    : '<div class="queue-item"><span>暂无合并规则</span><strong>0</strong></div>';
-
-  document.querySelectorAll("[data-toggle-merge]").forEach((button) => {
-    button.addEventListener("click", () => {
-      collectMergeRules();
-      const card = button.closest(".merge-card");
-      const key = card.dataset.mergeKey;
-      if (store.state.expandedMergeRules.has(key)) {
-        store.state.expandedMergeRules.delete(key);
-      } else {
-        store.state.expandedMergeRules.add(key);
-      }
-      renderMergeRules();
-    });
-  });
-  document.querySelectorAll("[data-remove-merge]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const index = Number.parseInt(button.dataset.removeMerge, 10);
-      collectMergeRules();
-      store.state.config.merge_rules.splice(index, 1);
-      renderMergeRules();
-    });
-  });
-}
-
 export function initChannels() {
   if (els.addChannelBtn) {
-    els.addChannelBtn.addEventListener("click", () => {
+    els.addChannelBtn.addEventListener('click', () => {
       collectChannels();
       const channel = defaultChannel();
       if (!store.state.config.source_channels) {
@@ -455,18 +292,6 @@ export function initChannels() {
       store.state.config.source_channels.push(channel);
       store.state.expandedChannels.add(channelKey(channel, store.state.config.source_channels.length - 1));
       renderChannels();
-    });
-  }
-  if (els.addMergeRuleBtn) {
-    els.addMergeRuleBtn.addEventListener("click", () => {
-      collectMergeRules();
-      if (!Array.isArray(store.state.config.merge_rules)) {
-        store.state.config.merge_rules = [];
-      }
-      const rule = defaultMergeRule();
-      store.state.config.merge_rules.push(rule);
-      store.state.expandedMergeRules.add(mergeRuleKey(rule, store.state.config.merge_rules.length - 1));
-      renderMergeRules();
     });
   }
 }

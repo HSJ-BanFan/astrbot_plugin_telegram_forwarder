@@ -956,6 +956,10 @@ class WebAdminServer:
 
     async def get_config(self) -> dict[str, Any]:
         config = self._to_plain(dict(self.plugin.config))
+        if "merge_rules" in config:
+            config["merge_rules"] = self._without_retired_merge_rules(
+                config["merge_rules"]
+            )
         forward_config = config.get("forward_config")
         if isinstance(forward_config, dict) and forward_config.get("ai_filter_api_key"):
             forward_config["ai_filter_api_key"] = AI_KEY_PLACEHOLDER
@@ -1293,12 +1297,26 @@ class WebAdminServer:
             normalized.append(cfg)
         return normalized
 
+    @staticmethod
+    def _without_retired_merge_rules(value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        return [
+            rule
+            for rule in value
+            if not (
+                isinstance(rule, dict)
+                and str(rule.get("rule_class", "")).strip()
+                == "SomeACGPreviewPlusOriginal"
+            )
+        ]
+
     def _normalize_merge_rules(self, value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             raise WebAdminError("merge_rules 必须是列表。")
 
         normalized: list[dict[str, Any]] = []
-        for idx, item in enumerate(value):
+        for idx, item in enumerate(self._without_retired_merge_rules(value)):
             if not isinstance(item, dict):
                 raise WebAdminError(f"merge_rules[{idx}] 必须是对象。")
             cfg = dict(item)

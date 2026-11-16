@@ -214,8 +214,16 @@ export function setRenderAllCallback(cb) {
   renderAllCallback = cb;
 }
 
+export function collectCurrentForms(options = {}) {
+  return collectFormsCallback?.(options);
+}
+
+export function renderCurrentConfig() {
+  return renderAllCallback?.();
+}
+
 export async function saveConfig({ quiet = false } = {}) {
-  if (collectFormsCallback) collectFormsCallback();
+  collectCurrentForms({ validate: true });
   const result = await apiRequest("/api/config", "POST", { config: store.state.config });
   store.updateState({ config: result.config });
   const newToken = result.config?.web_config?.token;

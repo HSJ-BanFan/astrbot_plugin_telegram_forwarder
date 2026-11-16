@@ -76,7 +76,7 @@ graph TD
 | `core/` | 核心业务 | 抓取、指令、队列分发、客户端管理、Web 管理后端、平台缓存 | 8 | 高 |
 | `core/senders/` | 平台发送 | QQ 门面及 13 个子模块（媒体/熔断/分发/回退/日志等），Telegram 直发 | 15 | 高 |
 | `core/filters/` | 过滤引擎 | `MessageFilter` 黑名单过滤 + `ContentSafetyFilter`（AI 审核 / 二维码风险过滤） | 3 | 高 |
-| `core/mergers/` | 合并策略 | `MessageMerger` + `SomeACGPreviewPlusOriginal` + `KeywordNextNMerge` | 5 | 高 |
+| `core/mergers/` | 合并策略 | `MessageMerger` + `KeywordNextNMerge` | 4 | 高 |
 | `common/` | 通用工具 | `Storage`（原子写）、`text_tools`（频道名规范化/Telethon 实体解析） | 3 | 高 |
 | `web/` | Web 前端源 | 唯一手改前端（HTML/CSS/JS 模块化 + 本地 GSAP），可直接 `127.0.0.1:8180` 服务 | 19 | 高 |
 | `tests/` | 测试套件 | 24 个 test 文件 + 极深 mock 的 `conftest.py` | 25 | 高 |

@@ -469,6 +469,64 @@ def test_normalize_merge_rules_keeps_valid_rules(web_admin):
     ]
 
 
+def retired_channel_rule():
+    return {
+        "__template_key": "default",
+        "name": "Legacy channel rule",
+        "channel": "private-example",
+        "rule_class": "SomeACGPreviewPlusOriginal",
+        "params": {"time_window_seconds": 10},
+    }
+
+
+def test_get_config_hides_retired_rule_without_mutating_stored_rules(web_admin):
+    generic = {
+        "channel": "example",
+        "rule_class": "KeywordNextNMerge",
+        "params": {"next_count": 2},
+    }
+    unknown = {
+        "channel": "example",
+        "rule_class": "CustomMerge",
+        "params": {"custom": "retain"},
+    }
+    retired = retired_channel_rule()
+    web_admin.plugin.config["merge_rules"] = [retired, generic, unknown]
+
+    response = web_admin.server.app.test_client().get(
+        "/api/config", headers={"X-Admin-Token": "secret-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["config"]["merge_rules"] == [generic, unknown]
+    assert web_admin.plugin.config["merge_rules"] == [retired, generic, unknown]
+    web_admin.plugin.config.save_config.assert_not_called()
+
+
+def test_save_config_omits_retired_rule_and_preserves_generic_rule(web_admin):
+    generic = {
+        "__template_key": "default",
+        "name": "User rule",
+        "channel": "example",
+        "rule_class": "KeywordNextNMerge",
+        "params": {
+            "trigger_keywords": ["start"],
+            "next_count": 2,
+            "time_window_seconds": 60,
+        },
+    }
+    response = web_admin.server.app.test_client().post(
+        "/api/config",
+        headers={"X-Admin-Token": "secret-token"},
+        json={"merge_rules": [retired_channel_rule(), generic]},
+    )
+
+    assert response.status_code == 200
+    assert web_admin.plugin.config["merge_rules"] == [generic]
+    assert response.get_json()["data"]["config"]["merge_rules"] == [generic]
+    web_admin.plugin.config.save_config.assert_called_once()
+
+
 def test_normalize_merge_rules_defaults_none_params(web_admin):
     assert web_admin.server._normalize_merge_rules([{"params": None}]) == [
         {
