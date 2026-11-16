@@ -14,15 +14,19 @@ class FakeMessage:
         self.grouped_id = None
 
 
-class FakePhoto:
-    pass
+class SyntheticAssociationRule:
+    def __init__(self, _config):
+        pass
 
+    def can_merge(self, _channel_name, first, second):
+        return first[1].text == "preview" and second[1].text == "original"
 
-class FakeDocument:
-    def __init__(self, filename):
-        self.document = SimpleNamespace(
-            mime_type="image/jpeg", attributes=[SimpleNamespace(file_name=filename)]
-        )
+    def get_group_key(self, message):
+        return f"{message[0]}:association:{message[1].id}"
+
+    def apply_merge_marker(self, messages, group_key):
+        for _, message in messages:
+            message._merge_group_id = group_key
 
 
 def load_merger_module():
@@ -31,8 +35,6 @@ def load_merger_module():
     modules = {
         "telethon.tl.types": SimpleNamespace(
             Message=FakeMessage,
-            MessageMediaDocument=FakeDocument,
-            MessageMediaPhoto=FakePhoto,
         ),
         "astrbot.api": SimpleNamespace(logger=MagicMock()),
     }
@@ -47,7 +49,7 @@ def load_merger_module():
         modules[name] = module
     name = package + ".core.mergers.merger"
     with patch.dict(sys.modules, modules):
-        for suffix in ("base", "keyword_next", "someacg", "merger"):
+        for suffix in ("base", "keyword_next", "merger"):
             sys.modules.pop(package + ".core.mergers." + suffix, None)
         spec = importlib.util.spec_from_file_location(
             name, root / "core" / "mergers" / "merger.py"
@@ -143,71 +145,63 @@ def test_other_channels_cannot_complete_or_defer_the_requested_channel():
     assert merger.merge_messages(messages) == messages
 
 
-def someacg_messages():
-    messages = messages_from_texts(
-        "https://www.pixiv.net/artworks/123456",
-        "start",
-        "payload",
-        "",
-        channel="SomeACG",
-    )
-    for _, message in messages:
-        message.media = None
-    messages[0][1].media = FakePhoto()
-    messages[3][1].media = FakeDocument("123456_p0.jpg")
-    return messages
+def association_merger(next_count=None):
+    module = load_merger_module()
+    module.MessageMerger.RULE_CLASSES = {
+        **module.MessageMerger.RULE_CLASSES,
+        "SyntheticAssociationRule": SyntheticAssociationRule,
+    }
+    rules = [
+        {"channel": "example", "rule_class": "SyntheticAssociationRule", "params": {}}
+    ]
+    if next_count is not None:
+        rules.append(keyword_rule("start", next_count))
+    return module.MessageMerger({"merge_rules": rules})
+
+
+def association_messages():
+    return messages_from_texts("preview", "start", "payload", "original")
 
 
 def test_defer_boundary_cannot_split_an_earlier_noncontiguous_group():
-    merger = load_merger_module().MessageMerger(
-        {
-            "merge_rules": [
-                {
-                    "channel": "SomeACG",
-                    "rule_class": "SomeACGPreviewPlusOriginal",
-                    "params": {"time_window_seconds": 60},
-                },
-                keyword_rule("start", 5, channel="SomeACG"),
-            ]
-        }
-    )
+    merger = association_merger(5)
 
-    assert merger.find_defer_from_index("SomeACG", someacg_messages()) == 0
+    assert merger.find_defer_from_index("example", association_messages()) == 0
 
 
 def test_a_reserved_original_cannot_count_as_another_rules_missing_message():
-    merger = load_merger_module().MessageMerger(
-        {
-            "merge_rules": [
-                {
-                    "channel": "SomeACG",
-                    "rule_class": "SomeACGPreviewPlusOriginal",
-                    "params": {"time_window_seconds": 60},
-                },
-                keyword_rule("start", 2, channel="SomeACG"),
-            ]
-        }
-    )
+    merger = association_merger(2)
 
-    assert merger.find_defer_from_index("SomeACG", someacg_messages()) == 0
+    assert merger.find_defer_from_index("example", association_messages()) == 0
 
 
-def test_someacg_still_groups_originals_without_a_keyword_wait_rule():
-    merger = load_merger_module().MessageMerger(
-        {
-            "merge_rules": [
-                {
-                    "channel": "SomeACG",
-                    "rule_class": "SomeACGPreviewPlusOriginal",
-                    "params": {"time_window_seconds": 60},
-                }
-            ]
-        }
-    )
-    messages = someacg_messages()
+def test_noncontiguous_groups_without_a_keyword_wait_rule_remain_supported():
+    merger = association_merger()
+    messages = association_messages()
 
-    assert merger.find_defer_from_index("SomeACG", messages) is None
+    assert merger.find_defer_from_index("example", messages) is None
     merger.merge_messages(messages)
     assert messages[0][1]._merge_group_id == messages[3][1]._merge_group_id
     assert not hasattr(messages[1][1], "_merge_group_id")
     assert not hasattr(messages[2][1], "_merge_group_id")
+
+
+def test_retired_channel_strategy_is_not_registered_or_applied():
+    module = load_merger_module()
+    assert set(module.MessageMerger.RULE_CLASSES) == {"KeywordNextNMerge"}
+    merger = module.MessageMerger(
+        {
+            "merge_rules": [
+                {
+                    "channel": "example",
+                    "rule_class": "SomeACGPreviewPlusOriginal",
+                    "params": {},
+                }
+            ]
+        }
+    )
+    messages = messages_from_texts("preview", "original")
+
+    assert merger.merge_messages(messages) == messages
+    assert merger.find_defer_from_index("example", messages) is None
+    assert all(not hasattr(message, "_merge_group_id") for _, message in messages)

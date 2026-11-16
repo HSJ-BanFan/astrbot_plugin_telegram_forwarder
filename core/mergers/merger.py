@@ -5,7 +5,6 @@ from telethon.tl.types import Message
 
 from .base import MergeRule
 from .keyword_next import KeywordNextNMerge
-from .someacg import SomeACGPreviewPlusOriginal
 
 
 class MessageMerger:
@@ -13,7 +12,6 @@ class MessageMerger:
 
     # 可用的规则类注册表
     RULE_CLASSES: ClassVar[dict[str, type[MergeRule]]] = {
-        "SomeACGPreviewPlusOriginal": SomeACGPreviewPlusOriginal,
         "KeywordNextNMerge": KeywordNextNMerge,
     }
 

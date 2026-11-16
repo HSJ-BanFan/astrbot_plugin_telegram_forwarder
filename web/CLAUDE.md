@@ -50,7 +50,8 @@
 - `assets/js/context.js` — 全局工具（toast / loader / 物理卡片绑定等）
 - `assets/js/ui_login.js` — Telegram 登录流程 UI
 - `assets/js/ui_overview.js` — 运行总览 UI
-- `assets/js/ui_channels.js` — 频道规则与合并规则 UI
+- `assets/js/ui_channels.js` — 频道规则 UI
+- `assets/js/ui_merge_rules.js` — 通用合并规则编辑、排序与保存校验
 - `assets/js/ui_config.js` — 配置表单渲染 UI
 - `assets/js/ui_topology.js` — 转发关系拓扑 UI
 - `assets/js/ui_selector.js` — QQ 群 / Telegram 频道选择器

@@ -40,6 +40,18 @@ def test_default_nsfw_merge_example_links_warning_to_one_following_message():
     }
 
 
+def test_merge_schema_only_offers_generic_keyword_rules():
+    schema = load_schema()
+    items = schema["merge_rules"]["templates"]["default"]["items"]
+
+    assert items["rule_class"]["options"] == ["", "KeywordNextNMerge"]
+    assert all(
+        rule["rule_class"] == "KeywordNextNMerge"
+        for rule in schema["merge_rules"]["default"]
+    )
+    assert "SomeACG" not in json.dumps(schema, ensure_ascii=False)
+
+
 def test_default_examples_do_not_include_local_filter_configuration():
     schema = load_schema()
     pattern = schema["forward_config"]["items"]["filter_regex"]["default"]

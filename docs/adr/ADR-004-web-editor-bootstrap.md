@@ -10,8 +10,8 @@ bootstrap one owner without adding a global initialization flag.
 Collect drafts during selector refreshes and validate them at the Save
 boundary. The merge editor owns its ordered UI keys separately from persisted
 rules, so renaming, searching, removing and reordering preserve unfinished
-edits. Strategy metadata supplies the applicable parameters and defaults;
-SomeACG does not acquire keyword parameters when an unrelated form is saved.
+edits. Strategy metadata supplies the applicable parameters and defaults while
+retaining extension fields on user-defined rules.
 
 `tests/test_web_merge_rules.py` runs the same JavaScript behavior checks against
 the standalone and generated dashboard assets.

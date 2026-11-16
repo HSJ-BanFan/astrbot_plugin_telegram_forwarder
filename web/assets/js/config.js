@@ -110,11 +110,4 @@ export const MERGE_RULE_CLASSES = [
     hint: "命中过滤词时，整组合并消息会一起过滤。",
     defaults: { trigger_keywords: [], trigger_regex: "", next_count: 2, time_window_seconds: 60 },
   },
-  {
-    value: "SomeACGPreviewPlusOriginal",
-    label: "预览图与原图",
-    description: "仅用于 @SomeACG，按 Pixiv 链接与文件名关联预览图和原图。",
-    hint: "按作品关联，不使用关键词或后续条数。",
-    defaults: { time_window_seconds: 10 },
-  },
 ];

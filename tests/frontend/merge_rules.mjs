@@ -14,6 +14,7 @@ const { normalizeMergeRule, defaultMergeRule, collectMergeRules } = await import
 const editorBootListeners = bootListeners;
 const { store } = await import(root + '/js/store.js');
 const { collectForms } = await import(root + '/app.js');
+const { MERGE_RULE_CLASSES } = await import(root + '/js/config.js');
 
 test('importing a UI module does not initialize the application entrypoint', () => {
   assert.equal(editorBootListeners, 0);
@@ -57,17 +58,21 @@ beforeEach(() => {
   store.state.mergeRuleKeys = [];
 });
 
-test('SomeACG round trips only its parameters and preserves extension settings', () => {
-  const rule = {
-    channel: 'SomeACG',
-    rule_class: 'SomeACGPreviewPlusOriginal',
+test('public strategy choices contain only the generic keyword rule', () => {
+  assert.deepEqual(MERGE_RULE_CLASSES.map(strategy => strategy.value), ['KeywordNextNMerge']);
+});
+
+test('generic rules preserve extension fields and parameters', () => {
+  const rule = keywordRule({
     extra: 'retain',
-    params: { time_window_seconds: 10, custom: 'retain', next_count: 2, trigger_keywords: [] },
-  };
+    params: { time_window_seconds: 10, custom: 'retain', next_count: 2, trigger_keywords: ['提示'] },
+  });
   store.state.config.merge_rules = [rule];
   cards = [card(0, rule)];
   collectMergeRules({ validate: true });
-  assert.deepEqual(store.state.config.merge_rules[0].params, { time_window_seconds: 10, custom: 'retain' });
+  assert.deepEqual(store.state.config.merge_rules[0].params, {
+    time_window_seconds: 10, custom: 'retain', next_count: 2, trigger_keywords: ['提示'], trigger_regex: '',
+  });
   assert.equal(store.state.config.merge_rules[0].extra, 'retain');
 });
 
@@ -110,7 +115,7 @@ test('collecting a filtered list retains hidden rules and their settings', () =>
 });
 
 test('switching strategy uses its own defaults instead of old hidden fields', () => {
-  const rule = { name: '', channel: 'SomeACG', rule_class: 'SomeACGPreviewPlusOriginal', params: { time_window_seconds: 10 } };
+  const rule = { name: '', channel: 'example', rule_class: 'CustomMerge', params: { custom: 'old setting', time_window_seconds: 10 } };
   store.state.config.merge_rules = [rule];
   cards = [card(0, rule, { rule_class: 'KeywordNextNMerge' })];
   collectMergeRules();

@@ -663,18 +663,17 @@
                     "channel": {
                         "type": "string",
                         "description": "频道用户名 (不带@)",
-                        "hint": "例如: SomeACG"
+                        "hint": "填写要应用此规则的来源频道用户名"
                     },
                     "rule_class": {
                         "type": "string",
                         "description": "规则类名",
                         "options": [
                             "",
-                            "KeywordNextNMerge",
-                            "SomeACGPreviewPlusOriginal"
+                            "KeywordNextNMerge"
                         ],
                         "default": "",
-                        "hint": "KeywordNextNMerge: 触发关键词后合并后续 N 条；SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
+                        "hint": "KeywordNextNMerge: 触发关键词后合并后续 N 条"
                     },
                     "params": {
                         "type": "object",
@@ -703,7 +702,7 @@
                                 "type": "int",
                                 "description": "合并超时/时间窗口 (秒)",
                                 "default": 60,
-                                "hint": "KeywordNextNMerge 中为等待后续消息的超时窗口；SomeACG 中为关联消息最大时间差"
+                                "hint": "等待后续消息的超时窗口"
                             }
                         },
                         "default": {
@@ -717,15 +716,6 @@
             }
         },
         "default": [
-            {
-                "__template_key": "default",
-                "name": "SomeACG 默认规则",
-                "channel": "SomeACG",
-                "rule_class": "SomeACGPreviewPlusOriginal",
-                "params": {
-                    "time_window_seconds": 10
-                }
-            },
             {
                 "__template_key": "default",
                 "name": "心惊报 NSFW 预警关联下一条",

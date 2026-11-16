@@ -55,9 +55,6 @@ function ruleTitle(rule) {
 function ruleError(rule) {
   if (!rule.channel) return ['channel', '请选择或填写来源频道。'];
   if (!strategies.has(rule.rule_class)) return ['rule_class', '请选择支持的合并策略。'];
-  if (rule.rule_class === 'SomeACGPreviewPlusOriginal' && rule.channel !== 'SomeACG') {
-    return ['channel', '预览图与原图策略仅支持 @SomeACG。'];
-  }
   if (rule.rule_class === 'KeywordNextNMerge') {
     if (!rule.params.trigger_keywords.length && !String(rule.params.trigger_regex || '').trim()) {
       return ['trigger_keywords', '至少填写一个触发关键词或触发正则。'];
@@ -116,8 +113,7 @@ export function collectMergeRules({ validate = false } = {}) {
         }
       }
     }
-    let channel = field('channel').value.trim().replace(/^[@#]/, '');
-    if (ruleClass === 'SomeACGPreviewPlusOriginal' && channel.toLowerCase() === 'someacg') channel = 'SomeACG';
+    const channel = field('channel').value.trim().replace(/^[@#]/, '');
     return {
       ...current,
       name: field('name').value.trim(),
@@ -146,7 +142,6 @@ function matchesQuery(rule) {
 }
 
 function triggerSummary(rule) {
-  if (rule.rule_class === 'SomeACGPreviewPlusOriginal') return '按 Pixiv 作品关联';
   if (rule.rule_class !== 'KeywordNextNMerge') return '待选择合并策略';
   const words = rule.params.trigger_keywords || [];
   const parts = [];
@@ -158,7 +153,8 @@ function triggerSummary(rule) {
 function renderParameters(rule) {
   if (!strategies.has(rule.rule_class)) return '';
   const params = rule.params;
-  const keywordFields = rule.rule_class === 'KeywordNextNMerge' ? `
+  return `
+    <div class="merge-params-grid">
     <label class="field merge-keywords">触发关键词
       <textarea data-merge-param="trigger_keywords" rows="3" placeholder="每行一个关键词">${escapeHtml(joinList(params.trigger_keywords))}</textarea>
       <small>多个关键词任意一个命中即可触发。</small>
@@ -170,13 +166,10 @@ function renderParameters(rule) {
     <label class="field">后续消息数
       <div class="input-with-unit"><input data-merge-param="next_count" type="number" min="1" step="1" value="${escapeHtml(params.next_count)}" /><span>条</span></div>
       <small>触发消息之外，再合并多少条消息。</small>
-    </label>` : '';
-  return `
-    <div class="merge-params-grid">
-      ${keywordFields}
-      <label class="field">${keywordFields ? '等待窗口' : '关联时间窗口'}
+    </label>
+      <label class="field">等待窗口
         <div class="input-with-unit"><input data-merge-param="time_window_seconds" type="number" min="1" step="1" value="${escapeHtml(params.time_window_seconds)}" /><span>秒</span></div>
-        <small>${keywordFields ? '未凑齐时等待；超时后处理已收到的消息。' : '预览图与原图之间允许的最大时间差。'}</small>
+        <small>未凑齐时等待；超时后处理已收到的消息。</small>
       </label>
     </div>`;
 }

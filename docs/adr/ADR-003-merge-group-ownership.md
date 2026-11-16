@@ -14,4 +14,4 @@ Recompute ownership for each pass instead of caching a plan whose freshness
 would depend on message markers and queue state.
 
 `tests/test_merger_rule_ownership.py` covers nested triggers, competing counts,
-non-adjacent originals, reserved messages and the existing SomeACG strategy.
+non-adjacent associations and reserved messages using synthetic rules.
