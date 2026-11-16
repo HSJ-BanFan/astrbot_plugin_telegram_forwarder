@@ -210,7 +210,7 @@ export function renderChannels() {
                 </section>
                 <section class="channel-section ${group === "targets" ? "active" : ""}" data-channel-section="targets">
                   <div class="selector-host" data-channel-qq-selector="${index}"></div>
-                  <label class="field">手写专属目标<textarea data-channel-field="target_qq_sessions" rows="4">${escapeHtml(joinList(cfg.target_qq_sessions))}</textarea></label>
+                  <label class="field">手写专属 QQ 目标（每行一个群号或完整会话名）<textarea data-channel-field="target_qq_sessions" rows="4">${escapeHtml(joinList(cfg.target_qq_sessions))}</textarea></label>
                   <button class="btn btn-soft" data-inherit-qq-targets="${index}" type="button">恢复继承默认 QQ 目标</button>
                 </section>
                 <div class="channel-actions">

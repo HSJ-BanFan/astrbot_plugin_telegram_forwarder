@@ -18,6 +18,11 @@ except Exception:  # pragma: no cover - import guard for non-AstrBot test runtim
 
 
 class QQGroupCache:
+    OFFICIAL_MANUAL_MESSAGE = (
+        "QQ 官方机器人无法自动列出群，请手写完整会话名"
+        "（平台ID:GroupMessage:group_openid）。"
+    )
+
     def __init__(
         self,
         plugin: Any,
@@ -33,6 +38,7 @@ class QQGroupCache:
         self._last_failure_at = 0.0
         self._groups: list[dict[str, Any]] = []
         self._available = False
+        self._manual_required = False
         self._message = "QQ platform is unavailable."
 
     async def list_groups(
@@ -47,6 +53,7 @@ class QQGroupCache:
         return {
             "groups": groups,
             "available": self._available,
+            "manual_required": self._manual_required,
             "message": self._message,
         }
 
@@ -69,9 +76,13 @@ class QQGroupCache:
             saw_platform = False
             saw_client = False
             saw_successful_call = False
+            saw_official = False
 
             for platform, platform_id in self._iter_qq_platforms():
                 saw_platform = True
+                saw_official = (
+                    saw_official or self._is_official_qq_platform(platform)
+                )
                 client = get_platform_bot(platform)
                 if client is None or not hasattr(client, "call_action"):
                     continue
@@ -93,7 +104,10 @@ class QQGroupCache:
             if saw_successful_call:
                 self._groups = self._sort_groups(groups_by_id.values())
                 self._available = True
-                self._message = ""
+                self._manual_required = saw_official
+                self._message = (
+                    self.OFFICIAL_MANUAL_MESSAGE if saw_official else ""
+                )
                 self._last_failure_at = 0.0
                 self._last_refresh_at = now
                 return
@@ -106,10 +120,13 @@ class QQGroupCache:
                 message = "QQ platform found, but no callable client is available."
             else:
                 message = "QQ platform is unavailable."
+            if saw_official:
+                message = self.OFFICIAL_MANUAL_MESSAGE
             self._groups = self._mark_cached(self._groups)
             if self._groups:
                 message = f"{message} Showing last known group list."
             self._available = False
+            self._manual_required = saw_official
             self._message = message
             self._last_failure_at = now
             self._last_refresh_at = now
@@ -118,6 +135,7 @@ class QQGroupCache:
         """清空缓存与新鲜度标记，下次 list 必重新拉取。"""
         self._groups = []
         self._available = False
+        self._manual_required = False
         self._message = "QQ group cache invalidated."
         self._last_refresh_at = 0.0
         self._last_failure_at = 0.0
@@ -146,16 +164,70 @@ class QQGroupCache:
             duck_matches.append((platform, platform_id))
         return adapter_matches + duck_matches
 
+    @staticmethod
+    def _is_official_qq_platform(platform: Any) -> bool:
+        try:
+            platform_name = str(platform.meta().name or "").lower()
+        except Exception:
+            platform_name = str(getattr(platform, "name", "") or "").lower()
+        return (
+            platform_name in {"qq_official", "qqofficial"}
+            or "qqofficial" in platform_name
+            or "qq_official" in platform_name
+        )
+
     def _merge_configured_groups(
         self, configured_group_ids: list[str]
     ) -> list[dict[str, Any]]:
-        groups_by_id = {item["group_id"]: copy.deepcopy(item) for item in self._groups}
-        for group_id in configured_group_ids:
-            normalized = str(group_id or "").strip()
-            if not normalized or not normalized.isdigit() or normalized in groups_by_id:
+        groups_by_id = {
+            str(item.get("session") or item.get("group_id") or ""): copy.deepcopy(item)
+            for item in self._groups
+        }
+        live_group_ids = {
+            str(item.get("group_id") or "") for item in self._groups
+        }
+        for raw_target in configured_group_ids:
+            target = self._parse_group_target(raw_target)
+            if target is None:
                 continue
-            groups_by_id[normalized] = self._fallback_group(normalized)
+            group_id, platform_id, session = target
+            identity = session or group_id
+            if session:
+                if session in groups_by_id:
+                    continue
+                numeric_key = group_id
+                numeric_group = groups_by_id.get(numeric_key)
+                if numeric_group and not numeric_group.get("session"):
+                    groups_by_id.pop(numeric_key, None)
+            elif group_id in live_group_ids or any(
+                item.get("group_id") == group_id
+                for item in groups_by_id.values()
+            ):
+                continue
+            groups_by_id[identity] = self._fallback_group(
+                group_id,
+                platform_id=platform_id,
+                session=session,
+            )
         return self._sort_groups(groups_by_id.values())
+
+    @staticmethod
+    def _parse_group_target(
+        raw_target: Any,
+    ) -> tuple[str, str, str] | None:
+        value = str(raw_target or "").strip()
+        if value.isdigit():
+            return value, "", ""
+        parts = value.split(":", 2)
+        if (
+            len(parts) == 3
+            and parts[1] == "GroupMessage"
+            and all(part.strip() for part in parts)
+        ):
+            platform_id = parts[0].strip()
+            group_id = parts[2].strip()
+            return group_id, platform_id, f"{platform_id}:GroupMessage:{group_id}"
+        return None
 
     @staticmethod
     def _mark_cached(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -195,21 +267,32 @@ class QQGroupCache:
         }
 
     @classmethod
-    def _fallback_group(cls, group_id: str) -> dict[str, Any]:
+    def _fallback_group(
+        cls,
+        group_id: str,
+        *,
+        platform_id: str = "",
+        session: str = "",
+    ) -> dict[str, Any]:
+        group_name = f"QQ 群 {group_id}" if session else f"群 {group_id}"
         return {
             "group_id": group_id,
-            "group_name": f"群 {group_id}",
+            "group_name": group_name,
             "avatar": cls._avatar_url(group_id),
             "member_count": 0,
             "max_member_count": 0,
             "source": "configured",
-            "platform_id": "",
-            "session": "",
+            "platform_id": platform_id,
+            "session": session,
         }
 
     @staticmethod
     def _avatar_url(group_id: str) -> str:
-        return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/640" if group_id else ""
+        return (
+            f"https://p.qlogo.cn/gh/{group_id}/{group_id}/640"
+            if group_id.isdigit()
+            else ""
+        )
 
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:

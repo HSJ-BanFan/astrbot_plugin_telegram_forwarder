@@ -12,6 +12,7 @@ export const store = {
     expandedMergeRules: new Set(),
     qqGroups: [],
     qqGroupsAvailable: false,
+    qqGroupsManualRequired: false,
     qqGroupsMessage: "",
     tgChannels: [],
     tgChannelsAvailable: false,

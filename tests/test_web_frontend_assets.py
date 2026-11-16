@@ -250,6 +250,23 @@ def test_editable_topology_canvas_expands_to_content_height() -> None:
         assert "overflow: hidden;" in body
 
 
+def test_qq_official_manual_target_entry_points_are_visible() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        topology_text = (asset_root / "js" / "ui_topology.js").read_text(
+            encoding="utf-8"
+        )
+        selector_text = (asset_root / "js" / "ui_selector.js").read_text(
+            encoding="utf-8"
+        )
+
+        assert "data-topology-manual-qq-target" in topology_text
+        assert "data-add-topology-manual-qq-target" in topology_text
+        assert "QQ 官方机器人无法自动列群" in topology_text
+        assert "data-manual-qq-target" in selector_text
+        assert "data-add-manual-qq-target" in selector_text
+        assert "手写完整 QQ 会话" in selector_text
+
+
 def test_topology_edges_align_with_node_cards_at_any_width() -> None:
     css_files = [
         WEB_ASSETS / "css" / "components.css",

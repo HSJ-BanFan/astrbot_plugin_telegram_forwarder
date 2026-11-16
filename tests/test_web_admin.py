@@ -1205,6 +1205,34 @@ def test_qq_groups_keeps_configured_numeric_fallback(web_admin):
     assert {group["source"] for group in payload["groups"]} == {"configured"}
 
 
+def test_qq_groups_keeps_official_openid_session_and_marks_manual_mode(web_admin):
+    target = (
+        "default_1906433733:"
+        "GroupMessage:35D268C5BC2B9A04321625F380F13643"
+    )
+    official_platform = SimpleNamespace(
+        meta=lambda: FakePlatformMeta("default_1906433733", "qq_official"),
+        get_client=lambda: None,
+    )
+    web_admin.plugin.config["target_qq_session"] = [target]
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(platform_insts=[official_platform])
+    )
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["manual_required"] is True
+    assert "手写完整" in payload["message"]
+    assert payload["groups"][0]["session"] == target
+    assert (
+        payload["groups"][0]["group_id"]
+        == "35D268C5BC2B9A04321625F380F13643"
+    )
+
+
 def test_qq_groups_handles_missing_platform(web_admin):
     web_admin.plugin.context = SimpleNamespace(
         platform_manager=SimpleNamespace(platform_insts=[])

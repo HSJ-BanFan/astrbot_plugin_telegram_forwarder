@@ -600,10 +600,10 @@ class Main(star.Star):
         except Exception as e:
             logger.error(f"Telegram Forwarder Web 管理页面启动失败: {e}")
 
-    def _configured_qq_group_ids(self) -> list[str]:
+    def _configured_qq_targets(self) -> list[str]:
         server = self.web_admin_server
-        if server is not None and hasattr(server, "_configured_qq_group_ids"):
-            return list(server._configured_qq_group_ids())
+        if server is not None and hasattr(server, "_configured_qq_targets"):
+            return list(server._configured_qq_targets())
         return []
 
     def _configured_tg_channel_refs(self) -> list[str]:
@@ -647,7 +647,7 @@ class Main(star.Star):
             _section(
                 "qq_groups",
                 lambda: server.qq_group_cache.list_groups(
-                    self._configured_qq_group_ids(), force=force
+                    self._configured_qq_targets(), force=force
                 ),
             ),
             _section(

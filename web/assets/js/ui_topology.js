@@ -9,6 +9,7 @@ import {
   groupByTarget,
   groupIdFromTarget,
   channelTitleUI,
+  ensureQQGroupForTarget,
   renderQQTargetSelector,
 } from './ui_selector.js';
 import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled, fieldsMatchSearch } from './utils.js';
@@ -204,6 +205,18 @@ function addTopologyChannel(ref) {
   store.state.expandedChannels.add(channelKey(channel, store.state.config.source_channels.length - 1));
   renderTopologySurfaces();
   showToast("频道已加入转发拓扑，保存后生效。");
+}
+
+function addTopologyManualQQTarget(rawTarget) {
+  const info = ensureQQGroupForTarget(rawTarget);
+  if (!info) {
+    showToast("QQ 目标格式无效，请填写群号或完整的 GroupMessage 会话名。");
+    return false;
+  }
+  topologyUiState.paletteGroupsQuery = "";
+  renderTopologySurfaces();
+  showToast("手写 QQ 群已加入列表，请拖到 Telegram 频道建立关系。");
+  return true;
 }
 
 function connectTopologyTarget(channelIndex, target) {
@@ -594,6 +607,26 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       renderTargetTopology();
     });
   }
+
+  const manualQQInput = root.querySelector("[data-topology-manual-qq-target]");
+  const manualQQButton = root.querySelector(
+    "[data-add-topology-manual-qq-target]",
+  );
+  const addManualQQTarget = () => {
+    if (!manualQQInput) return;
+    if (!addTopologyManualQQTarget(manualQQInput.value)) {
+      manualQQInput.focus();
+    }
+  };
+  if (manualQQInput) {
+    manualQQInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addManualQQTarget();
+      }
+    });
+  }
+  manualQQButton?.addEventListener("click", addManualQQTarget);
 }
 
 function captureTopologyScroll(root) {
@@ -664,7 +697,8 @@ function renderTopologyInto(root, {
     paletteGroupsQuery: topologyUiState.paletteGroupsQuery,
     queue: store.state.status?.queue?.by_channel,
     tgChannels: store.state.tgChannels,
-    qqGroups: store.state.qqGroups
+    qqGroups: store.state.qqGroups,
+    qqGroupsManualRequired: store.state.qqGroupsManualRequired,
   });
 
   if (root.dataset.lastTopologyKey === dataKey) {
@@ -796,6 +830,22 @@ function renderTopologyInto(root, {
                 }).join("")
               : '<span class="topology-palette-empty">没有匹配的 QQ 群</span>'
           }
+        </div>
+        <div class="topology-manual-target">
+          <div>
+            <input
+              data-topology-manual-qq-target
+              type="text"
+              placeholder="平台ID:GroupMessage:group_openid"
+              autocomplete="off"
+            />
+            <button class="btn btn-soft" data-add-topology-manual-qq-target type="button">手写添加</button>
+          </div>
+          <small>${
+            store.state.qqGroupsManualRequired
+              ? "QQ 官方机器人无法自动列群，请填写完整会话名。"
+              : "列表为空或未找到目标时，可手写群号或完整会话名。"
+          }</small>
         </div>
       </div>
     </div>
