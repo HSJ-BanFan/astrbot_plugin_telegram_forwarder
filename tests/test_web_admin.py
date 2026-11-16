@@ -1509,6 +1509,41 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
 
 
 @pytest.mark.asyncio
+async def test_runtime_check_reports_expired_queue_without_send_attempts(web_admin):
+    pending = []
+    stats = {"forward_attempts": 10, "forward_success": 8, "forward_failed": 2}
+
+    async def check_updates(*, force=False):
+        pending.extend({"channel": "expired_channel", "id": i} for i in range(5))
+
+    async def send_pending_messages(*, force_immediate=False):
+        pending.clear()
+
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=False,
+        storage=SimpleNamespace(get_all_pending=lambda: pending),
+        stats=stats.copy(),
+        check_updates=check_updates,
+        send_pending_messages=send_pending_messages,
+    )
+    web_admin.plugin.scheduler = None
+    web_admin.plugin.client_wrapper.is_connected = lambda: False
+
+    await web_admin.server.runtime_check()
+    await asyncio.gather(*web_admin.server._runtime_tasks)
+    status = await web_admin.server.get_status()
+    message = status["runtime"]["operations"][0]["message"]
+
+    assert status["queue"]["total"] == 0
+    assert status["stats"] == stats
+    assert "未进入发送" in message
+    assert "5" in message
+    assert "过期" in message
+    assert "retention_period" in message
+    assert "本轮待发送队列已处理完" not in message
+
+
+@pytest.mark.asyncio
 async def test_runtime_check_rejects_when_paused(web_admin):
     web_admin.plugin.command_handler._paused = True
     web_admin.plugin.forwarder = SimpleNamespace(
